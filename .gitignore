@@ -46,10 +46,13 @@ dev.out.log
 server.log
 
 
-/.crew/
-/.crew
-!.crew/
-.crew/
-.pi-lens/
-~/.pi/
 public/images/
+worklog.md
+agent-ctx
+~
+.crew
+.pi-lens
+~/.pi/
+*.db
+prisma/dev.db
+prisma/*.db-journal

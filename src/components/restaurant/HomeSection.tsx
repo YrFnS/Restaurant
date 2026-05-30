@@ -419,7 +419,7 @@ export function HomeSection() {
         <div className="relative px-5 pt-8 pb-10 text-white">
           {/* Background image with parallax scroll effect */}
           <motion.img
-            src={settings?.heroImageUrl || "/images/menu/hero-bg.jpg"}
+            src={settings?.heroImageUrl || "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&h=600&fit=crop"}
             alt=""
             className="absolute inset-0 w-full h-[120%] object-cover"
             aria-hidden="true"
