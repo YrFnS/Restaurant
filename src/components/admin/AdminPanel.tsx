@@ -1205,8 +1205,7 @@ export default function AdminPanel() {
           </DialogHeader>
           <div className="flex flex-col items-center gap-4 py-4">
             <div className="bg-white p-4 rounded-xl">
-              {/* @ts-expect-error qrcode.react types */}
-              <QRCodeSVG value={`${typeof window !== 'undefined' ? window.location.origin : ''}/?table=${qrTableNumber}`} size={200} />
+                <QRCodeSVG value={`${typeof window !== 'undefined' ? window.location.origin : ''}/?table=${qrTableNumber}`} size={200} />
             </div>
             <p className="text-sm text-muted-foreground text-center">{t.admin.qrDesc || 'Scan to view menu for this table'}</p>
             <div className="flex gap-2 w-full">

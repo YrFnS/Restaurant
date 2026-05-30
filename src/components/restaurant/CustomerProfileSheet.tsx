@@ -148,7 +148,7 @@ export function CustomerProfileSheet({ open, onOpenChange }: { open: boolean; on
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        side={isRTL ? "right" : "start"}
+        side={isRTL ? "right" : "left"}
         className="w-full sm:max-w-md"
       >
         <SheetHeader className="space-y-0 pb-0">

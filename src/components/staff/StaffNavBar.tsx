@@ -34,7 +34,7 @@ export function StaffNavBar() {
       case 'kitchen': return t.kitchen?.title || 'Kitchen';
       case 'pos': return t.pos?.title || 'POS';
       case 'admin': return t.admin?.title || 'Admin';
-      case 'home': return t.common?.home || 'Home';
+      case 'home': return t.nav?.home || 'Home';
       default: return key;
     }
   };

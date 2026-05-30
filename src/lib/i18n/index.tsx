@@ -77,7 +77,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("locale", newLocale);
   }, []);
 
-  const dir = locale === "ar" ? "rtl" : "ltr";
+  const dir: "ltr" | "rtl" = locale === "ar" ? "rtl" : "ltr";
   const isRTL = locale === "ar";
 
   // Merge settings overrides into translations

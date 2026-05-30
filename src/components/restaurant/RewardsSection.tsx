@@ -90,7 +90,7 @@ const stagger = {
 
 /* ─── Component ─── */
 export function RewardsSection() {
-  const { t, isRTL } = useI18n();
+  const { t, isRTL, locale } = useI18n();
   const customerPhone = useRestaurantStore((s) => s.customerPhone);
   const customerName = useRestaurantStore((s) => s.customerName);
   const setCustomerPhone = useRestaurantStore((s) => s.setCustomerPhone);
@@ -727,11 +727,11 @@ export function RewardsSection() {
                             <span className="text-xs font-medium opacity-80">{t.app.name}</span>
                           </div>
                           <p className="text-xl font-bold mb-1">{currency}{effectiveAmount.toFixed(2)}</p>
-                          <p className="text-sm opacity-90 mb-3">{t.rewards.to}: {gcRecipient}</p>
+                          <p className="text-sm opacity-90 mb-3">{t.admin.to}: {gcRecipient}</p>
                           {gcMessage && (
                             <p className="text-xs opacity-75 italic line-clamp-2">&ldquo;{gcMessage}&rdquo;</p>
                           )}
-                          <p className="text-xs opacity-60 mt-2">{t.rewards.from}: {gcFrom}</p>
+                          <p className="text-xs opacity-60 mt-2">{t.admin.from || 'From'}: {gcFrom}</p>
                         </div>
                       </div>
                     </motion.div>
@@ -793,7 +793,7 @@ export function RewardsSection() {
                                 <div>
                                   <p className="text-sm font-medium">{currency}{gc.balance.toFixed(2)}</p>
                                   <p className="text-xs text-muted-foreground">
-                                    {t.rewards.to}: {gc.recipientName}
+                                    {t.admin.to}: {gc.recipientName}
                                   </p>
                                 </div>
                               </div>

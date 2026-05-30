@@ -89,8 +89,7 @@ export async function POST(request: NextRequest) {
     const nameEn = settings?.nameEn || "";
     const nameAr = settings?.nameAr || "";
 
-    // Use z-ai-web-dev-sdk LLM
-    const ZAI = (await import("z-ai-web-dev-sdk")).default;
+    const ZAI = (await import("z-ai-web-dev-sdk")).default as any;
 
     const systemPrompt = locale === "ar"
       ? `أنت مساعد قائمة ذكي لـ${nameAr}. ساعد الضيوف في العثور على الأطباق المثالية بناءً على تفضيلاتهم. استخدم القائمة أدناه لتقديم توصيات محددة مع أسماء الأطباق وأسعارها. كن ودوداً ومختصراً. أجب بالعربية فقط.

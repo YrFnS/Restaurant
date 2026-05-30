@@ -379,6 +379,7 @@
     "giftCardsTab": "Gift Cards",
     "signUpDesc": "Create an account to start earning points with every order!",
     "lookupDesc": "Enter your phone number to find your rewards account",
+    "notOnList": "Phone number not found in our rewards system",
     "phoneLabel": "Phone Number",
     "redeemSuccess": "Reward redeemed successfully!"
   },
@@ -805,6 +806,7 @@
     "supplier": "Supplier",
     "hourlyWage": "Hourly Wage",
     "to": "to",
+    "from": "From",
     "day": "Day",
     "start": "Start",
     "end": "End",
