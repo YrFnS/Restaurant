@@ -56,3 +56,10 @@ agent-ctx
 *.db
 prisma/dev.db
 prisma/*.db-journal
+
+/.crew/
+/.crew
+!.crew/artifacts/
+!.crew/graphs/
+!.crew/artifacts/.gitkeep
+!.crew/graphs/.gitkeep
