@@ -1,26 +1,26 @@
 "use client";
 
+import React from "react";
 import { motion } from "framer-motion";
 import {
   Search,
   Package,
-  Loader2,
   AlertCircle,
   ClipboardList,
   Phone,
-  ShoppingCart,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/lib/i18n";
-import { OrderDetailsCard } from "./OrderDetail";
+import { Order } from "./OrderStatusBadge";
+import { OrderDetailsCard, TrackedOrderReorderButton } from "./OrderDetail";
 import { OrderHistoryItem } from "./OrderCard";
-import type { Order } from "./types";
 
 /* ─── Loading Skeletons ─── */
-function OrderSkeleton() {
+export function OrderSkeleton() {
   return (
     <Card className="shadow-none border-border/60">
       <CardContent className="p-4 space-y-3">
@@ -35,7 +35,7 @@ function OrderSkeleton() {
   );
 }
 
-function HistorySkeleton() {
+export function HistorySkeleton() {
   return (
     <div className="space-y-3">
       {[1, 2, 3].map((i) => (
@@ -54,7 +54,7 @@ function HistorySkeleton() {
 }
 
 /* ─── Empty States ─── */
-function NoOrderFound() {
+export function NoOrderFound() {
   const { t } = useI18n();
   return (
     <motion.div
@@ -71,7 +71,7 @@ function NoOrderFound() {
   );
 }
 
-function NoHistoryState() {
+export function NoHistoryState() {
   const { t } = useI18n();
   return (
     <motion.div
@@ -87,32 +87,30 @@ function NoHistoryState() {
   );
 }
 
-/* ─── Track Tab Content ─── */
-interface TrackTabProps {
+/* ─── Track Order Section ─── */
+interface TrackOrderSectionProps {
   trackInput: string;
-  setTrackInput: (v: string) => void;
-  handleTrack: () => void;
+  onTrackInputChange: (val: string) => void;
+  onTrack: () => void;
   trackingLoading: boolean;
   trackingError: boolean;
   trackingOrder: Order | null;
   statusChanged: boolean;
   currency: string;
-  lastOrderNumber: string | null;
-  onReorder?: () => void;
+  hasLastOrder: boolean;
 }
 
-export function TrackTab({
+export function TrackOrderSection({
   trackInput,
-  setTrackInput,
-  handleTrack,
+  onTrackInputChange,
+  onTrack,
   trackingLoading,
   trackingError,
   trackingOrder,
   statusChanged,
   currency,
-  lastOrderNumber,
-  onReorder,
-}: TrackTabProps) {
+  hasLastOrder,
+}: TrackOrderSectionProps) {
   const { t } = useI18n();
 
   return (
@@ -133,15 +131,15 @@ export function TrackTab({
               <Input
                 placeholder={t.orders.enterOrderNumber}
                 value={trackInput}
-                onChange={(e) => setTrackInput(e.target.value)}
+                onChange={(e) => onTrackInputChange(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleTrack();
+                  if (e.key === "Enter") onTrack();
                 }}
                 className="text-sm ps-9"
               />
             </div>
             <Button
-              onClick={handleTrack}
+              onClick={onTrack}
               disabled={!trackInput.trim() || trackingLoading}
               className="shrink-0 gap-2"
             >
@@ -170,17 +168,15 @@ export function TrackTab({
           transition={{ duration: 0.3 }}
         >
           <OrderDetailsCard order={trackingOrder} statusChanged={statusChanged} currency={currency} />
-          {trackingOrder.status === "completed" && onReorder && (
-            <Button className="w-full mt-3 gap-2" onClick={onReorder}>
-              <ShoppingCart className="size-4" />
-              {t.orders.reorder}
-            </Button>
+          {/* Reorder button for completed tracked orders */}
+          {trackingOrder.status === "completed" && (
+            <TrackedOrderReorderButton order={trackingOrder} />
           )}
         </motion.div>
       )}
 
       {/* Initial state - no order loaded */}
-      {!trackingOrder && !trackingLoading && !trackingError && !lastOrderNumber && (
+      {!trackingOrder && !trackingLoading && !trackingError && !hasLastOrder && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -199,26 +195,26 @@ export function TrackTab({
   );
 }
 
-/* ─── History Tab Content ─── */
-interface HistoryTabProps {
+/* ─── History Section ─── */
+interface HistorySectionProps {
   historyPhone: string;
-  setHistoryPhone: (v: string) => void;
-  handleLookupHistory: () => void;
+  onHistoryPhoneChange: (val: string) => void;
+  onLookupHistory: () => void;
   historyLoading: boolean;
   historyLoaded: boolean;
   historyOrders: Order[];
   currency: string;
 }
 
-export function HistoryTab({
+export function HistorySection({
   historyPhone,
-  setHistoryPhone,
-  handleLookupHistory,
+  onHistoryPhoneChange,
+  onLookupHistory,
   historyLoading,
   historyLoaded,
   historyOrders,
   currency,
-}: HistoryTabProps) {
+}: HistorySectionProps) {
   const { t } = useI18n();
 
   return (
@@ -239,15 +235,15 @@ export function HistoryTab({
               <Input
                 placeholder={t.orders.enterPhone}
                 value={historyPhone}
-                onChange={(e) => setHistoryPhone(e.target.value)}
+                onChange={(e) => onHistoryPhoneChange(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleLookupHistory();
+                  if (e.key === "Enter") onLookupHistory();
                 }}
                 className="text-sm ps-9"
               />
             </div>
             <Button
-              onClick={handleLookupHistory}
+              onClick={onLookupHistory}
               disabled={!historyPhone.trim() || historyLoading}
               variant="outline"
               className="shrink-0 gap-2"

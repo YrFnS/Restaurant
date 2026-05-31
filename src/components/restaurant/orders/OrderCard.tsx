@@ -1,27 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
-import {
-  ChevronDown,
-  RotateCcw,
-} from "lucide-react";
+import { RotateCcw, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Separator } from "@/components/ui/separator";
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore, type CartModifier } from "@/lib/store";
 import { useNotifications } from "@/hooks/use-notifications";
-import { getStatusColor } from "./OrderStatusBadge";
+import { Order, getStatusColor } from "./OrderStatusBadge";
 import { OrderDetailsCard } from "./OrderDetail";
-import type { Order } from "./types";
 
+/* ─── Order History Item (Collapsible) ─── */
 interface OrderHistoryItemProps {
   order: Order;
   currency: string;
@@ -30,7 +27,7 @@ interface OrderHistoryItemProps {
 export function OrderHistoryItem({ order, currency }: OrderHistoryItemProps) {
   const { t, locale } = useI18n();
   const addToCart = useRestaurantStore((s) => s.addToCart);
-
+  const setActiveSection = useRestaurantStore((s) => s.setActiveSection);
   const notifications = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
 

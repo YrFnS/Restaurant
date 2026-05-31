@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Tag, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,8 +15,8 @@ const sectionVariants = {
   animate: { opacity: 1, y: 0 },
 };
 
-/* ─── Promo Code Section ─── */
-export function CartPromo() {
+/* ─── Promo Code ─── */
+export function PromoCodeSection() {
   const { t } = useI18n();
   const notifications = useNotifications();
   const promoCode = useRestaurantStore((s) => s.promoCode);

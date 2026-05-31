@@ -2,25 +2,25 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { UtensilsCrossed, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { MenuCategory, Translations } from "./types";
 
-const categoryGradients: Record<string, string> = {
-	"🥗": "from-green-400/80 to-emerald-500/80",
-	"🍲": "from-amber-400/80 to-orange-500/80",
-	"🥩": "from-red-400/80 to-rose-500/80",
-	"🦐": "from-cyan-400/80 to-teal-500/80",
-	"🍝": "from-yellow-400/80 to-amber-500/80",
-	"🍕": "from-orange-400/80 to-red-500/80",
-	"🥬": "from-lime-400/80 to-green-500/80",
-	"🍰": "from-pink-400/80 to-rose-500/80",
-	"🥤": "from-sky-400/80 to-blue-500/80",
-	"🍟": "from-amber-300/80 to-yellow-500/80",
+const categoryColors: Record<string, string> = {
+	"🥗": "bg-[#7a8b6f]/10 text-[#7a8b6f] border-[#7a8b6f]/20",
+	"🍲": "bg-[#c75b39]/10 text-[#c75b39] border-[#c75b39]/20",
+	"🥩": "bg-red-50 text-red-700 border-red-200",
+	"🦐": "bg-cyan-50 text-cyan-700 border-cyan-200",
+	"🍝": "bg-amber-50 text-amber-700 border-amber-200",
+	"🍕": "bg-orange-50 text-orange-700 border-orange-200",
+	"🥬": "bg-emerald-50 text-emerald-700 border-emerald-200",
+	"🍰": "bg-pink-50 text-pink-700 border-pink-200",
+	"🥤": "bg-sky-50 text-sky-700 border-sky-200",
+	"🍟": "bg-yellow-50 text-yellow-700 border-yellow-200",
 };
 
-const defaultGradient = "from-amber-400/80 to-orange-500/80";
+const defaultColor = "bg-[#c75b39]/10 text-[#c75b39] border-[#c75b39]/20";
 
 interface CategoryGridProps {
 	categories: MenuCategory[];
@@ -32,24 +32,19 @@ interface CategoryGridProps {
 }
 
 export function CategoryGrid({
-	categories,
-	loading,
-	locale,
-	isRTL,
-	t,
-	onNavigate,
+	categories, loading, locale, isRTL, t, onNavigate,
 }: CategoryGridProps) {
 	return (
-		<section className="space-y-3">
-			<div className="flex items-center justify-between px-4">
-				<div className="flex items-center gap-2">
-					<UtensilsCrossed className="size-5 text-amber-500" />
-					<h2 className="text-lg font-bold">{t.home.categories}</h2>
+		<section className="py-6 md:py-8">
+			<div className="flex items-center justify-between px-6 md:px-12 mb-5">
+				<div>
+					<p className="text-[#c75b39] text-sm font-medium tracking-wide uppercase mb-1">Explore</p>
+					<h2 className="font-serif text-3xl md:text-4xl font-bold text-foreground">{t.home.categories}</h2>
 				</div>
 				<Button
 					variant="ghost"
 					size="sm"
-					className="text-primary gap-1"
+					className="text-[#c75b39] hover:text-[#c75b39]/80 hover:bg-[#c75b39]/5 gap-1.5 rounded-full"
 					onClick={() => onNavigate("menu")}
 				>
 					{t.home.viewAll}
@@ -58,14 +53,14 @@ export function CategoryGrid({
 			</div>
 
 			<div
-				className="flex gap-3 overflow-x-auto px-4 scroll-smooth snap-x snap-mandatory pb-2"
+				className="flex gap-3 overflow-x-auto px-6 md:px-12 scroll-smooth snap-x snap-mandatory pb-2"
 				style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
 			>
 				{loading
 					? Array.from({ length: 6 }).map((_, i) => (
 							<div key={i} className="snap-start shrink-0">
 								<Skeleton className="size-20 rounded-2xl" />
-								<Skeleton className="h-3 w-16 mx-auto mt-1.5" />
+								<Skeleton className="h-3 w-16 mx-auto mt-2" />
 							</div>
 						))
 					: categories.map((cat, idx) => (
@@ -73,19 +68,15 @@ export function CategoryGrid({
 								key={cat.id}
 								initial={{ opacity: 0, y: 10 }}
 								animate={{ opacity: 1, y: 0 }}
-								transition={{ delay: idx * 0.05 }}
+								transition={{ delay: idx * 0.04, duration: 0.3 }}
 								whileHover={{ scale: 1.05 }}
 								whileTap={{ scale: 0.95 }}
 								onClick={() => onNavigate("menu")}
-								className="snap-start shrink-0 flex flex-col items-center gap-1.5 group"
+								className="snap-start shrink-0 flex flex-col items-center gap-2 group"
 								aria-label={locale === "ar" ? cat.nameAr : cat.nameEn}
 							>
-								<div
-									className={`size-16 sm:size-20 rounded-2xl bg-gradient-to-br ${categoryGradients[cat.icon] || defaultGradient} flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow`}
-								>
-									<span className="text-2xl sm:text-3xl drop-shadow-md">
-										{cat.icon}
-									</span>
+								<div className={`size-[72px] sm:size-20 rounded-2xl border flex items-center justify-center transition-all group-hover:shadow-md ${categoryColors[cat.icon] || defaultColor}`}>
+									<span className="text-2xl sm:text-3xl">{cat.icon}</span>
 								</div>
 								<span className="text-[11px] sm:text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors text-center leading-tight max-w-[72px] line-clamp-2">
 									{locale === "ar" ? cat.nameAr : cat.nameEn}

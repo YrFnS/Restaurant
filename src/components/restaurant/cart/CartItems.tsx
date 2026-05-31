@@ -2,8 +2,9 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Minus, Plus, Trash2 } from "lucide-react";
+import { Minus, Plus, Trash2, ShoppingBag, UtensilsCrossed } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore, type CartItem } from "@/lib/store";
 
@@ -15,7 +16,7 @@ const itemVariants = {
 };
 
 /* ─── Cart Item Card ─── */
-function CartItemCard({ item, currency }: { item: CartItem; currency: string }) {
+export function CartItemCard({ item, currency }: { item: CartItem; currency: string }) {
   const { t, locale } = useI18n();
   const removeFromCart = useRestaurantStore((s) => s.removeFromCart);
   const updateCartItemQuantity = useRestaurantStore((s) => s.updateCartItemQuantity);
@@ -138,19 +139,70 @@ function CartItemCard({ item, currency }: { item: CartItem; currency: string }) 
   );
 }
 
-/* ─── Cart Items Section ─── */
-export function CartItems() {
-  const cart = useRestaurantStore((s) => s.cart);
-  const storeSettings = useRestaurantStore((s) => s.settings);
-  const currency = storeSettings?.currencySymbol ?? "";
+/* ─── Empty Cart State ─── */
+export function EmptyCartState() {
+  const { t } = useI18n();
+  const setActiveSection = useRestaurantStore((s) => s.setActiveSection);
 
   return (
-    <AnimatePresence mode="popLayout">
-      <div className="space-y-3">
-        {cart.map((item) => (
-          <CartItemCard key={item.id} item={item} currency={currency} />
-        ))}
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="flex flex-col items-center justify-center min-h-[50vh] p-6 text-center"
+    >
+      {/* Animated empty cart visual */}
+      <div className="relative mb-6">
+        <div className="size-28 rounded-full bg-gradient-to-br from-amber-100 to-orange-100 dark:from-amber-900/20 dark:to-orange-900/20 flex items-center justify-center">
+          <ShoppingBag className="size-14 text-amber-400 dark:text-amber-500" />
+        </div>
+        {/* Floating food items decoration */}
+        <motion.div
+          animate={{ y: [0, -6, 0] }}
+          transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+          className="absolute -top-2 -end-2 size-8 rounded-full bg-amber-200 dark:bg-amber-800/50 flex items-center justify-center text-sm"
+        >
+          🍕
+        </motion.div>
+        <motion.div
+          animate={{ y: [0, -4, 0] }}
+          transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut", delay: 0.3 }}
+          className="absolute -bottom-1 -start-3 size-7 rounded-full bg-orange-200 dark:bg-orange-800/50 flex items-center justify-center text-xs"
+        >
+          🥗
+        </motion.div>
       </div>
-    </AnimatePresence>
+      <h3 className="text-xl font-bold mb-2">{t.cart.empty}</h3>
+      <p className="text-muted-foreground mb-6 max-w-xs">{t.cart.emptyDesc}</p>
+      <Button
+        onClick={() => setActiveSection("menu")}
+        size="lg"
+        className="gap-2"
+      >
+        <UtensilsCrossed className="size-4" />
+        {t.cart.browseMenu}
+      </Button>
+    </motion.div>
+  );
+}
+
+/* ─── Cart Items List ─── */
+interface CartItemsListProps {
+  cart: CartItem[];
+  currency: string;
+  cartItemCount: number;
+}
+
+export function CartItemsList({ cart, currency, cartItemCount }: CartItemsListProps) {
+  return (
+    <>
+      {/* Cart Items */}
+      <AnimatePresence mode="popLayout">
+        <div className="space-y-3">
+          {cart.map((item) => (
+            <CartItemCard key={item.id} item={item} currency={currency} />
+          ))}
+        </div>
+      </AnimatePresence>
+    </>
   );
 }

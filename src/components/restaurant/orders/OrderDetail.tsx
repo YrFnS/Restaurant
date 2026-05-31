@@ -1,37 +1,41 @@
 "use client";
 
-import React from "react";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Clock,
   ChefHat,
   UtensilsCrossed,
+  ShoppingBag,
   Truck,
-  Package,
   CheckCircle2,
-  ClipboardList,
   XCircle,
   Receipt,
-  ShoppingBag,
+  ShoppingCart,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
 import { useI18n } from "@/lib/i18n";
-import { OrderStatusBadge } from "./OrderStatusBadge";
-import type { Order } from "./types";
-
-/* ─── Status Steps ─── */
-const STATUS_STEPS = [
-  { key: "pending", icon: ClipboardList },
-  { key: "confirmed", icon: CheckCircle2 },
-  { key: "preparing", icon: ChefHat },
-  { key: "ready", icon: UtensilsCrossed },
-  { key: "completed", icon: Package },
-] as const;
+import { useRestaurantStore, type CartModifier } from "@/lib/store";
+import { useNotifications } from "@/hooks/use-notifications";
+import {
+  Order,
+  OrderItem,
+  STATUS_STEPS,
+  STATUS_ORDER,
+  getStatusIndex,
+  getStatusColor,
+  StatusBadge,
+} from "./OrderStatusBadge";
 
 /* ─── Countdown Timer ─── */
-function EstimatedReadyCountdown({ estimatedReady, status }: { estimatedReady: string | null; status: string }) {
+interface EstimatedReadyCountdownProps {
+  estimatedReady: string | null;
+  status: string;
+}
+
+export function EstimatedReadyCountdown({ estimatedReady, status }: EstimatedReadyCountdownProps) {
   const { t, locale } = useI18n();
   const [timeLeft, setTimeLeft] = useState<string>("");
 
@@ -56,7 +60,7 @@ function EstimatedReadyCountdown({ estimatedReady, status }: { estimatedReady: s
     updateTime();
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
-  }, [estimatedReady, status, locale]);
+  }, [estimatedReady, status, locale, t.home.justNow]);
 
   if (!timeLeft || status === "completed" || status === "cancelled") return null;
 
@@ -69,10 +73,14 @@ function EstimatedReadyCountdown({ estimatedReady, status }: { estimatedReady: s
 }
 
 /* ─── Progress Tracker ─── */
-function OrderProgressTracker({ status, statusChanged }: { status: string; statusChanged?: boolean }) {
+interface OrderProgressTrackerProps {
+  status: string;
+  statusChanged?: boolean;
+}
+
+export function OrderProgressTracker({ status, statusChanged }: OrderProgressTrackerProps) {
   const { t } = useI18n();
-  const currentIdx = status === "cancelled" ? 0 : STATUS_STEPS.findIndex((s) => s.key === status);
-  const effectiveIdx = currentIdx >= 0 ? currentIdx : 0;
+  const currentIdx = getStatusIndex(status);
   const isCancelled = status === "cancelled";
 
   const visibleSteps = isCancelled
@@ -96,7 +104,7 @@ function OrderProgressTracker({ status, statusChanged }: { status: string; statu
           <motion.div
             className="h-full bg-gradient-to-r from-amber-400 via-orange-500 to-emerald-500 rounded-full progress-glow"
             initial={{ width: "0%" }}
-            animate={{ width: `${(effectiveIdx / (STATUS_STEPS.length - 1)) * 100}%` }}
+            animate={{ width: `${(currentIdx / (STATUS_STEPS.length - 1)) * 100}%` }}
             transition={{ duration: 1, ease: "easeInOut" }}
           />
         </div>
@@ -105,20 +113,20 @@ function OrderProgressTracker({ status, statusChanged }: { status: string; statu
       <div className="flex items-center justify-between relative">
         {/* Timeline connecting line */}
         <div className="absolute top-5 start-6 end-6 h-0.5 bg-muted z-0" />
-        {!isCancelled && effectiveIdx > 0 && (
+        {!isCancelled && currentIdx > 0 && (
           <motion.div
             className="absolute top-5 start-6 h-0.5 bg-primary z-0"
             initial={{ width: 0 }}
             animate={{
-              width: `calc(${(effectiveIdx / (STATUS_STEPS.length - 1)) * 100}% - 24px)`,
+              width: `calc(${(currentIdx / (STATUS_STEPS.length - 1)) * 100}% - 24px)`,
             }}
             transition={{ duration: 0.8, ease: "easeInOut" }}
           />
         )}
 
         {visibleSteps.map((step, idx) => {
-          const isCompleted = idx <= effectiveIdx && !isCancelled;
-          const isCurrent = idx === effectiveIdx && !isCancelled;
+          const isCompleted = idx <= currentIdx && !isCancelled;
+          const isCurrent = idx === currentIdx && !isCancelled;
           const Icon = step.icon;
 
           return (
@@ -143,7 +151,7 @@ function OrderProgressTracker({ status, statusChanged }: { status: string; statu
                     : "border-muted-foreground/30"
                 }`}
               >
-                {isCompleted && idx < effectiveIdx ? (
+                {isCompleted && idx < currentIdx ? (
                   <CheckCircle2 className="size-5 text-primary-foreground" />
                 ) : (
                   <Icon
@@ -239,7 +247,7 @@ export function OrderDetailsCard({ order, statusChanged, currency }: OrderDetail
               #{order.orderNumber}
             </h3>
           </div>
-          <OrderStatusBadge status={order.status} statusChanged={statusChanged} />
+          <StatusBadge status={order.status} statusChanged={statusChanged} t={t} />
         </div>
 
         {/* Date & Estimated Time with Countdown */}
@@ -378,5 +386,63 @@ export function OrderDetailsCard({ order, statusChanged, currency }: OrderDetail
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/* ─── Reorder Button for Tracked Orders ─── */
+interface TrackedOrderReorderButtonProps {
+  order: Order;
+}
+
+export function TrackedOrderReorderButton({ order }: TrackedOrderReorderButtonProps) {
+  const { t } = useI18n();
+  const addToCart = useRestaurantStore((s) => s.addToCart);
+  const notifications = useNotifications();
+
+  const handleReorder = () => {
+    let addedCount = 0;
+    order.items.forEach((item) => {
+      let parsedMods: CartModifier[] = [];
+      try {
+        const raw = JSON.parse(item.modifiers || "[]");
+        parsedMods = raw.map((m: { id?: string; nameEn?: string; nameAr?: string; price?: number; type?: string }) => ({
+          id: m.id || "",
+          nameEn: m.nameEn || "",
+          nameAr: m.nameAr || "",
+          price: m.price || 0,
+          type: (m.type as "addon" | "variant") || "addon",
+        }));
+      } catch {
+        // ignore
+      }
+
+      addToCart({
+        id: `${item.menuItemId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        menuItemId: item.menuItemId,
+        nameEn: item.menuItem.nameEn,
+        nameAr: item.menuItem.nameAr,
+        price: item.unitPrice,
+        quantity: item.quantity,
+        image: item.menuItem.image,
+        modifiers: parsedMods,
+        notes: item.notes || "",
+        totalPrice: item.totalPrice,
+      });
+      addedCount++;
+    });
+
+    if (addedCount > 0) {
+      notifications.cartAdded(t.orders.reorderAdded);
+    }
+  };
+
+  return (
+    <Button
+      className="w-full mt-3 gap-2"
+      onClick={handleReorder}
+    >
+      <ShoppingCart className="size-4" />
+      {t.orders.reorder}
+    </Button>
   );
 }

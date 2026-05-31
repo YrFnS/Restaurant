@@ -990,11 +990,44 @@ async function seed() {
 		},
 	});
 
+	// Seed Testimonials
+	await db.testimonial.createMany({
+		data: [
+			{ nameEn: "Sarah M.", nameAr: "سارة م.", commentEn: "Absolutely incredible dining experience! The Mixed Grill Platter is a must-try.", commentAr: "تجربة طعام لا تُصدق! طبق المشويات المشكلة لا بد من تجربته.", avatar: "\uD83D\uDC69", stars: 5, sortOrder: 1, isActive: true },
+			{ nameEn: "Ahmed K.", nameAr: "أحمد ك.", commentEn: "Best Middle Eastern food in town. The Hummus Trio and Lamb Kebab are outstanding.", commentAr: "أفضل طعام شرق أوسطي في المدينة. حمص الثلاثي وكباب اللحم ممتازان.", avatar: "\uD83D\uDC68", stars: 5, sortOrder: 2, isActive: true },
+			{ nameEn: "Maria L.", nameAr: "ماريا ل.", commentEn: "Beautiful atmosphere and delicious food. The vegetarian options are amazing.", commentAr: "أجواء جميلة وطعام لذيذ. الخيارات النباتية رائعة!", avatar: "\uD83D\uDC69\uD83C\uDFFF", stars: 4, sortOrder: 3, isActive: true },
+			{ nameEn: "James W.", nameAr: "جيمس و.", commentEn: "The Kunafa here is the best I've had outside of Beirut. Incredible Kunafa!", commentAr: "الكنافة هنا هي الأفضل التي تذوقتها خارج بيروت.", avatar: "\uD83D\uDC68\uD83C\uDFFF", stars: 5, sortOrder: 4, isActive: true },
+			{ nameEn: "Fatima A.", nameAr: "فاطمة أ.", commentEn: "A hidden gem! The staff treats you like family and the food is always perfect.", commentAr: "جوهرة مخفية! الموظفون يعاملونك كالعائلة والطعام دائماً ممتاز.", avatar: "\uD83D\uDC69\uD83C\uDFFB", stars: 5, sortOrder: 5, isActive: true },
+		],
+	});
+
+	// Seed Kitchen Stations
+	await db.kitchenStation.createMany({
+		data: [
+			{ name: "Grill Station", slug: "grill", icon: "Flame", color: "#c75b39", sortOrder: 1, isActive: true },
+			{ name: "Prep Station", slug: "prep", icon: "ChefHat", color: "#7a8b6f", sortOrder: 2, isActive: true },
+			{ name: "Bar Station", slug: "bar", icon: "Wine", color: "#6f7b8b", sortOrder: 3, isActive: true },
+		],
+	});
+
+	// Seed Kitchen Screens
+	await db.kitchenScreen.createMany({
+		data: [
+			{ name: "All Stations", slug: "all-stations", description: "Shows all active orders", stationFilter: "", layoutType: "grid", autoRefreshInterval: 10, showCompleted: false, maxOrders: 0, sortOrder: 0, isActive: true },
+			{ name: "Grill Station", slug: "grill", description: "Grill station orders", stationFilter: "Grill", layoutType: "grid", autoRefreshInterval: 8, showCompleted: false, maxOrders: 0, sortOrder: 1, isActive: true },
+			{ name: "Prep Station", slug: "prep", description: "Prep station orders", stationFilter: "Prep", layoutType: "grid", autoRefreshInterval: 10, showCompleted: false, maxOrders: 0, sortOrder: 2, isActive: true },
+			{ name: "Bar Station", slug: "bar", description: "Bar station orders", stationFilter: "Bar", layoutType: "grid", autoRefreshInterval: 10, showCompleted: false, maxOrders: 0, sortOrder: 3, isActive: true },
+		],
+	});
+
 	console.log("✅ Seed completed successfully!");
 	console.log(`  - ${categories.length} categories`);
 	console.log(`  - ${menuItems.length} menu items`);
 	console.log(`  - ${tableData.length} tables`);
 	console.log(`  - 3 special offers`);
+	console.log(`  - 5 testimonials`);
+	console.log(`  - 3 kitchen stations`);
+	console.log(`  - 4 kitchen screens`);
 	console.log(`  - 2 sample orders`);
 	console.log(`  - 1 reservation`);
 	console.log(`  - 2 waitlist entries`);

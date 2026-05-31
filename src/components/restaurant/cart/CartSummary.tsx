@@ -13,23 +13,31 @@ const sectionVariants = {
 };
 
 /* ─── Order Summary ─── */
-export function CartSummary() {
+interface OrderSummaryProps {
+  subtotal: number;
+  tax: number;
+  taxRatePercent: number;
+  deliveryFee: number;
+  discount: number;
+  tip: number;
+  total: number;
+  estimatedPrepTime: number;
+  currency: string;
+}
+
+export function OrderSummary({
+  subtotal,
+  tax,
+  taxRatePercent,
+  deliveryFee,
+  discount,
+  tip,
+  total,
+  estimatedPrepTime,
+  currency,
+}: OrderSummaryProps) {
   const { t } = useI18n();
-  const cart = useRestaurantStore((s) => s.cart);
   const orderType = useRestaurantStore((s) => s.orderType);
-  const tipAmount = useRestaurantStore((s) => s.tipAmount);
-  const promoDiscount = useRestaurantStore((s) => s.promoDiscount);
-  const storeSettings = useRestaurantStore((s) => s.settings);
-  const currency = storeSettings?.currencySymbol ?? "";
-
-  const subtotal = cart.reduce((sum, item) => sum + item.totalPrice, 0);
-  const taxRate = storeSettings?.taxRate ?? 0;
-  const deliveryFee = orderType === "delivery" ? (storeSettings?.deliveryFee ?? 0) : 0;
-  const discountAmount = (subtotal * promoDiscount) / 100;
-  const taxAmount = (subtotal - discountAmount) * taxRate;
-
-  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const estimatedPrepTime = Math.min((storeSettings?.avgPrepTime ?? 0) + cartItemCount * 3, 60);
 
   return (
     <motion.div variants={sectionVariants} initial="initial" animate="animate">
@@ -45,8 +53,8 @@ export function CartSummary() {
           </div>
 
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">{t.cart.tax} ({Math.round(taxRate * 100)}%)</span>
-            <span className="font-medium">{currency}{taxAmount.toFixed(2)}</span>
+            <span className="text-muted-foreground">{t.cart.tax} ({taxRatePercent}%)</span>
+            <span className="font-medium">{currency}{tax.toFixed(2)}</span>
           </div>
 
           {orderType === "delivery" && (
@@ -56,19 +64,19 @@ export function CartSummary() {
             </div>
           )}
 
-          {discountAmount > 0 && (
+          {discount > 0 && (
             <div className="flex items-center justify-between text-sm">
               <span className="text-emerald-600 dark:text-emerald-400">{t.cart.discount}</span>
               <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                -{currency}{discountAmount.toFixed(2)}
+                -{currency}{discount.toFixed(2)}
               </span>
             </div>
           )}
 
-          {tipAmount > 0 && (
+          {tip > 0 && (
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">{t.cart.tip}</span>
-              <span className="font-medium">{currency}{tipAmount.toFixed(2)}</span>
+              <span className="font-medium">{currency}{tip.toFixed(2)}</span>
             </div>
           )}
 
@@ -77,7 +85,7 @@ export function CartSummary() {
           <div className="flex items-center justify-between">
             <span className="font-bold text-base">{t.cart.total}</span>
             <span className="font-bold text-lg text-primary">
-              {currency}{(subtotal - discountAmount + taxAmount + deliveryFee + tipAmount).toFixed(2)}
+              {currency}{total.toFixed(2)}
             </span>
           </div>
 

@@ -1,11 +1,27 @@
 "use client";
 
-import { motion } from "framer-motion";
+import React from "react";
+import {
+  ClipboardList,
+  CheckCircle2,
+  ChefHat,
+  UtensilsCrossed,
+  Package,
+  XCircle,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useI18n } from "@/lib/i18n";
+import { motion } from "framer-motion";
 
 /* ─── Status Config ─── */
-const STATUS_ORDER = ["pending", "confirmed", "preparing", "ready", "completed"];
+export const STATUS_STEPS = [
+  { key: "pending", icon: ClipboardList },
+  { key: "confirmed", icon: CheckCircle2 },
+  { key: "preparing", icon: ChefHat },
+  { key: "ready", icon: UtensilsCrossed },
+  { key: "completed", icon: Package },
+] as const;
+
+export const STATUS_ORDER = ["pending", "confirmed", "preparing", "ready", "completed"];
 
 export function getStatusIndex(status: string): number {
   const idx = STATUS_ORDER.indexOf(status);
@@ -31,14 +47,59 @@ export function getStatusColor(status: string): string {
   }
 }
 
-interface OrderStatusBadgeProps {
-  status: string;
-  statusChanged?: boolean;
+/* ─── Types ─── */
+export interface OrderItem {
+  id: string;
+  menuItemId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  modifiers: string;
+  notes: string | null;
+  menuItem: {
+    id: string;
+    nameEn: string;
+    nameAr: string;
+    image: string;
+    price: number;
+  };
 }
 
-export function OrderStatusBadge({ status, statusChanged }: OrderStatusBadgeProps) {
-  const { t } = useI18n();
+export interface Order {
+  id: string;
+  orderNumber: string;
+  type: string;
+  status: string;
+  customerName: string;
+  customerPhone: string;
+  deliveryAddress: string | null;
+  notes: string | null;
+  subtotal: number;
+  taxAmount: number;
+  deliveryFee: number;
+  discountAmount: number;
+  tipAmount: number;
+  total: number;
+  paymentMethod: string;
+  paymentStatus: string;
+  estimatedReady: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  items: OrderItem[];
+}
 
+/* ─── Status Badge Component ─── */
+interface StatusBadgeProps {
+  status: string;
+  statusChanged?: boolean;
+  t: {
+    orders: {
+      status: Record<string, string>;
+    };
+  };
+}
+
+export function StatusBadge({ status, statusChanged, t }: StatusBadgeProps) {
   return (
     <motion.div
       animate={statusChanged ? { scale: [1, 1.2, 1], opacity: [1, 0.5, 1], backgroundColor: ["hsl(var(--primary))", "hsl(var(--primary) / 50%)", "hsl(var(--primary))"] } : { scale: 1 }}
