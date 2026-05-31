@@ -402,7 +402,7 @@ export function ReservationsSection() {
                     );
                   })}
                 </div>
-                <Select value={time} onValueChange={setTime} className="hidden">
+                <Select value={time} onValueChange={setTime}>
                   <SelectTrigger>
                     <Clock className="size-4 me-2 shrink-0 text-muted-foreground" />
                     <SelectValue placeholder={t.reservations.selectTime} />

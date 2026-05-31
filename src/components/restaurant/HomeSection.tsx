@@ -171,7 +171,7 @@ const heroContainer = {
 
 const heroChild = {
 	hidden: { opacity: 0, y: 20 },
-	show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" } },
+	show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" as const } },
 };
 
 const letterVariants = {
@@ -180,13 +180,13 @@ const letterVariants = {
 		opacity: 1,
 		y: 0,
 		scale: 1,
-		transition: { delay: i * 0.04, duration: 0.4, ease: [0.2, 0.8, 0.2, 1] },
+		transition: { delay: i * 0.04, duration: 0.4, ease: [0.2, 0.8, 0.2, 1] as [number, number, number, number] },
 	}),
 };
 
 const cardHover = {
 	scale: 1.02,
-	transition: { type: "spring", stiffness: 300, damping: 20 },
+	transition: { type: "spring" as const, stiffness: 300, damping: 20 },
 };
 
 const cardTap = {

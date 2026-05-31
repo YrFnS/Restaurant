@@ -3,6 +3,24 @@ import { db } from "@/lib/db";
 async function seed() {
 	console.log("🌱 Seeding database...");
 
+	// Clear existing data in reverse dependency order (for idempotent re-runs)
+	await db.orderItem.deleteMany();
+	await db.order.deleteMany();
+	await db.kitchenStation.deleteMany();
+	await db.kitchenScreen.deleteMany();
+	await db.reservation.deleteMany();
+	await db.waitlistEntry.deleteMany();
+	await db.specialOffer.deleteMany();
+	await db.modifier.deleteMany();
+	await db.menuItem.deleteMany();
+	await db.menuCategory.deleteMany();
+	await db.restaurantTable.deleteMany();
+	await db.customer.deleteMany();
+	await db.restaurantSettings.deleteMany();
+	await db.testimonial.deleteMany();
+	await db.promoCode.deleteMany();
+	await db.rewardTier.deleteMany();
+
 	// Seed Restaurant Settings
 	const settings = await db.restaurantSettings.upsert({
 		where: { id: "1" },

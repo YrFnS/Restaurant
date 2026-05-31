@@ -346,7 +346,7 @@ function OrderTicketCard({ order, stationSlug, stationColor, onBump, onFire, onB
       layout
     >
       <Card className={`bg-gradient-to-br from-card to-amber-50/40 dark:to-amber-950/15 border-border rounded-xl shadow-sm overflow-hidden transition-all hover:shadow-xl hover:shadow-amber-500/5 hover:scale-[1.01] ${isPriority ? 'ring-1' : ''}`}
-        style={isPriority ? { ringColor: `${colors.ring}40`, borderColor: `${colors.ring}30` } : {}}>
+        style={isPriority ? { "--tw-ring-color": `${colors.ring}40`, borderColor: `${colors.ring}30` } as React.CSSProperties : {}}>
 
         {/* Urgency color strip at top */}
         <div className={`h-1.5 ${colors.bg} ${level === 'critical' ? 'animate-pulse' : ''}`} />

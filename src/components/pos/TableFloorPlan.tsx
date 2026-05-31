@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Map, List, Users, Circle, Square } from 'lucide-react';
+import { Map as MapIcon, List, Users, Circle, Square } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 // ============ STATUS COLOR MAP ============
@@ -62,7 +62,7 @@ interface TableFloorPlanProps {
 // ============ FLOOR PLAN VIEW ============
 function FloorPlanView({ tables, selectedTableId, onSelectTable }: TableFloorPlanProps) {
   const sections = useMemo(() => {
-    const sectionMap = new Map<string, TableData[]>();
+    const sectionMap = new globalThis.Map<string, TableData[]>();
     tables.forEach((t) => {
       const sec = t.section || 'main';
       if (!sectionMap.has(sec)) sectionMap.set(sec, []);
@@ -175,7 +175,7 @@ function FloorPlanView({ tables, selectedTableId, onSelectTable }: TableFloorPla
 // ============ LIST VIEW ============
 function ListView({ tables, selectedTableId, onSelectTable }: TableFloorPlanProps) {
   const sections = useMemo(() => {
-    const sectionMap = new Map<string, TableData[]>();
+    const sectionMap = new globalThis.Map<string, TableData[]>();
     tables.forEach((t) => {
       const sec = t.section || 'main';
       if (!sectionMap.has(sec)) sectionMap.set(sec, []);
@@ -193,7 +193,7 @@ function ListView({ tables, selectedTableId, onSelectTable }: TableFloorPlanProp
 
   return (
     <div className="space-y-4">
-      {sections.map(([section, sectionTables]) => (
+      {sections.map(([section, sectionTables]: [string, TableData[]]) => (
         <div key={section}>
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
             {sectionLabels[section] || section}
@@ -267,7 +267,7 @@ export default function TableFloorPlan({ tables, selectedTableId, onSelectTable 
       <div className="shrink-0 space-y-2 pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Map className="h-4 w-4 text-emerald-600" />
+            <MapIcon className="h-4 w-4 text-emerald-600" />
             <h3 className="font-semibold text-sm">Tables</h3>
             <Badge variant="outline" className="text-xs">
               {tables.length}
@@ -280,7 +280,7 @@ export default function TableFloorPlan({ tables, selectedTableId, onSelectTable 
               className={`h-7 px-2 text-xs gap-1 ${viewMode === 'floor' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
               onClick={() => setViewMode('floor')}
             >
-              <Map className="h-3 w-3" />
+              <MapIcon className="h-3 w-3" />
               Floor
             </Button>
             <Button
