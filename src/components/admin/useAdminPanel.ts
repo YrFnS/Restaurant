@@ -161,15 +161,29 @@ export interface AdminPanelState {
 	setEditingIngredientId: (v: string | null) => void;
 	setEditingEmployeeId: (v: string | null) => void;
 	setEditingKdsId: (v: string | null) => void;
-	setMenuForm: React.Dispatch<React.SetStateAction<AdminPanelState["menuForm"]>>;
-	setIngredientForm: React.Dispatch<React.SetStateAction<AdminPanelState["ingredientForm"]>>;
-	setEmployeeForm: React.Dispatch<React.SetStateAction<AdminPanelState["employeeForm"]>>;
-	setCashForm: React.Dispatch<React.SetStateAction<AdminPanelState["cashForm"]>>;
-	setReservationForm: React.Dispatch<React.SetStateAction<AdminPanelState["reservationForm"]>>;
-	setScheduleForm: React.Dispatch<React.SetStateAction<AdminPanelState["scheduleForm"]>>;
+	setMenuForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["menuForm"]>
+	>;
+	setIngredientForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["ingredientForm"]>
+	>;
+	setEmployeeForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["employeeForm"]>
+	>;
+	setCashForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["cashForm"]>
+	>;
+	setReservationForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["reservationForm"]>
+	>;
+	setScheduleForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["scheduleForm"]>
+	>;
 	setKdsForm: React.Dispatch<React.SetStateAction<AdminPanelState["kdsForm"]>>;
 	setMenuSearch: (v: string) => void;
-	setSettingsForm: React.Dispatch<React.SetStateAction<AdminPanelState["settingsForm"]>>;
+	setSettingsForm: React.Dispatch<
+		React.SetStateAction<AdminPanelState["settingsForm"]>
+	>;
 
 	// Handlers
 	handleSaveMenuItem: () => Promise<void>;
@@ -221,8 +235,12 @@ export function useAdminPanel(): AdminPanelState {
 
 	// Editing IDs
 	const [editingMenuId, setEditingMenuId] = useState<string | null>(null);
-	const [editingIngredientId, setEditingIngredientId] = useState<string | null>(null);
-	const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
+	const [editingIngredientId, setEditingIngredientId] = useState<string | null>(
+		null,
+	);
+	const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(
+		null,
+	);
 	const [editingKdsId, setEditingKdsId] = useState<string | null>(null);
 
 	// Form states
@@ -254,7 +272,11 @@ export function useAdminPanel(): AdminPanelState {
 		email: "",
 		phone: "",
 	});
-	const [cashForm, setCashForm] = useState({ type: "payin", amount: "", note: "" });
+	const [cashForm, setCashForm] = useState({
+		type: "payin",
+		amount: "",
+		note: "",
+	});
 	const [reservationForm, setReservationForm] = useState({
 		customerName: "",
 		customerPhone: "",
@@ -360,17 +382,25 @@ export function useAdminPanel(): AdminPanelState {
 	// Fetch all data
 	const fetchData = useCallback(async () => {
 		try {
-			const [menuRes, invRes, empRes, cashRes, notifRes, resRes, schedRes, kdsRes] =
-				await Promise.all([
-					fetch("/api/menu"),
-					fetch("/api/inventory"),
-					fetch("/api/employees"),
-					fetch("/api/cash"),
-					fetch("/api/notifications"),
-					fetch("/api/reservations"),
-					fetch("/api/schedules"),
-					fetch("/api/kitchen-screens"),
-				]);
+			const [
+				menuRes,
+				invRes,
+				empRes,
+				cashRes,
+				notifRes,
+				resRes,
+				schedRes,
+				kdsRes,
+			] = await Promise.all([
+				fetch("/api/menu"),
+				fetch("/api/inventory"),
+				fetch("/api/employees"),
+				fetch("/api/cash"),
+				fetch("/api/notifications"),
+				fetch("/api/reservations"),
+				fetch("/api/schedules"),
+				fetch("/api/kitchen-screens"),
+			]);
 			if (menuRes.ok) {
 				const d = await menuRes.json();
 				setCategories(d.categories || []);
@@ -519,7 +549,9 @@ export function useAdminPanel(): AdminPanelState {
 				category: "",
 			});
 			toast.success(
-				editingIngredientId ? t.admin.ingredientUpdated : t.admin.ingredientCreated,
+				editingIngredientId
+					? t.admin.ingredientUpdated
+					: t.admin.ingredientCreated,
 			);
 			fetchData();
 		} catch {
@@ -703,7 +735,8 @@ export function useAdminPanel(): AdminPanelState {
 						facebookUrl: s.facebookUrl || "",
 						instagramUrl: s.instagramUrl || "",
 						twitterUrl: s.twitterUrl || "",
-						taxRate: s.taxRate != null ? String(Math.round(s.taxRate * 100)) : "",
+						taxRate:
+							s.taxRate != null ? String(Math.round(s.taxRate * 100)) : "",
 						tipPresets: s.tipPresets || "",
 						deliveryFee:
 							s.deliveryFee != null
@@ -714,7 +747,9 @@ export function useAdminPanel(): AdminPanelState {
 								? String(parseFloat(String(s.minDeliveryOrder)).toFixed(2))
 								: "",
 						deliveryRadius:
-							s.deliveryRadius != null ? String(Math.round(s.deliveryRadius)) : "",
+							s.deliveryRadius != null
+								? String(Math.round(s.deliveryRadius))
+								: "",
 						avgPrepTime: s.avgPrepTime != null ? String(s.avgPrepTime) : "",
 						currencySymbol: s.currencySymbol || "",
 						openTime: s.openTime || "",
@@ -722,7 +757,9 @@ export function useAdminPanel(): AdminPanelState {
 						statsOrdersServed:
 							s.statsOrdersServed != null ? String(s.statsOrdersServed) : "",
 						statsHappyCustomers:
-							s.statsHappyCustomers != null ? String(s.statsHappyCustomers) : "",
+							s.statsHappyCustomers != null
+								? String(s.statsHappyCustomers)
+								: "",
 						statsYearsService:
 							s.statsYearsService != null ? String(s.statsYearsService) : "",
 					});
@@ -834,7 +871,9 @@ export function useAdminPanel(): AdminPanelState {
 				sortOrder: "0",
 				isActive: true,
 			});
-			toast.success(editingKdsId ? t.admin.screenUpdated : t.admin.screenCreated);
+			toast.success(
+				editingKdsId ? t.admin.screenUpdated : t.admin.screenCreated,
+			);
 			fetchData();
 		} catch {
 			toast.error(t.admin.failedSave);

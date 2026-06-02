@@ -38,18 +38,62 @@ export default function AdminPanel() {
 	const [activeTab, setActiveTab] = useState<AdminTab>("menu");
 	const state = useAdminPanel();
 
-	const SIDEBAR_ITEMS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
+	const SIDEBAR_ITEMS: {
+		id: AdminTab;
+		label: string;
+		icon: React.ReactNode;
+	}[] = [
 		{ id: "menu", label: t.admin.menu, icon: <ChefHat className="h-4 w-4" /> },
-		{ id: "inventory", label: t.admin.inventory, icon: <Package className="h-4 w-4" /> },
-		{ id: "employees", label: t.admin.employees, icon: <Users className="h-4 w-4" /> },
-		{ id: "schedule", label: t.admin.schedule, icon: <CalendarDays className="h-4 w-4" /> },
-		{ id: "kds-screens", label: t.admin.kdsScreens, icon: <Monitor className="h-4 w-4" /> },
-		{ id: "tables", label: t.admin.tables || "Tables", icon: <Grid3X3 className="h-4 w-4" /> },
-		{ id: "reports", label: t.admin.reports, icon: <BarChart3 className="h-4 w-4" /> },
-		{ id: "cash", label: t.admin.cash, icon: <DollarSign className="h-4 w-4" /> },
-		{ id: "reservations", label: t.admin.reservations, icon: <Calendar className="h-4 w-4" /> },
-		{ id: "notifications", label: t.admin.notifications, icon: <Bell className="h-4 w-4" /> },
-		{ id: "settings", label: t.admin.settings, icon: <Wrench className="h-4 w-4" /> },
+		{
+			id: "inventory",
+			label: t.admin.inventory,
+			icon: <Package className="h-4 w-4" />,
+		},
+		{
+			id: "employees",
+			label: t.admin.employees,
+			icon: <Users className="h-4 w-4" />,
+		},
+		{
+			id: "schedule",
+			label: t.admin.schedule,
+			icon: <CalendarDays className="h-4 w-4" />,
+		},
+		{
+			id: "kds-screens",
+			label: t.admin.kdsScreens,
+			icon: <Monitor className="h-4 w-4" />,
+		},
+		{
+			id: "tables",
+			label: t.admin.tables || "Tables",
+			icon: <Grid3X3 className="h-4 w-4" />,
+		},
+		{
+			id: "reports",
+			label: t.admin.reports,
+			icon: <BarChart3 className="h-4 w-4" />,
+		},
+		{
+			id: "cash",
+			label: t.admin.cash,
+			icon: <DollarSign className="h-4 w-4" />,
+		},
+		{
+			id: "reservations",
+			label: t.admin.reservations,
+			icon: <Calendar className="h-4 w-4" />,
+		},
+		{
+			id: "notifications",
+			label: t.admin.notifications,
+			icon: <Bell className="h-4 w-4" />,
+		},
+		{
+			id: "settings",
+			label: t.admin.settings,
+			icon: <Wrench className="h-4 w-4" />,
+		},
 	];
 
 	return (
@@ -216,7 +260,9 @@ export default function AdminPanel() {
 								reservationForm={state.reservationForm}
 								setReservationForm={state.setReservationForm}
 								handleSaveReservation={state.handleSaveReservation}
-								handleUpdateReservationStatus={state.handleUpdateReservationStatus}
+								handleUpdateReservationStatus={
+									state.handleUpdateReservationStatus
+								}
 								statusLabels={state.statusLabels}
 							/>
 						)}
@@ -226,7 +272,7 @@ export default function AdminPanel() {
 								unreadCount={state.unreadCount}
 								handleMarkAllRead={state.handleMarkAllRead}
 							/>
-						 )}
+						)}
 						{activeTab === "settings" && (
 							<SettingsTab
 								settingsLoaded={state.settingsLoaded}
