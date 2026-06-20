@@ -1,6 +1,6 @@
-# Saffron & Spice — Restaurant Management Platform
+# Restaurant — Restaurant Management Platform
 
-A full-featured bilingual (EN/AR) restaurant management platform built with Next.js, Tailwind CSS, shadcn/ui, and Prisma.
+A full-featured bilingual (EN/AR) restaurant management platform built with Next.js, Tailwind CSS, shadcn/ui, and Prisma. Restaurant name and all branding are fully configurable from the admin panel — no hardcoded values.
 
 ## Features
 
@@ -24,6 +24,7 @@ A full-featured bilingual (EN/AR) restaurant management platform built with Next
 | UI             | Tailwind CSS 4, shadcn/ui, Radix UI     |
 | State          | Zustand, TanStack Query                 |
 | Database       | PostgreSQL (Neon) via Prisma ORM        |
+| Branding       | Fully admin-configurable (no hardcoded) |
 | Auth           | NextAuth.js                             |
 | Real-time      | Socket.IO                               |
 | Forms          | React Hook Form + Zod                  |
@@ -92,4 +93,4 @@ The Prisma schema (`prisma/schema.prisma`) covers:
 
 ## License
 
-Proprietary — Saffron & Spice
+Proprietary
