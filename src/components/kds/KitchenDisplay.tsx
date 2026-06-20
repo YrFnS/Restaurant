@@ -165,7 +165,8 @@ export function KitchenDisplay({ slug, initialScreen, initialSettings }: Kitchen
   // ── WebSocket ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!screen) return;
-    const socket = io("/?XTransformPort=3003", { transports: ["websocket"] });
+    const kdsPort = process.env.NEXT_PUBLIC_KDS_PORT || "3003";
+    const socket = io(`/?XTransformPort=${kdsPort}`, { transports: ["websocket"] });
     socketRef.current = socket;
     socket.on("connect", () => {
       setSocketConnected(true);

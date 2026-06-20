@@ -5,7 +5,7 @@
 //
 // This MUST only be imported from server code (API routes, server actions).
 
-const KDS_REALTIME_URL = "http://localhost:3003/broadcast";
+const KDS_REALTIME_URL = process.env.KDS_REALTIME_URL || "http://localhost:3003/broadcast";
 
 type BroadcastType =
   | "order:new"
