@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+bun.lockb
+
+# Next.js
+.next/
+.standalone/
+out/
+
+# Build output
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Database
+db/custom.db
+db/custom.db-journal
+db/custom.db-wal
+db/custom.db-shm
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+dev.log
+server.log
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Prisma
+prisma/migrations/
+
+# Misc
+.temp/
+.cache/
