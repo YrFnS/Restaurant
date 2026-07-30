@@ -67,6 +67,7 @@ export interface KdsAllDayItem {
 export interface KdsKitchenResponse {
   orders: KdsOrder[];
   allDay: KdsAllDayItem[];
+  totalToday: number;
 }
 
 export interface KdsStation {
