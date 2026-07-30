@@ -5,7 +5,7 @@ import {
   ORDER_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
-import { broadcastKds } from "@/lib/kds/broadcast";
+import { flushKdsOutboxBestEffort, queueKdsEvent } from "@/lib/kds/outbox";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const orderStatusSchema = z
@@ -140,16 +140,19 @@ export async function PATCH(
         });
       }
 
+      await queueKdsEvent(tx, {
+        type: "order:status",
+        screenSlugs: [],
+        payload: { orderId: id, status: nextStatus },
+      });
+
       return tx.order.findUniqueOrThrow({
         where: { id },
         include: { items: { include: { menuItem: true } }, table: true },
       });
     });
 
-    await broadcastKds({
-      type: "order:status",
-      payload: { orderId: order.id, status: nextStatus },
-    });
+    await flushKdsOutboxBestEffort(10);
 
     return NextResponse.json({ order });
   } catch (error) {

@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth/guard";
-import { broadcastKds } from "@/lib/kds/broadcast";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+  resolveKdsScreenSlugs,
+} from "@/lib/kds/outbox";
 
 const ITEM_OPERATION_ROLES = [
   "owner",
@@ -106,17 +110,23 @@ export async function PATCH(
         });
       }
 
+      const targetScreenSlugs = await resolveKdsScreenSlugs(tx, [
+        updated.stationSlug,
+      ]);
+      await queueKdsEvent(tx, {
+        type: "order:update",
+        screenSlugs: targetScreenSlugs,
+        payload: {
+          orderId: existing.orderId,
+          itemId: updated.id,
+          status: nextStatus,
+        },
+      });
+
       return updated;
     });
 
-    await broadcastKds({
-      type: "order:update",
-      payload: {
-        orderId: existing.orderId,
-        itemId: item.id,
-        status: nextStatus,
-      },
-    });
+    await flushKdsOutboxBestEffort(10);
 
     return NextResponse.json({ item });
   } catch (error) {

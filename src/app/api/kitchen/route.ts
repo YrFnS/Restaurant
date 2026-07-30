@@ -6,7 +6,11 @@ import {
   KITCHEN_OPERATION_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
-import { broadcastKds } from "@/lib/kds/broadcast";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+  resolveKdsScreenSlugs,
+} from "@/lib/kds/outbox";
 
 const slugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 const kitchenQuerySchema = z
@@ -296,17 +300,23 @@ export async function PATCH(req: NextRequest) {
           });
         }
 
+        const targetScreenSlugs = await resolveKdsScreenSlugs(tx, [
+          updated.stationSlug,
+        ]);
+        await queueKdsEvent(tx, {
+          type: "order:update",
+          screenSlugs: targetScreenSlugs,
+          payload: {
+            orderId: existing.orderId,
+            itemId: updated.id,
+            status: nextStatus,
+          },
+        });
+
         return updated;
       });
 
-      await broadcastKds({
-        type: "order:update",
-        payload: {
-          orderId: existing.orderId,
-          itemId: item.id,
-          status: nextStatus,
-        },
-      });
+      await flushKdsOutboxBestEffort(10);
 
       return NextResponse.json({ item });
     }
@@ -347,6 +357,12 @@ export async function PATCH(req: NextRequest) {
           data: { status: "cleaning", seatedAt: null },
         });
       }
+
+      await queueKdsEvent(tx, {
+        type: "order:status",
+        screenSlugs: [],
+        payload: { orderId, status: "completed" },
+      });
 
       return tx.order.findUniqueOrThrow({
         where: { id: orderId },

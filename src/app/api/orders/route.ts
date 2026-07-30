@@ -17,7 +17,11 @@ import {
   OrderAccessConfigurationError,
   orderIdFromIdempotencyKey,
 } from "@/lib/orders/access";
-import { broadcastKds, stationSlugsFromItems } from "@/lib/kds/broadcast";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+  resolveKdsScreenSlugs,
+} from "@/lib/kds/outbox";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 import {
   consumeRateLimit,
@@ -352,31 +356,20 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      const targetScreenSlugs = await resolveKdsScreenSlugs(
+        tx,
+        created.items.map((item) => item.stationSlug)
+      );
+      await queueKdsEvent(tx, {
+        type: "order:new",
+        screenSlugs: targetScreenSlugs,
+        payload: { orderId: created.id, orderNumber: created.orderNumber },
+      });
+
       return created;
     });
 
-    try {
-      const itemStationSlugs = stationSlugsFromItems(order.items);
-      const screens = await db.kitchenScreen.findMany({
-        where: { isActive: true },
-        select: { slug: true, stationFilter: true, screenType: true },
-      });
-      const targetScreenSlugs = screens
-        .filter((screen) => {
-          if (screen.screenType === "expo") return true;
-          if (!screen.stationFilter) return true;
-          const filter = screen.stationFilter.split(",").filter(Boolean);
-          return filter.some((slug) => itemStationSlugs.includes(slug));
-        })
-        .map((screen) => screen.slug);
-      await broadcastKds({
-        type: "order:new",
-        screenSlugs: targetScreenSlugs,
-        payload: { orderId: order.id, orderNumber: order.orderNumber },
-      });
-    } catch (error) {
-      console.warn("[orders] KDS notification failed", error);
-    }
+    await flushKdsOutboxBestEffort(10);
 
     return NextResponse.json(publicOrderResponse(order), {
       status: 201,

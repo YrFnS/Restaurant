@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { PrismaClient } from "@prisma/client";
 
 const BASE_URL = (process.env.P0_BASE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 const SOURCE_IP = "198.51.100.27";
+const integrationDb = new PrismaClient();
 
 interface ApiResponse<T> {
   response: Response;
@@ -223,6 +225,49 @@ async function main() {
     "Distinct concurrent orders must receive unique references"
   );
 
+  logStep("durable KDS events are committed with order and status changes");
+  const queuedNewOrder = await integrationDb.kdsOutboxEvent.findFirst({
+    where: { eventType: "order:new" },
+    orderBy: { createdAt: "asc" },
+  });
+  assert.ok(queuedNewOrder, "Order creation must enqueue a durable KDS event");
+  assert.ok(
+    JSON.stringify(queuedNewOrder.payload).includes(firstOrder.data.order.id),
+    "The durable new-order event must identify the created order"
+  );
+
+  const statusUpdate = await api<any>(
+    `/api/orders/${encodeURIComponent(firstOrder.data.order.id)}`,
+    {
+      method: "PATCH",
+      headers: { cookie: sessionCookie },
+      body: JSON.stringify({ status: "preparing" }),
+    }
+  );
+  assertStatus(statusUpdate.response, 200, "Authorized order status update");
+
+  const firstItemId = firstOrder.data.order.items[0]?.id;
+  assert.ok(firstItemId, "Created order must contain an item");
+  const itemUpdate = await api<any>(
+    `/api/orders/items/${encodeURIComponent(firstItemId)}`,
+    {
+      method: "PATCH",
+      headers: { cookie: sessionCookie },
+      body: JSON.stringify({ status: "preparing" }),
+    }
+  );
+  assertStatus(itemUpdate.response, 200, "Authorized order-item status update");
+
+  const queuedStatusEvents = await integrationDb.kdsOutboxEvent.findMany({
+    where: { eventType: { in: ["order:status", "order:update"] } },
+  });
+  assert.ok(
+    queuedStatusEvents.some((event) =>
+      JSON.stringify(event.payload).includes(firstOrder.data.order.id)
+    ),
+    "Order and item mutations must enqueue durable KDS events"
+  );
+
   logStep("tracking requires the opaque credential and returns a redacted DTO");
   const orderNumber = String(firstOrder.data.order.orderNumber).replace(/^#/, "");
   const trackingWithoutToken = await api<any>(
@@ -316,7 +361,11 @@ async function main() {
   console.log("\n[p0-integration] All database-backed smoke assertions passed.");
 }
 
-main().catch((error) => {
-  console.error("\n[p0-integration] Smoke test failed:", error);
-  process.exitCode = 1;
-});
+main()
+  .catch((error) => {
+    console.error("\n[p0-integration] Smoke test failed:", error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await integrationDb.$disconnect();
+  });
