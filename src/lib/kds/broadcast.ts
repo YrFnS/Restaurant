@@ -1,64 +1,79 @@
-// Server-only helper: notify the kds-realtime WebSocket service to broadcast
-// an update to connected KDS screens. Used by /api/orders POST and
-// /api/kitchen PATCH so screens update instantly without waiting for the
-// next poll.
-//
-// This MUST only be imported from server code (API routes, server actions).
+import "server-only";
 
-const KDS_REALTIME_URL = process.env.KDS_REALTIME_URL || "http://localhost:3003/broadcast";
+const KDS_REALTIME_URL =
+  process.env.KDS_REALTIME_URL || "http://localhost:3003/broadcast";
 
-type BroadcastType =
+export type KdsBroadcastType =
   | "order:new"
   | "order:update"
   | "order:status"
   | "screen:update";
 
-interface BroadcastPayload {
-  type?: BroadcastType;
+export interface KdsBroadcastPayload {
+  type?: KdsBroadcastType;
   /** Slugs of screens that should receive the update. Empty/undefined = all. */
   screenSlugs?: string[];
   payload?: unknown;
 }
 
+export class KdsBroadcastError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KdsBroadcastError";
+  }
+}
+
 /**
- * Fire-and-forget broadcast. Errors are swallowed (KDS will still poll).
- * Server-to-server call — this is allowed to use a direct localhost URL.
+ * Deliver one event to the realtime service. Failures are surfaced so the
+ * transactional outbox can retain and retry the event. KDS polling remains a
+ * display fallback, but it is no longer the only recovery mechanism.
  */
 export async function broadcastKds({
   type = "order:update",
   screenSlugs,
   payload,
-}: BroadcastPayload = {}): Promise<void> {
+}: KdsBroadcastPayload = {}): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1_500);
+
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
-    await fetch(KDS_REALTIME_URL, {
+    const response = await fetch(KDS_REALTIME_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type,
-        screenSlugs: screenSlugs?.filter(Boolean) ?? [],
+        screenSlugs: Array.from(
+          new Set((screenSlugs || []).filter(Boolean))
+        ),
         payload: payload ?? null,
       }),
       signal: controller.signal,
     });
-    clearTimeout(timeout);
-  } catch (e) {
-    // Mini-service may be down — silent fail; polling will catch up.
-    if (process.env.NODE_ENV !== "production") {
-      console.warn("[kds/broadcast] failed:", e);
+
+    if (!response.ok) {
+      throw new KdsBroadcastError(
+        `KDS realtime service returned HTTP ${response.status}`
+      );
     }
+  } catch (error) {
+    if (error instanceof KdsBroadcastError) throw error;
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new KdsBroadcastError("KDS realtime delivery timed out");
+    }
+    throw new KdsBroadcastError(
+      error instanceof Error ? error.message : "KDS realtime delivery failed"
+    );
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-/**
- * Compute the unique station slugs from an order's items. Used to scope the
- * broadcast to only the screens that show those stations.
- */
-export function stationSlugsFromItems(items: { stationSlug?: string | null }[]): string[] {
+export function stationSlugsFromItems(
+  items: { stationSlug?: string | null }[]
+): string[] {
   const set = new Set<string>();
-  items.forEach((i) => {
-    if (i.stationSlug) set.add(i.stationSlug);
+  items.forEach((item) => {
+    if (item.stationSlug) set.add(item.stationSlug);
   });
   return Array.from(set);
 }
