@@ -8,20 +8,15 @@ import {
 } from "../../src/lib/auth/pin";
 
 const previousPepper = process.env.AUTH_PIN_PEPPER;
-const previousNodeEnv = process.env.NODE_ENV;
 
 beforeAll(() => {
   process.env.AUTH_PIN_PEPPER =
     "unit-test-pin-pepper-0123456789abcdef0123456789abcdef";
-  process.env.NODE_ENV = "test";
 });
 
 afterAll(() => {
   if (previousPepper === undefined) delete process.env.AUTH_PIN_PEPPER;
   else process.env.AUTH_PIN_PEPPER = previousPepper;
-
-  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-  else process.env.NODE_ENV = previousNodeEnv;
 });
 
 describe("staff PIN verifier", () => {
