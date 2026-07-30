@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireStaffSession } from "@/lib/auth/guard";
+import {
+  ORDER_MANAGEMENT_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
 import { getStaffSession } from "@/lib/auth/session";
 import {
   calculateOrderPricing,
@@ -29,16 +32,6 @@ import {
   rateLimitHeaders,
 } from "@/lib/security/rate-limit";
 
-const ORDER_READ_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "cashier",
-  "server",
-  "cook",
-  "bartender",
-  "analyst",
-] as const;
 const orderStatusSchema = z.enum([
   "pending",
   "confirmed",
@@ -59,38 +52,6 @@ const orderQuerySchema = z
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const ORDER_WINDOW_MS = 60_000;
 const MAX_ORDERS_PER_WINDOW = 20;
-
-type RateBucket = { count: number; resetAt: number };
-const globalForOrderRateLimit = globalThis as unknown as {
-  restaurantOrderRateLimits?: Map<string, RateBucket>;
-};
-const orderRateLimits =
-  globalForOrderRateLimit.restaurantOrderRateLimits ?? new Map<string, RateBucket>();
-if (!globalForOrderRateLimit.restaurantOrderRateLimits) {
-  globalForOrderRateLimit.restaurantOrderRateLimits = orderRateLimits;
-}
-
-function getClientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeOrderRateLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = orderRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + ORDER_WINDOW_MS };
-
-  bucket.count += 1;
-  orderRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_ORDERS_PER_WINDOW) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
 
 function generateOrderNumber(): string {
   const date = new Date().toISOString().slice(2, 10).replaceAll("-", "");
@@ -117,7 +78,7 @@ async function findExistingIdempotentOrder(orderId: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireStaffSession(ORDER_READ_ROLES);
+  const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
   if ("response" in auth) return auth.response;
 
   const parsed = orderQuerySchema.safeParse(
