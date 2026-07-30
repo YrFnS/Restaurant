@@ -4,14 +4,12 @@ mock.module("server-only", () => ({}));
 
 const previousOrderSecret = process.env.AUTH_ORDER_ACCESS_SECRET;
 const previousCustomerSecret = process.env.AUTH_CUSTOMER_ACCESS_SECRET;
-const previousNodeEnv = process.env.NODE_ENV;
 
 beforeAll(() => {
   process.env.AUTH_ORDER_ACCESS_SECRET =
     "unit-test-order-secret-0123456789abcdef0123456789abcdef";
   process.env.AUTH_CUSTOMER_ACCESS_SECRET =
     "unit-test-customer-secret-0123456789abcdef0123456789abcdef";
-  process.env.NODE_ENV = "test";
 });
 
 afterAll(() => {
@@ -23,9 +21,6 @@ afterAll(() => {
   } else {
     process.env.AUTH_CUSTOMER_ACCESS_SECRET = previousCustomerSecret;
   }
-
-  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-  else process.env.NODE_ENV = previousNodeEnv;
 });
 
 describe("signed access tokens", () => {
