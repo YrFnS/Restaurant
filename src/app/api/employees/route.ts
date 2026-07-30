@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession, STAFF_ADMIN_ROLES } from "@/lib/auth/guard";
+import {
+  createPinVerifier,
+  PinConfigurationError,
+} from "@/lib/auth/pin";
 
 const EMPLOYEE_ROLES = [
   "owner",
@@ -84,14 +89,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // P0-B02 replaces this temporary plaintext compatibility field with pinHash.
+    const { pin, ...employeeData } = parsed.data;
+    const pinVerifier = await createPinVerifier(pin);
     const employee = await db.employee.create({
-      data: parsed.data,
+      data: { ...employeeData, pin: pinVerifier },
       select: safeEmployeeSelect,
     });
 
     return NextResponse.json({ employee }, { status: 201 });
   } catch (error) {
+    if (error instanceof PinConfigurationError) {
+      return NextResponse.json(
+        { error: "Authentication is not configured", code: "AUTH_NOT_CONFIGURED" },
+        { status: 503 }
+      );
+    }
+
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "That PIN is already assigned", code: "PIN_ALREADY_IN_USE" },
+        { status: 409 }
+      );
+    }
+
     console.error("[employees] Failed to create employee", error);
     return NextResponse.json(
       { error: "Unable to create employee", code: "EMPLOYEE_CREATE_FAILED" },
