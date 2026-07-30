@@ -44,6 +44,7 @@ NEXT_PUBLIC_KDS_PORT="3003"
    - `20260731223000_add_persisted_staff_sessions`
    - `20260731224500_add_shared_rate_limits`
    - `20260731230000_add_kds_outbox`
+   - `20260731231500_add_payment_event`
 
 ## Clean-database rehearsal
 
@@ -92,7 +93,7 @@ bun run auth:check-pins
 bun run build
 ```
 
-Do not mark the four P0 additive migrations as applied unless their SQL has independently and verifiably already been executed. `migrate deploy` must apply those migrations normally.
+Do not mark the five P0 additive migrations as applied unless their SQL has independently and verifiably already been executed. `migrate deploy` must apply those migrations normally.
 
 If `_prisma_migrations` already exists, stop and inspect `bunx prisma migrate status` before using `migrate resolve`. Never blindly mark a migration applied.
 
@@ -102,12 +103,31 @@ Validate:
 - all active employees can authenticate using their existing PIN
 - no employee `pin` column contains plaintext digits
 - orders, order items, customers, reservations, waitlist entries, tables, settings, menu data, inventory, and cash entries retain their expected counts
-- `AuditEvent`, `StaffSession`, `RateLimitCounter`, and `KdsOutboxEvent` exist
+- `AuditEvent`, `StaffSession`, `RateLimitCounter`, `KdsOutboxEvent`, and `PaymentEvent` exist
 - the public seed HTTP route returns `404`
 - anonymous requests receive `401` from protected APIs
 - unauthorized roles receive `403`
 - public order tracking fails without the matching signed token
 - `prisma migrate status` reports no failed or pending migrations
+
+## Privileged PIN recovery
+
+Owner/admin recovery is deliberately a local server operation, not a public HTTP endpoint. Run it from an interactive terminal with production secrets and database access already configured:
+
+```bash
+bun run auth:reset-privileged-pin -- <employee-id-or-exact-email>
+```
+
+The command:
+
+- accepts the replacement PIN only through a hidden terminal prompt
+- permits only active owner/admin targets
+- stores only the peppered memory-hard verifier
+- revokes every existing session for the target account
+- writes an immutable `auth.privileged_pin_recovery` audit event
+- never prints or logs the PIN
+
+Without an argument, the command lists eligible privileged account IDs so an operator can select an exact target. Run recovery only from a trusted host and record the related incident/change ticket outside the application.
 
 ## KDS durable outbox worker
 
@@ -146,9 +166,9 @@ Immediately verify:
 - public order quote and placement
 - KDS visibility and valid ticket progression
 - signed customer tracking
-- POS cash checkout and one matching cash drawer entry
+- POS cash checkout, one immutable payment event, and one matching cash drawer entry
 - reservation and waitlist signed access
-- audit records for login, order creation, payment, and an administrative change
+- audit records for login, order creation, payment, menu price change, and another administrative change
 - authenticated KDS outbox worker execution
 
 ## Rollback
@@ -180,7 +200,7 @@ Monitor:
 - order creation conflicts or idempotent retries
 - pending/failed `KdsOutboxEvent` rows and worker responses
 - KDS broadcast warnings and polling fallback
-- cash checkout replay responses
+- payment-event/cash-drawer mismatches and checkout replay responses
 - database transaction failures
 - unexpected `401`, `403`, `409`, or `429` rates
 
