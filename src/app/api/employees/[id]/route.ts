@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession, STAFF_ADMIN_ROLES } from "@/lib/auth/guard";
+import {
+  createPinVerifier,
+  PinConfigurationError,
+} from "@/lib/auth/pin";
 
 const EMPLOYEE_ROLES = [
   "owner",
@@ -90,15 +95,35 @@ export async function PATCH(
       );
     }
 
-    // P0-B02 replaces the optional plaintext PIN update with a hash operation.
+    const { pin, ...employeeData } = parsed.data;
+    const updateData: Prisma.EmployeeUpdateInput = { ...employeeData };
+    if (pin) updateData.pin = await createPinVerifier(pin);
+
     const employee = await db.employee.update({
       where: { id },
-      data: parsed.data,
+      data: updateData,
       select: safeEmployeeSelect,
     });
 
     return NextResponse.json({ employee });
   } catch (error) {
+    if (error instanceof PinConfigurationError) {
+      return NextResponse.json(
+        { error: "Authentication is not configured", code: "AUTH_NOT_CONFIGURED" },
+        { status: 503 }
+      );
+    }
+
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "That PIN is already assigned", code: "PIN_ALREADY_IN_USE" },
+        { status: 409 }
+      );
+    }
+
     console.error("[employees] Failed to update employee", error);
     return NextResponse.json(
       { error: "Unable to update employee", code: "EMPLOYEE_UPDATE_FAILED" },
