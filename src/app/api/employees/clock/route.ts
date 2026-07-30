@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession, STAFF_ADMIN_ROLES } from "@/lib/auth/guard";
+import { authenticateEmployeePin } from "@/lib/auth/employee-pin";
+import { PinConfigurationError } from "@/lib/auth/pin";
 
 const clockSchema = z
   .object({
@@ -42,8 +44,11 @@ export async function POST(req: NextRequest) {
     }
 
     const employee = pin
-      ? await db.employee.findUnique({ where: { pin }, select: clockEmployeeSelect })
-      : await db.employee.findUnique({ where: { id: employeeId! }, select: clockEmployeeSelect });
+      ? await authenticateEmployeePin(pin)
+      : await db.employee.findUnique({
+          where: { id: employeeId! },
+          select: clockEmployeeSelect,
+        });
 
     if (!employee?.isActive) {
       return NextResponse.json(
@@ -72,6 +77,13 @@ export async function POST(req: NextRequest) {
       sessionHours: Math.round(sessionHours * 100) / 100,
     });
   } catch (error) {
+    if (error instanceof PinConfigurationError) {
+      return NextResponse.json(
+        { error: "Authentication is not configured", code: "AUTH_NOT_CONFIGURED" },
+        { status: 503 }
+      );
+    }
+
     console.error("[employees/clock] Clock operation failed", error);
     return NextResponse.json(
       { error: "Unable to update clock status", code: "CLOCK_UPDATE_FAILED" },
