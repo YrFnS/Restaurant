@@ -18,6 +18,7 @@
     "db:seed": "bun prisma/seed.ts && bun run auth:migrate-pins",
     "auth:migrate-pins": "bun scripts/migrate-employee-pins.ts",
     "auth:check-pins": "bun scripts/check-employee-pins.ts",
+    "auth:reset-privileged-pin": "bun scripts/reset-privileged-pin.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
