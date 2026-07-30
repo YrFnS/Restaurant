@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  evaluateBrowserMutation,
+  parseAllowedOrigins,
+} from "@/lib/security/request-policy";
 
 const STAFF_SESSION_COOKIE = "restaurant_staff_session";
 const SESSION_VERSION = 1;
+const MAX_REQUEST_ID_LENGTH = 128;
 
 interface SessionTokenPayload {
   v: number;
@@ -92,10 +97,65 @@ async function hasValidSession(token: string | undefined): Promise<boolean> {
   }
 }
 
+function getRequestId(request: NextRequest): string {
+  const supplied = request.headers.get("x-request-id")?.trim();
+  if (supplied && supplied.length <= MAX_REQUEST_ID_LENGTH) return supplied;
+  return crypto.randomUUID();
+}
+
+function nextResponse(request: NextRequest, requestId: string) {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-request-id", requestId);
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+  response.headers.set("x-request-id", requestId);
+  return response;
+}
+
+function validateApiMutation(request: NextRequest, requestId: string) {
+  const decision = evaluateBrowserMutation({
+    method: request.method,
+    requestOrigin: request.nextUrl.origin,
+    originHeader: request.headers.get("origin"),
+    fetchSite: request.headers.get("sec-fetch-site"),
+    contentType: request.headers.get("content-type"),
+    hasBody: request.body !== null,
+    allowedOrigins: parseAllowedOrigins(process.env.APP_ALLOWED_ORIGINS),
+  });
+
+  if (decision.allowed) return null;
+
+  return NextResponse.json(
+    {
+      error: decision.message,
+      code: decision.code,
+      requestId,
+    },
+    {
+      status: decision.status,
+      headers: {
+        "Cache-Control": "no-store",
+        "x-request-id": requestId,
+        Vary: "Origin, Sec-Fetch-Site",
+      },
+    }
+  );
+}
+
 export async function proxy(request: NextRequest) {
+  const requestId = getRequestId(request);
+
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    const rejection = validateApiMutation(request, requestId);
+    if (rejection) return rejection;
+    return nextResponse(request, requestId);
+  }
+
   const token = request.cookies.get(STAFF_SESSION_COOKIE)?.value;
   if (await hasValidSession(token)) {
-    return NextResponse.next();
+    return nextResponse(request, requestId);
   }
 
   const loginUrl = new URL("/admin", request.url);
@@ -105,6 +165,7 @@ export async function proxy(request: NextRequest) {
   );
 
   const response = NextResponse.redirect(loginUrl);
+  response.headers.set("x-request-id", requestId);
   response.cookies.set(STAFF_SESSION_COOKIE, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -117,5 +178,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path+", "/kds/:path+"],
+  matcher: ["/admin/:path+", "/kds/:path+", "/api/:path*"],
 };
