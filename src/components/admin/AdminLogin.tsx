@@ -2,15 +2,26 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { toast } from "sonner";
 import {
-  Loader2, Lock, ArrowLeft, Languages, ShieldCheck, KeyRound,
+  Loader2,
+  Lock,
+  ArrowLeft,
+  Languages,
+  ShieldCheck,
+  KeyRound,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -20,7 +31,6 @@ export function AdminLogin() {
   const setStaff = useRestaurantStore((state) => state.setStaff);
   const queryClient = useQueryClient();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -49,7 +59,7 @@ export function AdminLogin() {
       queryClient.setQueryData(["auth-session"], data);
       toast.success(`${t.admin.welcome}, ${data.user.name}`);
 
-      const nextPath = searchParams.get("next");
+      const nextPath = new URLSearchParams(window.location.search).get("next");
       if (
         nextPath &&
         nextPath.startsWith("/") &&
@@ -89,11 +99,16 @@ export function AdminLogin() {
             <CardDescription className="text-base font-medium">
               {t.admin.login}
             </CardDescription>
-            <p className="text-xs text-muted-foreground mt-1">{t.admin.loginDesc}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t.admin.loginDesc}
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <label htmlFor="staff-pin" className="text-sm font-medium flex items-center gap-1.5">
+              <label
+                htmlFor="staff-pin"
+                className="text-sm font-medium flex items-center gap-1.5"
+              >
                 <KeyRound className="size-4 text-primary" />
                 {t.admin.pin}
               </label>
@@ -131,7 +146,9 @@ export function AdminLogin() {
             <div className="flex items-center justify-between pt-3 border-t">
               <Link href="/">
                 <Button variant="ghost" size="sm" className="gap-1.5">
-                  <ArrowLeft className={isRTL ? "size-4 rotate-180" : "size-4"} />
+                  <ArrowLeft
+                    className={isRTL ? "size-4 rotate-180" : "size-4"}
+                  />
                   {t.common.back}
                 </Button>
               </Link>
@@ -150,7 +167,9 @@ export function AdminLogin() {
 
         <p className="text-center text-xs text-muted-foreground mt-6 flex items-center justify-center gap-1.5">
           <Lock className="size-3" />
-          {isRTL ? "محمية بجلسة آمنة للموظفين" : "Protected by a secure staff session"}
+          {isRTL
+            ? "محمية بجلسة آمنة للموظفين"
+            : "Protected by a secure staff session"}
         </p>
       </motion.div>
     </div>
