@@ -1,157 +1,399 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { db } from "@/lib/db";
+import {
+  KITCHEN_OPERATION_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
 import { broadcastKds } from "@/lib/kds/broadcast";
 
-// Get active orders for a KDS screen (filtered by station)
+const slugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
+const kitchenQuerySchema = z
+  .object({
+    station: slugSchema.optional(),
+    screen: slugSchema.optional(),
+    completed: z.enum(["true", "false"]).optional(),
+  })
+  .strict()
+  .refine((value) => !(value.station && value.screen), {
+    message: "Use either station or screen, not both",
+  });
+
+const itemPatchSchema = z
+  .object({
+    itemId: z.string().trim().min(1).max(191),
+    status: z.enum(["preparing", "ready", "served", "cancelled"]),
+  })
+  .strict();
+
+const orderPatchSchema = z
+  .object({
+    orderId: z.string().trim().min(1).max(191),
+    status: z.literal("completed"),
+  })
+  .strict();
+
+const kitchenPatchSchema = z.union([itemPatchSchema, orderPatchSchema]);
+
+const ITEM_TRANSITIONS: Record<string, readonly string[]> = {
+  pending: ["preparing", "ready", "cancelled"],
+  preparing: ["ready", "cancelled"],
+  ready: ["served", "cancelled"],
+  served: [],
+  cancelled: [],
+};
+
+const KDS_ORDER_SELECT = {
+  id: true,
+  orderNumber: true,
+  type: true,
+  status: true,
+  customerName: true,
+  notes: true,
+  serverName: true,
+  tableId: true,
+  estimatedReady: true,
+  completedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  table: {
+    select: {
+      id: true,
+      number: true,
+      section: true,
+    },
+  },
+} as const;
+
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const stationSlug = searchParams.get("station");
-  const screenSlug = searchParams.get("screen");
-  const includeCompleted = searchParams.get("completed") === "true";
+  const auth = await requireStaffSession(KITCHEN_OPERATION_ROLES);
+  if ("response" in auth) return auth.response;
 
-  let stationFilter: string[] = [];
-  if (screenSlug) {
-    const screen = await db.kitchenScreen.findUnique({ where: { slug: screenSlug } });
-    if (screen) {
-      stationFilter = screen.stationFilter ? screen.stationFilter.split(",").filter(Boolean) : [];
+  const parsed = kitchenQuerySchema.safeParse(
+    Object.fromEntries(new URL(req.url).searchParams.entries())
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid kitchen query", code: "VALIDATION_ERROR" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    let stationFilter: string[] = [];
+    let maximumOrders = 200;
+
+    if (parsed.data.screen) {
+      const screen = await db.kitchenScreen.findUnique({
+        where: { slug: parsed.data.screen },
+        select: {
+          isActive: true,
+          stationFilter: true,
+          maxOrders: true,
+        },
+      });
+
+      if (!screen?.isActive) {
+        return NextResponse.json(
+          { error: "Kitchen screen not found", code: "KDS_SCREEN_NOT_FOUND" },
+          { status: 404 }
+        );
+      }
+
+      stationFilter = screen.stationFilter
+        ? screen.stationFilter.split(",").filter(Boolean)
+        : [];
+      if (screen.maxOrders > 0) {
+        maximumOrders = Math.min(screen.maxOrders, 200);
+      }
+    } else if (parsed.data.station) {
+      stationFilter = [parsed.data.station];
     }
-  } else if (stationSlug) {
-    stationFilter = [stationSlug];
-  }
 
-  const orderItemWhere: any = {};
-  if (stationFilter.length > 0) {
-    orderItemWhere.stationSlug = { in: stationFilter };
-  }
-  if (!includeCompleted) {
-    orderItemWhere.status = { notIn: ["served", "cancelled"] };
-  } else {
-    orderItemWhere.status = { not: "cancelled" };
-  }
+    const includeCompleted = parsed.data.completed === "true";
+    const orderItemWhere: Prisma.OrderItemWhereInput = {
+      ...(stationFilter.length > 0
+        ? { stationSlug: { in: stationFilter } }
+        : {}),
+      status: includeCompleted
+        ? { not: "cancelled" }
+        : { notIn: ["served", "cancelled"] },
+    };
 
-  const orders = await db.order.findMany({
-    where: {
-      status: { in: includeCompleted ? ["confirmed", "preparing", "ready", "completed"] : ["confirmed", "preparing", "ready"] },
-      items: { some: orderItemWhere },
-    },
-    orderBy: { createdAt: "asc" },
-    include: {
-      items: {
-        where: orderItemWhere,
-        include: { menuItem: true },
-        orderBy: { course: "asc" },
+    const orders = await db.order.findMany({
+      where: {
+        status: {
+          in: includeCompleted
+            ? ["confirmed", "preparing", "ready", "completed"]
+            : ["confirmed", "preparing", "ready"],
+        },
+        items: { some: orderItemWhere },
       },
-      table: true,
-    },
-  });
-
-  // "All Day" counts: aggregate item quantities across active orders
-  const allDay: Record<string, { nameEn: string; nameAr: string; count: number }> = {};
-  orders.forEach((o) => {
-    o.items.forEach((it) => {
-      const key = it.menuItemId;
-      if (!allDay[key]) allDay[key] = { nameEn: it.menuItem.nameEn, nameAr: it.menuItem.nameAr, count: 0 };
-      allDay[key].count += it.quantity;
+      orderBy: { createdAt: "asc" },
+      take: maximumOrders,
+      select: {
+        ...KDS_ORDER_SELECT,
+        items: {
+          where: orderItemWhere,
+          orderBy: [{ course: "asc" }, { createdAt: "asc" }],
+          select: {
+            id: true,
+            orderId: true,
+            menuItemId: true,
+            quantity: true,
+            modifiers: true,
+            notes: true,
+            status: true,
+            stationSlug: true,
+            course: true,
+            hold: true,
+            firedAt: true,
+            readyAt: true,
+            seatNumber: true,
+            createdAt: true,
+            updatedAt: true,
+            menuItem: {
+              select: {
+                id: true,
+                nameEn: true,
+                nameAr: true,
+                allergens: true,
+                dietary: true,
+              },
+            },
+          },
+        },
+      },
     });
-  });
 
-  return NextResponse.json({ orders, allDay: Object.values(allDay) });
+    const allDay: Record<
+      string,
+      { nameEn: string; nameAr: string; count: number }
+    > = {};
+    orders.forEach((order) => {
+      order.items.forEach((item) => {
+        if (!allDay[item.menuItemId]) {
+          allDay[item.menuItemId] = {
+            nameEn: item.menuItem.nameEn,
+            nameAr: item.menuItem.nameAr,
+            count: 0,
+          };
+        }
+        allDay[item.menuItemId].count += item.quantity;
+      });
+    });
+
+    return NextResponse.json(
+      { orders, allDay: Object.values(allDay) },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
+    console.error("[kitchen] Failed to load KDS orders", error);
+    return NextResponse.json(
+      { error: "Unable to load kitchen orders", code: "KDS_LOAD_FAILED" },
+      { status: 500 }
+    );
+  }
 }
 
-// Update an order item status (start / ready / bump / recall)
 export async function PATCH(req: NextRequest) {
+  const auth = await requireStaffSession(KITCHEN_OPERATION_ROLES);
+  if ("response" in auth) return auth.response;
+
   try {
-    const body = await req.json();
-    const { itemId, status, orderId } = body;
+    const parsed = kitchenPatchSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid kitchen update", code: "VALIDATION_ERROR" },
+        { status: 400 }
+      );
+    }
 
-    if (itemId) {
-      const update: any = { status };
-      if (status === "preparing") update.firedAt = new Date();
-      if (status === "ready") update.readyAt = new Date();
-      const item = await db.orderItem.update({ where: { id: itemId }, data: update, include: { menuItem: true } });
-
-      // check if all items in the order are ready -> mark order ready
-      const orderItems = await db.orderItem.findMany({ where: { orderId: item.orderId } });
-      const allReady = orderItems.every((i) => i.status === "ready" || i.status === "served");
-      if (allReady && orderItems.length > 0) {
-        await db.order.update({ where: { id: item.orderId }, data: { status: "ready" } });
-      } else if (status === "preparing") {
-        await db.order.update({ where: { id: item.orderId }, data: { status: "preparing" } });
-      }
-
-      // ── Broadcast update to relevant KDS screens ────────────────────────
-      try {
-        const stationSlugs = Array.from(
-          new Set(orderItems.map((i) => i.stationSlug).filter(Boolean) as string[])
+    if ("itemId" in parsed.data) {
+      const { itemId, status: nextStatus } = parsed.data;
+      const existing = await db.orderItem.findUnique({
+        where: { id: itemId },
+        select: { id: true, orderId: true, status: true },
+      });
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Order item not found", code: "ORDER_ITEM_NOT_FOUND" },
+          { status: 404 }
         );
-        const screens = await db.kitchenScreen.findMany({
-          where: { isActive: true },
-          select: { slug: true, stationFilter: true, screenType: true },
-        });
-        const target = screens
-          .filter((s) => {
-            if (s.screenType === "expo") return true;
-            if (!s.stationFilter) return true;
-            const f = s.stationFilter.split(",").filter(Boolean);
-            return f.some((slug) => stationSlugs.includes(slug));
-          })
-          .map((s) => s.slug);
-        await broadcastKds({
-          type: "order:update",
-          screenSlugs: target,
-          payload: { orderId: item.orderId, itemId: item.id, status },
-        });
-      } catch {
-        /* best-effort */
       }
+
+      if (nextStatus !== existing.status) {
+        const allowed = ITEM_TRANSITIONS[existing.status] || [];
+        if (!allowed.includes(nextStatus)) {
+          return NextResponse.json(
+            {
+              error: `Item cannot move from ${existing.status} to ${nextStatus}`,
+              code: "INVALID_STATUS_TRANSITION",
+            },
+            { status: 409 }
+          );
+        }
+      }
+
+      const item = await db.$transaction(async (tx) => {
+        const updated = await tx.orderItem.update({
+          where: { id: itemId },
+          data: {
+            status: nextStatus,
+            ...(nextStatus === "preparing" ? { firedAt: new Date() } : {}),
+            ...(nextStatus === "ready" ? { readyAt: new Date() } : {}),
+            ...(nextStatus === "cancelled" ? { hold: false } : {}),
+          },
+          select: {
+            id: true,
+            orderId: true,
+            menuItemId: true,
+            quantity: true,
+            modifiers: true,
+            notes: true,
+            status: true,
+            stationSlug: true,
+            course: true,
+            hold: true,
+            firedAt: true,
+            readyAt: true,
+            seatNumber: true,
+            menuItem: {
+              select: {
+                id: true,
+                nameEn: true,
+                nameAr: true,
+                allergens: true,
+                dietary: true,
+              },
+            },
+          },
+        });
+
+        const siblings = await tx.orderItem.findMany({
+          where: { orderId: existing.orderId },
+          select: { status: true },
+        });
+        const activeItems = siblings.filter(
+          (sibling) => sibling.status !== "cancelled"
+        );
+
+        if (
+          activeItems.length > 0 &&
+          activeItems.every((sibling) =>
+            ["ready", "served"].includes(sibling.status)
+          )
+        ) {
+          await tx.order.update({
+            where: { id: existing.orderId },
+            data: { status: "ready" },
+          });
+        } else if (nextStatus === "preparing") {
+          await tx.order.update({
+            where: { id: existing.orderId },
+            data: { status: "preparing" },
+          });
+        }
+
+        return updated;
+      });
+
+      await broadcastKds({
+        type: "order:update",
+        payload: {
+          orderId: existing.orderId,
+          itemId: item.id,
+          status: nextStatus,
+        },
+      });
 
       return NextResponse.json({ item });
     }
 
-    if (orderId) {
-      const order = await db.order.update({
-        where: { id: orderId },
-        data: { status },
-        include: { items: { include: { menuItem: true } }, table: true },
-      });
-      if (status === "completed") {
-        await db.orderItem.updateMany({ where: { orderId }, data: { status: "served" } });
-        if (order.tableId) {
-          await db.restaurantTable.update({ where: { id: order.tableId }, data: { status: "cleaning", seatedAt: null } });
-        }
-      }
-
-      // ── Broadcast order status update to relevant KDS screens ──────────
-      try {
-        const stationSlugs = Array.from(
-          new Set(order.items.map((i) => i.stationSlug).filter(Boolean) as string[])
-        );
-        const screens = await db.kitchenScreen.findMany({
-          where: { isActive: true },
-          select: { slug: true, stationFilter: true, screenType: true },
-        });
-        const target = screens
-          .filter((s) => {
-            if (s.screenType === "expo") return true;
-            if (!s.stationFilter) return true;
-            const f = s.stationFilter.split(",").filter(Boolean);
-            return f.some((slug) => stationSlugs.includes(slug));
-          })
-          .map((s) => s.slug);
-        await broadcastKds({
-          type: "order:status",
-          screenSlugs: target,
-          payload: { orderId: order.id, status },
-        });
-      } catch {
-        /* best-effort */
-      }
-
-      return NextResponse.json({ order });
+    const { orderId } = parsed.data;
+    const existingOrder = await db.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true, tableId: true },
+    });
+    if (!existingOrder) {
+      return NextResponse.json(
+        { error: "Order not found", code: "ORDER_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+    if (!["confirmed", "preparing", "ready"].includes(existingOrder.status)) {
+      return NextResponse.json(
+        {
+          error: `Order cannot be completed from ${existingOrder.status}`,
+          code: "INVALID_STATUS_TRANSITION",
+        },
+        { status: 409 }
+      );
     }
 
-    return NextResponse.json({ error: "itemId or orderId required" }, { status: 400 });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    const order = await db.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: "completed", completedAt: new Date() },
+      });
+      await tx.orderItem.updateMany({
+        where: { orderId, status: { not: "cancelled" } },
+        data: { status: "served" },
+      });
+      if (existingOrder.tableId) {
+        await tx.restaurantTable.update({
+          where: { id: existingOrder.tableId },
+          data: { status: "cleaning", seatedAt: null },
+        });
+      }
+
+      return tx.order.findUniqueOrThrow({
+        where: { id: orderId },
+        select: {
+          ...KDS_ORDER_SELECT,
+          items: {
+            orderBy: [{ course: "asc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              orderId: true,
+              menuItemId: true,
+              quantity: true,
+              modifiers: true,
+              notes: true,
+              status: true,
+              stationSlug: true,
+              course: true,
+              hold: true,
+              firedAt: true,
+              readyAt: true,
+              seatNumber: true,
+              menuItem: {
+                select: {
+                  id: true,
+                  nameEn: true,
+                  nameAr: true,
+                  allergens: true,
+                  dietary: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    await broadcastKds({
+      type: "order:status",
+      payload: { orderId: order.id, status: "completed" },
+    });
+
+    return NextResponse.json({ order });
+  } catch (error) {
+    console.error("[kitchen] Failed to update KDS state", error);
+    return NextResponse.json(
+      { error: "Unable to update kitchen state", code: "KDS_UPDATE_FAILED" },
+      { status: 500 }
+    );
   }
 }
