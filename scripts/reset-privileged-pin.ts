@@ -186,8 +186,9 @@ async function main() {
 }
 
 main()
-  .catch((error) => {
-    console.error(`[auth:reset-privileged-pin] ${error.message}`);
+  .catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[auth:reset-privileged-pin] ${message}`);
     process.exitCode = 1;
   })
   .finally(async () => {
