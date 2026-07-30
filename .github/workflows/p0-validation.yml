@@ -9,7 +9,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: p0-validation-${{ github.ref }}
@@ -38,8 +38,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -48,25 +46,6 @@ jobs:
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
-
-      - name: Materialize shared rate-limit schema
-        run: python3 scripts/materialize-shared-rate-limits.py
-
-      - name: Migrate public routes to shared rate limits
-        run: python3 scripts/apply-shared-rate-limit-routes.py
-
-      - name: Commit shared rate-limit implementation
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          if git diff --quiet; then
-            echo "Shared rate-limit implementation is already current."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add prisma/schema.prisma src/app/api
-          git commit -m "security: migrate public endpoints to shared rate limits"
-          git push origin HEAD:${GITHUB_HEAD_REF}
 
       - name: Validate Prisma schema
         run: bunx prisma validate
