@@ -242,6 +242,7 @@ async function main() {
     const ord = await db.order.create({ data: { orderNumber: `#${oCnt++}`, type: od.type, status: od.status, customerName: od.type === "dine_in" ? `Table ${od.tN}` : "Walk-in", customerPhone: "", subtotal: sub, taxAmount: tax, deliveryFee: od.type === "delivery" ? 4.99 : 0, total: sub + tax + (od.type === "delivery" ? 4.99 : 0), paymentStatus: od.status === "ready" ? "paid" : "unpaid", serverName: "Sarah", tableId: tbl?.id, estimatedReady: futureDate(0) } });
     for (let k = 0; k < oi.length; k++) {
       const it = oi[k];
+      if (!it) continue;
       await db.orderItem.create({ data: { orderId: ord.id, menuItemId: it.id, quantity: 1, unitPrice: it.price, totalPrice: it.price, modifiers: "[]", status: k === 0 ? "preparing" : "pending", stationSlug: stByCat[it.id] || "prep", course: k < 2 ? 1 : 2, hold: false, firedAt: k === 0 ? pastDate(0) : null } });
     }
   }

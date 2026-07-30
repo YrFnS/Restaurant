@@ -93,12 +93,12 @@ export function ReservationsTab() {
   ];
 
   // Group by date
-  const grouped = filtered.reduce((acc, r) => {
-    const d = new Date(r.dateTime).toDateString();
-    if (!acc[d]) acc[d] = [];
-    acc[d].push(r);
+  const grouped = filtered.reduce<Record<string, any[]>>((acc, reservation) => {
+    const date = new Date(reservation.dateTime).toDateString();
+    if (!acc[date]) acc[date] = [];
+    acc[date].push(reservation);
     return acc;
-  }, {} as Record<string, any[]>);
+  }, {});
 
   return (
     <div className="space-y-4 max-w-[1600px]">

@@ -1,8 +1,9 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRestaurantStore } from "@/lib/store";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,6 +18,13 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 
+function createIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `qr-order-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
 interface CartLine {
   menuItemId: string;
   nameEn: string; nameAr: string;
@@ -28,7 +36,9 @@ interface CartLine {
 export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: string }> }) {
   const { t, isRTL, fmtCurrency, fmtNumber } = useI18n();
   const { tableNumber } = use(params);
-  const qc = useQueryClient();
+  const rememberOrderAccess = useRestaurantStore(
+    (state) => state.rememberOrderAccess
+  );
   const [query, setQuery] = useState("");
   const [activeCat, setActiveCat] = useState("all");
   const [dietary, setDietary] = useState<string[]>([]);
@@ -39,6 +49,7 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
   const [detailItem, setDetailItem] = useState<any>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   const { data: settingsData } = useQuery({
     queryKey: ["settings"],
@@ -48,16 +59,9 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
     queryKey: ["menu"],
     queryFn: async () => (await fetch("/api/menu")).json(),
   });
-  const { data: tableData } = useQuery({
-    queryKey: ["tables"],
-    queryFn: async () => (await fetch("/api/tables")).json(),
-  });
-
   const s = settingsData?.settings;
   const categories: any[] = menuData?.categories || [];
-  const tables: any[] = tableData?.tables || [];
-  const table = tables.find((t) => String(t.number) === String(tableNumber));
-  const allItems = categories.flatMap((c) => c.items);
+  const allItems = categories.flatMap((category) => category.items);
 
   const filtered = allItems.filter((i) => {
     if (activeCat !== "all" && i.categoryId !== activeCat) return false;
@@ -73,6 +77,33 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
   const subtotal = cart.reduce((s, i) => s + i.totalPrice, 0);
   const tax = subtotal * (s?.taxRate || 0.1);
   const total = subtotal + tax;
+  const orderPayload = useMemo(
+    () => ({
+      type: "dine_in" as const,
+      customerName,
+      customerPhone,
+      tableNumber,
+      notes: orderNotes || null,
+      promoCode: null,
+      tip: { mode: "none" as const },
+      items: cart.map((line) => ({
+        menuItemId: line.menuItemId,
+        quantity: line.quantity,
+        modifierOptionIds: line.modifiers.map((modifier) => modifier.id),
+        notes: line.notes || null,
+        course: 1,
+      })),
+    }),
+    [cart, customerName, customerPhone, orderNotes, tableNumber]
+  );
+  const orderFingerprint = useMemo(
+    () => JSON.stringify(orderPayload),
+    [orderPayload]
+  );
+
+  useEffect(() => {
+    idempotencyKeyRef.current = null;
+  }, [orderFingerprint]);
 
   const quickAdd = (item: any) => {
     setCart((prev) => {
@@ -110,44 +141,48 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
 
   const placeOrder = async () => {
     if (cart.length === 0) return;
-    if (!customerName) { toast.error(t.cart.customerName); return; }
+    if (!customerName) {
+      toast.error(t.cart.customerName);
+      return;
+    }
+
     setPlacing(true);
+    idempotencyKeyRef.current ??= createIdempotencyKey();
+
     try {
-      const tableId = table?.id;
-      const r = await fetch("/api/orders", {
+      const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "dine_in",
-          customerName,
-          customerPhone,
-          tableId,
-          serverName: "QR Order",
-          subtotal,
-          taxAmount: tax,
-          total,
-          paymentMethod: "cash",
-          paymentStatus: "unpaid",
-          notes: orderNotes,
-          items: cart.map((c) => ({
-            menuItemId: c.menuItemId, quantity: c.quantity,
-            unitPrice: c.price, modifiers: c.modifiers,
-            notes: c.notes, totalPrice: c.totalPrice,
-            stationSlug: c.modifiers.stationSlug || "",
-          })),
-          estimatedReady: new Date(Date.now() + 25 * 60 * 1000),
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKeyRef.current,
+        },
+        body: JSON.stringify(orderPayload),
       });
-      if (r.ok) {
-        const { order } = await r.json();
-        toast.success(`${t.cart.orderPlaced} ${order.orderNumber}`);
-        setCart([]); setCartOpen(false);
-        // eslint-disable-next-line react-hooks/immutability
-        window.location.href = `/track/${order.orderNumber.replace(/^#/, "")}`;
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.order || !data?.accessToken) {
+        toast.error(data?.error || t.common.error);
+        return;
       }
-    } catch { toast.error(t.common.error); }
-    finally { setPlacing(false); }
+
+      rememberOrderAccess(data.order.orderNumber, data.accessToken);
+      toast.success(`${t.cart.orderPlaced} ${data.order.orderNumber}`);
+      setCart([]);
+      setCartOpen(false);
+      idempotencyKeyRef.current = null;
+
+      const orderNumber = data.order.orderNumber.replace(/^#/, "");
+      window.location.assign(
+        `/track/${encodeURIComponent(orderNumber)}?token=${encodeURIComponent(
+          data.accessToken
+        )}`
+      );
+    } catch {
+      toast.error(t.common.error);
+    } finally {
+      setPlacing(false);
+    }
   };
+
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-accent/20 via-background to-background" dir={isRTL ? "rtl" : "ltr"}>
@@ -314,7 +349,7 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
                   <ShoppingCart className="size-5" />
                   <span className="absolute -top-1.5 -end-1.5 bg-background text-primary text-[10px] font-bold size-4 rounded-full flex items-center justify-center">{cartCount}</span>
                 </div>
-                <span className="font-semibold text-sm">{t.cart.viewCart || "View Cart"}</span>
+                <span className="font-semibold text-sm">{isRTL ? "عرض السلة" : "View Cart"}</span>
               </div>
               <span className="font-bold">{fmtCurrency(total)}</span>
             </button>
@@ -502,7 +537,7 @@ function QrItemDetail({ item, onClose, onAdd }: { item: any; onClose: () => void
   };
 
   return (
-    <Sheet open onClose={onClose} onOpenChange={(o) => !o && onClose()}>
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent side={isRTL ? "left" : "right"} className="w-full sm:max-w-lg p-0 flex flex-col">
         <SheetHeader className="p-0">
           <div className="relative h-44 bg-gradient-to-br from-primary/20 to-accent overflow-hidden">

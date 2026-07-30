@@ -100,11 +100,11 @@ export function KitchenDisplay({ slug, initialScreen, initialSettings }: Kitchen
       const r = await fetch(`/api/kitchen-screens?slug=${encodeURIComponent(slug)}`, {
         cache: "no-store",
       });
-      if (!r.ok) return null;
-      return r.json();
+      if (!r.ok) return { screen: null, stations: [] };
+      return (await r.json()) as KdsScreenResponse;
     },
     staleTime: 15000,
-    initialData: initialScreen,
+    initialData: initialScreen ?? undefined,
   });
 
   const screen = screenQuery.data?.screen ?? null;
@@ -115,11 +115,13 @@ export function KitchenDisplay({ slug, initialScreen, initialSettings }: Kitchen
     queryKey: ["kds-settings"],
     queryFn: async () => {
       const r = await fetch("/api/settings", { cache: "no-store" });
+      if (!r.ok) throw new Error("settings fetch failed");
       const d = await r.json();
-      return d.settings;
+      if (!d?.settings) throw new Error("settings missing");
+      return d.settings as KdsSettings;
     },
     staleTime: 30000,
-    initialData: initialSettings,
+    initialData: initialSettings ?? undefined,
   });
   const settings = settingsQuery.data;
 

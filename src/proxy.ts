@@ -22,7 +22,7 @@ function getSessionSecret(): string | null {
   return secret;
 }
 
-function decodeBase64Url(value: string): Uint8Array | null {
+function decodeBase64Url(value: string): ArrayBuffer | null {
   try {
     const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized.padEnd(
@@ -30,7 +30,7 @@ function decodeBase64Url(value: string): Uint8Array | null {
       "="
     );
     const binary = atob(padded);
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0)).buffer;
   } catch {
     return null;
   }
