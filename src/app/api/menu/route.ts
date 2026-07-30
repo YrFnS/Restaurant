@@ -5,6 +5,7 @@ import {
   MENU_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const mediaPathSchema = z
   .string()
@@ -113,6 +114,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    const context = auditContextFromRequest(req);
 
     if (body?.type === "category") {
       const parsed = categorySchema.safeParse(body);
@@ -128,7 +130,24 @@ export async function POST(req: NextRequest) {
       }
 
       const { type: _type, ...categoryData } = parsed.data;
-      const category = await db.menuCategory.create({ data: categoryData });
+      const category = await db.$transaction(async (tx) => {
+        const created = await tx.menuCategory.create({ data: categoryData });
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "menu.category.create",
+          entityType: "MenuCategory",
+          entityId: created.id,
+          context,
+          metadata: {
+            nameEn: created.nameEn,
+            nameAr: created.nameAr,
+            isAvailable: created.isAvailable,
+            stationSlugs: created.stationSlugs,
+          },
+        });
+        return created;
+      });
+
       return NextResponse.json({ category }, { status: 201 });
     }
 
@@ -144,37 +163,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const {
-      type: _type,
-      modifierGroups = [],
-      ...itemData
-    } = parsed.data;
-    const item = await db.menuItem.create({
-      data: {
-        ...itemData,
-        modifierGroups: {
-          create: modifierGroups.map((group, groupIndex) => ({
-            nameEn: group.nameEn,
-            nameAr: group.nameAr,
-            isRequired: group.isRequired,
-            minSelect: group.min,
-            maxSelect: group.max,
-            sortOrder: groupIndex,
-            options: {
-              create: group.options.map((option) => ({
-                nameEn: option.nameEn,
-                nameAr: option.nameAr,
-                price: option.price,
-                isDefault: option.isDefault,
-                preset: option.preset,
-              })),
-            },
-          })),
+    const { type: _type, modifierGroups = [], ...itemData } = parsed.data;
+    const item = await db.$transaction(async (tx) => {
+      const created = await tx.menuItem.create({
+        data: {
+          ...itemData,
+          modifierGroups: {
+            create: modifierGroups.map((group, groupIndex) => ({
+              nameEn: group.nameEn,
+              nameAr: group.nameAr,
+              isRequired: group.isRequired,
+              minSelect: group.min,
+              maxSelect: group.max,
+              sortOrder: groupIndex,
+              options: {
+                create: group.options.map((option) => ({
+                  nameEn: option.nameEn,
+                  nameAr: option.nameAr,
+                  price: option.price,
+                  isDefault: option.isDefault,
+                  preset: option.preset,
+                })),
+              },
+            })),
+          },
         },
-      },
-      include: {
-        modifierGroups: { include: { options: true } },
-      },
+        include: {
+          modifierGroups: { include: { options: true } },
+        },
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "menu.item.create",
+        entityType: "MenuItem",
+        entityId: created.id,
+        context,
+        metadata: {
+          nameEn: created.nameEn,
+          nameAr: created.nameAr,
+          categoryId: created.categoryId,
+          price: created.price,
+          isAvailable: created.isAvailable,
+          modifierGroupCount: created.modifierGroups.length,
+        },
+      });
+
+      return created;
     });
 
     return NextResponse.json({ item }, { status: 201 });
