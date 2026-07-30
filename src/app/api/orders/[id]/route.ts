@@ -1,28 +1,135 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
+import {
+  ORDER_MANAGEMENT_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
+import { broadcastKds } from "@/lib/kds/broadcast";
 
-// Update order status
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const orderStatusSchema = z
+  .object({
+    status: z.enum([
+      "pending",
+      "confirmed",
+      "preparing",
+      "ready",
+      "completed",
+      "cancelled",
+    ]),
+  })
+  .strict();
+
+const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
+  pending: ["confirmed", "cancelled"],
+  confirmed: ["preparing", "cancelled"],
+  preparing: ["ready", "cancelled"],
+  ready: ["completed", "cancelled"],
+  completed: [],
+  cancelled: [],
+};
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
+  if ("response" in auth) return auth.response;
+
   try {
     const { id } = await params;
-    const body = await req.json();
-    const order = await db.order.update({
+    const parsed = orderStatusSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid order update", code: "VALIDATION_ERROR" },
+        { status: 400 }
+      );
+    }
+
+    const existing = await db.order.findUnique({
       where: { id },
-      data: body,
-      include: { items: true, table: true },
+      select: { id: true, status: true, tableId: true },
     });
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Order not found", code: "ORDER_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+
+    const nextStatus = parsed.data.status;
+    if (nextStatus !== existing.status) {
+      const allowed = ALLOWED_TRANSITIONS[existing.status] || [];
+      if (!allowed.includes(nextStatus)) {
+        return NextResponse.json(
+          {
+            error: `Order cannot move from ${existing.status} to ${nextStatus}`,
+            code: "INVALID_STATUS_TRANSITION",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    const order = await db.$transaction(async (tx) => {
+      const updatedOrder = await tx.order.update({
+        where: { id },
+        data: {
+          status: nextStatus,
+          ...(nextStatus === "completed" ? { completedAt: new Date() } : {}),
+        },
+        include: { items: { include: { menuItem: true } }, table: true },
+      });
+
+      if (nextStatus === "completed") {
+        await tx.orderItem.updateMany({
+          where: { orderId: id, status: { not: "cancelled" } },
+          data: { status: "served" },
+        });
+        if (existing.tableId) {
+          await tx.restaurantTable.update({
+            where: { id: existing.tableId },
+            data: { status: "cleaning", seatedAt: null },
+          });
+        }
+      } else if (nextStatus === "cancelled") {
+        await tx.orderItem.updateMany({
+          where: { orderId: id, status: { not: "served" } },
+          data: { status: "cancelled", hold: false },
+        });
+      }
+
+      return updatedOrder;
+    });
+
+    try {
+      await broadcastKds({
+        type: "order:status",
+        payload: { orderId: order.id, status: nextStatus },
+      });
+    } catch {
+      // Polling remains the fallback when the realtime service is unavailable.
+    }
+
     return NextResponse.json({ order });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (error) {
+    console.error("[orders] Failed to update order", error);
+    return NextResponse.json(
+      { error: "Unable to update order", code: "ORDER_UPDATE_FAILED" },
+      { status: 500 }
+    );
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    await db.order.delete({ where: { id } });
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
+export async function DELETE() {
+  const auth = await requireStaffSession(["owner", "admin"]);
+  if ("response" in auth) return auth.response;
+
+  return NextResponse.json(
+    {
+      error: "Order deletion is disabled; cancel or refund the order instead",
+      code: "ORDER_DELETE_DISABLED",
+    },
+    { status: 405, headers: { Allow: "PATCH" } }
+  );
 }
