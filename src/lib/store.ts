@@ -44,6 +44,12 @@ export interface RecentOrderAccess {
   createdAt: string;
 }
 
+export interface CustomerResourceAccess {
+  id: string;
+  accessToken: string;
+  createdAt: string;
+}
+
 interface RestaurantState {
   activeSection: ActiveSection;
   setActiveSection: (section: ActiveSection) => void;
@@ -63,6 +69,8 @@ interface RestaurantState {
   favorites: string[];
   recentSearches: string[];
   recentOrders: RecentOrderAccess[];
+  recentReservations: CustomerResourceAccess[];
+  waitlistAccess: CustomerResourceAccess | null;
 
   // Non-sensitive display state only. Staff authentication lives in an HTTP-only cookie.
   staffName: string | null;
@@ -86,6 +94,10 @@ interface RestaurantState {
   clearRecentSearches: () => void;
   rememberOrderAccess: (orderNumber: string, accessToken: string) => void;
   forgetOrderAccess: (orderNumber: string) => void;
+  rememberReservationAccess: (id: string, accessToken: string) => void;
+  forgetReservationAccess: (id: string) => void;
+  rememberWaitlistAccess: (id: string, accessToken: string) => void;
+  clearWaitlistAccess: () => void;
 
   setStaff: (name: string) => void;
   clearStaff: () => void;
@@ -141,6 +153,8 @@ export const useRestaurantStore = create<RestaurantState>()(
       favorites: [],
       recentSearches: [],
       recentOrders: [],
+      recentReservations: [],
+      waitlistAccess: null,
       staffName: null,
 
       addToCart: (item) =>
@@ -249,6 +263,34 @@ export const useRestaurantStore = create<RestaurantState>()(
           ),
         })),
 
+      rememberReservationAccess: (id, accessToken) =>
+        set((state) => ({
+          recentReservations: [
+            { id, accessToken, createdAt: new Date().toISOString() },
+            ...state.recentReservations.filter(
+              (reservation) => reservation.id !== id
+            ),
+          ].slice(0, 20),
+        })),
+
+      forgetReservationAccess: (id) =>
+        set((state) => ({
+          recentReservations: state.recentReservations.filter(
+            (reservation) => reservation.id !== id
+          ),
+        })),
+
+      rememberWaitlistAccess: (id, accessToken) =>
+        set({
+          waitlistAccess: {
+            id,
+            accessToken,
+            createdAt: new Date().toISOString(),
+          },
+        }),
+
+      clearWaitlistAccess: () => set({ waitlistAccess: null }),
+
       setStaff: (staffName) => set({ staffName }),
       clearStaff: () => set({ staffName: null }),
     }),
@@ -260,6 +302,8 @@ export const useRestaurantStore = create<RestaurantState>()(
         favorites: state.favorites,
         recentSearches: state.recentSearches,
         recentOrders: state.recentOrders,
+        recentReservations: state.recentReservations,
+        waitlistAccess: state.waitlistAccess,
         customerName: state.customerName,
         customerPhone: state.customerPhone,
       }),
