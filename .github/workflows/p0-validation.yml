@@ -50,6 +50,9 @@ jobs:
       - name: Apply deterministic strict-TypeScript fixes
         run: python3 scripts/apply-p0-ci-fixes.py
 
+      - name: Apply secure checkout migrations
+        run: python3 scripts/apply-p0-checkout-fixes.py
+
       - name: Commit deterministic maintenance updates
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         run: |
@@ -60,7 +63,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix: resolve strict TypeScript validation errors"
+          git commit -m "fix: migrate remaining checkout paths to P0 contract"
           git push origin HEAD:${GITHUB_HEAD_REF}
 
       - name: Generate Prisma client
