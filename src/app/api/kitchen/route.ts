@@ -399,10 +399,7 @@ export async function PATCH(req: NextRequest) {
       });
     });
 
-    await broadcastKds({
-      type: "order:status",
-      payload: { orderId: order.id, status: "completed" },
-    });
+    await flushKdsOutboxBestEffort(10);
 
     return NextResponse.json({ order });
   } catch (error) {
