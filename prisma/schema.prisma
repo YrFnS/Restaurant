@@ -504,6 +504,7 @@ model AuditEvent {
   actorId     String?
   actorName   String   @default("")
   actorRole   String   @default("")
+  sessionId   String?
   action      String
   entityType  String
   entityId    String?
@@ -516,6 +517,23 @@ model AuditEvent {
   @@index([createdAt])
   @@index([entityType, entityId])
   @@index([actorId, createdAt])
+  @@index([sessionId, createdAt])
   @@index([action, createdAt])
+}
+
+// ─── Persisted, revocable staff sessions ───
+model StaffSession {
+  id         String    @id
+  employeeId String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([employeeId, revokedAt, expiresAt])
+  @@index([expiresAt])
+  @@index([revokedAt])
 }
 
