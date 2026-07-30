@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import {
   AuthConfigurationError,
   setStaffSession,
 } from "@/lib/auth/session";
+import { authenticateEmployeePin } from "@/lib/auth/employee-pin";
+import { PinConfigurationError } from "@/lib/auth/pin";
 
 const PIN_PATTERN = /^\d{4,8}$/;
 const WINDOW_MS = 10 * 60 * 1000;
@@ -98,19 +99,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Temporary compatibility with the current schema. P0-B02 migrates this
-    // lookup to a one-way PIN hash and removes the plaintext column.
-    const employee = await db.employee.findUnique({
-      where: { pin },
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        isActive: true,
-      },
-    });
+    const employee = await authenticateEmployeePin(pin);
 
-    if (!employee?.isActive) {
+    if (!employee) {
       recordFailure(clientKey);
       return invalidCredentials();
     }
@@ -129,7 +120,10 @@ export async function POST(req: NextRequest) {
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
-    if (error instanceof AuthConfigurationError) {
+    if (
+      error instanceof AuthConfigurationError ||
+      error instanceof PinConfigurationError
+    ) {
       return NextResponse.json(
         { error: "Authentication is not configured", code: "AUTH_NOT_CONFIGURED" },
         { status: 503, headers: { "Cache-Control": "no-store" } }
