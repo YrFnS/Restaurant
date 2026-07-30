@@ -5,6 +5,8 @@ import {
 } from "@/lib/auth/session";
 import { authenticateEmployeePin } from "@/lib/auth/employee-pin";
 import { PinConfigurationError } from "@/lib/auth/pin";
+import { db } from "@/lib/db";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const PIN_PATTERN = /^\d{4,8}$/;
 const WINDOW_MS = 10 * 60 * 1000;
@@ -106,8 +108,18 @@ export async function POST(req: NextRequest) {
       return invalidCredentials();
     }
 
-    loginAttempts.delete(clientKey);
+    await writeAuditEvent(db, {
+      actor: employee,
+      action: "auth.login.success",
+      entityType: "Employee",
+      entityId: employee.id,
+      context: auditContextFromRequest(req),
+      metadata: {
+        role: employee.role,
+      },
+    });
     await setStaffSession(employee.id);
+    loginAttempts.delete(clientKey);
 
     return NextResponse.json(
       {
