@@ -47,6 +47,18 @@ function bearerToken(req: NextRequest): string | null {
   return authorization.slice(7).trim() || null;
 }
 
+function normalizeOrderNumber(value: string): string | null {
+  try {
+    const normalized = decodeURIComponent(value)
+      .replace(/^%23/i, "")
+      .replace(/^#/, "")
+      .trim();
+    return normalized && normalized.length <= 100 ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orderNumber: string }> }
@@ -64,11 +76,8 @@ export async function GET(
 
   try {
     const { orderNumber } = await params;
-    const normalized = decodeURIComponent(orderNumber)
-      .replace(/^%23/i, "")
-      .replace(/^#/, "")
-      .trim();
-    if (!normalized || normalized.length > 100) {
+    const normalized = normalizeOrderNumber(orderNumber);
+    if (!normalized) {
       return NextResponse.json({ order: null }, { status: 404 });
     }
 
