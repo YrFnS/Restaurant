@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { REPORTING_ROLES, requireStaffSession } from "@/lib/auth/guard";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const feedbackSchema = z
   .object({
@@ -72,14 +77,25 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const retryAfter = consumeLimit(clientKey(req));
-  if (retryAfter) {
+  let feedbackLimit;
+  try {
+    feedbackLimit = await consumeRateLimit({
+      scope: "feedback-submit",
+      identifier: getRequestSource(req),
+      limit: MAX_FEEDBACK_PER_WINDOW,
+      windowMs: FEEDBACK_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[feedback] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "Feedback is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!feedbackLimit.allowed) {
     return NextResponse.json(
       { error: "Too many feedback submissions", code: "FEEDBACK_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(feedbackLimit) }
     );
   }
 

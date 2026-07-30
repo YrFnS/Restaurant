@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const newsletterSchema = z
   .object({
@@ -44,14 +49,25 @@ function consumeLimit(key: string): number | null {
 }
 
 export async function POST(req: NextRequest) {
-  const retryAfter = consumeLimit(clientKey(req));
-  if (retryAfter) {
+  let subscriptionLimit;
+  try {
+    subscriptionLimit = await consumeRateLimit({
+      scope: "newsletter-subscribe",
+      identifier: getRequestSource(req),
+      limit: MAX_SUBSCRIPTIONS_PER_WINDOW,
+      windowMs: NEWSLETTER_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[newsletter] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "Subscriptions are temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!subscriptionLimit.allowed) {
     return NextResponse.json(
       { error: "Too many subscription attempts", code: "NEWSLETTER_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(subscriptionLimit) }
     );
   }
 

@@ -19,6 +19,11 @@ import {
 } from "@/lib/orders/access";
 import { broadcastKds, stationSlugsFromItems } from "@/lib/kds/broadcast";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const ORDER_READ_ROLES = [
   "owner",
@@ -159,14 +164,25 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const retryAfter = consumeOrderRateLimit(getClientKey(req));
-  if (retryAfter) {
+  let orderLimit;
+  try {
+    orderLimit = await consumeRateLimit({
+      scope: "order-create",
+      identifier: getRequestSource(req),
+      limit: MAX_ORDERS_PER_WINDOW,
+      windowMs: ORDER_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[orders] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "Ordering is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!orderLimit.allowed) {
     return NextResponse.json(
       { error: "Too many order attempts", code: "ORDER_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(orderLimit) }
     );
   }
 

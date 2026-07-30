@@ -10,6 +10,11 @@ import {
   CustomerAccessConfigurationError,
   verifyCustomerAccessToken,
 } from "@/lib/customer-access";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const waitlistCreateSchema = z
   .object({
@@ -140,14 +145,25 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const retryAfter = consumeWaitlistLimit(clientKey(req));
-  if (retryAfter) {
+  let waitlistLimit;
+  try {
+    waitlistLimit = await consumeRateLimit({
+      scope: "waitlist-create",
+      identifier: getRequestSource(req),
+      limit: MAX_JOINS_PER_WINDOW,
+      windowMs: WAITLIST_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[waitlist] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "The waitlist is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!waitlistLimit.allowed) {
     return NextResponse.json(
       { error: "Too many waitlist attempts", code: "WAITLIST_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(waitlistLimit) }
     );
   }
 

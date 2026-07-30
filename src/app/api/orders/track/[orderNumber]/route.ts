@@ -5,6 +5,11 @@ import {
   OrderAccessConfigurationError,
   verifyOrderAccessToken,
 } from "@/lib/orders/access";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const TRACK_WINDOW_MS = 60_000;
 const MAX_TRACK_REQUESTS = 120;
@@ -63,14 +68,25 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orderNumber: string }> }
 ) {
-  const retryAfter = consumeTrackLimit(clientKey(req));
-  if (retryAfter) {
+  let trackingLimit;
+  try {
+    trackingLimit = await consumeRateLimit({
+      scope: "order-track",
+      identifier: getRequestSource(req),
+      limit: MAX_TRACK_REQUESTS,
+      windowMs: TRACK_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[orders/track] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "Order tracking is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!trackingLimit.allowed) {
     return NextResponse.json(
       { error: "Too many tracking requests", code: "TRACK_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(trackingLimit) }
     );
   }
 

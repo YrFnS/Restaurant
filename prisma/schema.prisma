@@ -537,3 +537,16 @@ model StaffSession {
   @@index([revokedAt])
 }
 
+// ─── Shared, privacy-safe fixed-window rate-limit counters ───
+model RateLimitCounter {
+  key       String   @id
+  scope     String
+  count     Int      @default(1)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([scope, expiresAt])
+  @@index([expiresAt])
+}
+
