@@ -8,84 +8,65 @@ import { authenticateEmployeePin } from "@/lib/auth/employee-pin";
 import { PinConfigurationError } from "@/lib/auth/pin";
 import { db } from "@/lib/db";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+  resetRateLimit,
+  type RateLimitResult,
+} from "@/lib/security/rate-limit";
 
 const PIN_PATTERN = /^\d{4,8}$/;
-const WINDOW_MS = 10 * 60 * 1000;
-const BLOCK_MS = 15 * 60 * 1000;
-const MAX_FAILURES = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
+const MAX_SOURCE_ATTEMPTS = 30;
+const MAX_PIN_ATTEMPTS = 5;
 
-type AttemptBucket = {
-  failures: number;
-  resetAt: number;
-  blockedUntil: number;
-};
-
-const globalForLoginLimit = globalThis as unknown as {
-  restaurantLoginAttempts?: Map<string, AttemptBucket>;
-};
-
-const loginAttempts =
-  globalForLoginLimit.restaurantLoginAttempts ?? new Map<string, AttemptBucket>();
-
-if (!globalForLoginLimit.restaurantLoginAttempts) {
-  globalForLoginLimit.restaurantLoginAttempts = loginAttempts;
-}
-
-function getClientKey(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || req.headers.get("x-real-ip") || "unknown";
-}
-
-function getActiveBucket(key: string): AttemptBucket | null {
-  const bucket = loginAttempts.get(key);
-  if (!bucket) return null;
-
-  const now = Date.now();
-  if (bucket.resetAt <= now && bucket.blockedUntil <= now) {
-    loginAttempts.delete(key);
-    return null;
-  }
-
-  return bucket;
-}
-
-function recordFailure(key: string): AttemptBucket {
-  const now = Date.now();
-  const existing = getActiveBucket(key);
-  const bucket: AttemptBucket = existing ?? {
-    failures: 0,
-    resetAt: now + WINDOW_MS,
-    blockedUntil: 0,
-  };
-
-  bucket.failures += 1;
-  if (bucket.failures >= MAX_FAILURES) {
-    bucket.blockedUntil = now + BLOCK_MS;
-  }
-  loginAttempts.set(key, bucket);
-  return bucket;
-}
-
-function invalidCredentials(status = 401, retryAfterSeconds?: number) {
-  const headers: Record<string, string> = { "Cache-Control": "no-store" };
-  if (retryAfterSeconds) headers["Retry-After"] = String(retryAfterSeconds);
-
+function invalidCredentials(
+  status = 401,
+  rateLimit?: RateLimitResult
+) {
   return NextResponse.json(
     {
       error: status === 429 ? "Too many login attempts" : "Invalid credentials",
       code: status === 429 ? "LOGIN_RATE_LIMITED" : "INVALID_CREDENTIALS",
     },
-    { status, headers }
+    {
+      status,
+      headers: rateLimit
+        ? rateLimitHeaders(rateLimit)
+        : { "Cache-Control": "no-store" },
+    }
+  );
+}
+
+function rateLimitUnavailable() {
+  return NextResponse.json(
+    {
+      error: "Authentication is temporarily unavailable",
+      code: "RATE_LIMIT_UNAVAILABLE",
+    },
+    { status: 503, headers: { "Cache-Control": "no-store" } }
   );
 }
 
 export async function POST(req: NextRequest) {
-  const clientKey = getClientKey(req);
-  const bucket = getActiveBucket(clientKey);
-  const now = Date.now();
+  const source = getRequestSource(req);
+  let sourceLimit: RateLimitResult;
 
-  if (bucket?.blockedUntil && bucket.blockedUntil > now) {
-    return invalidCredentials(429, Math.ceil((bucket.blockedUntil - now) / 1000));
+  try {
+    sourceLimit = await consumeRateLimit({
+      scope: "auth-login-source",
+      identifier: source,
+      limit: MAX_SOURCE_ATTEMPTS,
+      windowMs: LOGIN_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[auth/login] Shared source limiter failed", error);
+    return rateLimitUnavailable();
+  }
+
+  if (!sourceLimit.allowed) {
+    return invalidCredentials(429, sourceLimit);
   }
 
   let pin = "";
@@ -93,20 +74,35 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     pin = typeof body?.pin === "string" ? body.pin.trim() : "";
   } catch {
-    return invalidCredentials();
+    return invalidCredentials(401, sourceLimit);
   }
 
   if (!PIN_PATTERN.test(pin)) {
-    recordFailure(clientKey);
-    return invalidCredentials();
+    return invalidCredentials(401, sourceLimit);
+  }
+
+  let pinLimit: RateLimitResult;
+  try {
+    pinLimit = await consumeRateLimit({
+      scope: "auth-login-pin",
+      identifier: pin,
+      limit: MAX_PIN_ATTEMPTS,
+      windowMs: LOGIN_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[auth/login] Shared credential limiter failed", error);
+    return rateLimitUnavailable();
+  }
+
+  if (!pinLimit.allowed) {
+    return invalidCredentials(429, pinLimit);
   }
 
   try {
     const employee = await authenticateEmployeePin(pin);
 
     if (!employee) {
-      recordFailure(clientKey);
-      return invalidCredentials();
+      return invalidCredentials(401, pinLimit);
     }
 
     const issuedSession = await setStaffSession(employee.id);
@@ -132,7 +128,20 @@ export async function POST(req: NextRequest) {
       throw auditError;
     }
 
-    loginAttempts.delete(clientKey);
+    await Promise.all([
+      resetRateLimit({
+        scope: "auth-login-source",
+        identifier: source,
+        windowMs: LOGIN_WINDOW_MS,
+      }),
+      resetRateLimit({
+        scope: "auth-login-pin",
+        identifier: pin,
+        windowMs: LOGIN_WINDOW_MS,
+      }),
+    ]).catch((error) =>
+      console.warn("[auth/login] Rate-limit reset failed after login", error)
+    );
 
     return NextResponse.json(
       {
@@ -142,7 +151,12 @@ export async function POST(req: NextRequest) {
           role: employee.role,
         },
       },
-      { headers: { "Cache-Control": "no-store" } }
+      {
+        headers: {
+          ...rateLimitHeaders(sourceLimit),
+          "Cache-Control": "no-store",
+        },
+      }
     );
   } catch (error) {
     if (
