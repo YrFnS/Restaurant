@@ -124,52 +124,62 @@ export async function GET(req: NextRequest) {
         ? { not: "cancelled" }
         : { notIn: ["served", "cancelled"] },
     };
+    const startToday = new Date();
+    startToday.setHours(0, 0, 0, 0);
 
-    const orders = await db.order.findMany({
-      where: {
-        status: {
-          in: includeCompleted
-            ? ["confirmed", "preparing", "ready", "completed"]
-            : ["confirmed", "preparing", "ready"],
+    const [orders, totalToday] = await Promise.all([
+      db.order.findMany({
+        where: {
+          status: {
+            in: includeCompleted
+              ? ["confirmed", "preparing", "ready", "completed"]
+              : ["confirmed", "preparing", "ready"],
+          },
+          items: { some: orderItemWhere },
         },
-        items: { some: orderItemWhere },
-      },
-      orderBy: { createdAt: "asc" },
-      take: maximumOrders,
-      select: {
-        ...KDS_ORDER_SELECT,
-        items: {
-          where: orderItemWhere,
-          orderBy: [{ course: "asc" }, { createdAt: "asc" }],
-          select: {
-            id: true,
-            orderId: true,
-            menuItemId: true,
-            quantity: true,
-            modifiers: true,
-            notes: true,
-            status: true,
-            stationSlug: true,
-            course: true,
-            hold: true,
-            firedAt: true,
-            readyAt: true,
-            seatNumber: true,
-            createdAt: true,
-            updatedAt: true,
-            menuItem: {
-              select: {
-                id: true,
-                nameEn: true,
-                nameAr: true,
-                allergens: true,
-                dietary: true,
+        orderBy: { createdAt: "asc" },
+        take: maximumOrders,
+        select: {
+          ...KDS_ORDER_SELECT,
+          items: {
+            where: orderItemWhere,
+            orderBy: [{ course: "asc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              orderId: true,
+              menuItemId: true,
+              quantity: true,
+              modifiers: true,
+              notes: true,
+              status: true,
+              stationSlug: true,
+              course: true,
+              hold: true,
+              firedAt: true,
+              readyAt: true,
+              seatNumber: true,
+              createdAt: true,
+              updatedAt: true,
+              menuItem: {
+                select: {
+                  id: true,
+                  nameEn: true,
+                  nameAr: true,
+                  allergens: true,
+                  dietary: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+      db.order.count({
+        where: {
+          createdAt: { gte: startToday },
+          status: { not: "cancelled" },
+        },
+      }),
+    ]);
 
     const allDay: Record<
       string,
@@ -189,7 +199,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { orders, allDay: Object.values(allDay) },
+      { orders, allDay: Object.values(allDay), totalToday },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
