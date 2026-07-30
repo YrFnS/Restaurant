@@ -44,6 +44,7 @@ jobs:
       AUTH_ORDER_ACCESS_SECRET: "integration-order-access-0123456789abcdef0123456789abcdef"
       AUTH_CUSTOMER_ACCESS_SECRET: "integration-customer-access-0123456789abcdef0123456789abcdef"
       RATE_LIMIT_SECRET: "integration-rate-limit-secret-0123456789abcdef0123456789abcdef"
+      KDS_OUTBOX_SECRET: "integration-kds-outbox-secret-0123456789abcdef0123456789abcdef"
       AUTH_SESSION_TTL_SECONDS: "28800"
       AUTH_SESSION_IDLE_SECONDS: "1800"
       APP_ALLOWED_ORIGINS: "http://127.0.0.1:3000"
@@ -67,8 +68,8 @@ jobs:
       - name: Generate Prisma client
         run: bun run db:generate
 
-      - name: Create isolated integration database
-        run: bunx prisma db push --force-reset --accept-data-loss --skip-generate
+      - name: Deploy committed migrations to an empty database
+        run: bun run db:deploy
 
       - name: Seed and secure staff credentials
         run: |
@@ -80,30 +81,55 @@ jobs:
           NODE_ENV: production
         run: bun run build
 
-      - name: Run database-backed P0 smoke test
+      - name: Run database-backed P0 smoke tests
         shell: bash
         run: |
           set -euo pipefail
 
+          bun tests/integration/kds-mock.ts > /tmp/kds-mock.log 2>&1 &
+          kds_pid=$!
           PORT=3000 NODE_ENV=production bun .next/standalone/server.js > /tmp/p0-server.log 2>&1 &
           server_pid=$!
 
           cleanup() {
             status=$?
-            kill "$server_pid" 2>/dev/null || true
+            kill "$server_pid" "$kds_pid" 2>/dev/null || true
             wait "$server_pid" 2>/dev/null || true
+            wait "$kds_pid" 2>/dev/null || true
             if [ "$status" -ne 0 ]; then
               echo "--- production server log ---"
               cat /tmp/p0-server.log || true
+              echo "--- KDS mock log ---"
+              cat /tmp/kds-mock.log || true
             fi
             exit "$status"
           }
           trap cleanup EXIT
 
-          ready=0
+          kds_ready=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3003/health >/dev/null; then
+              kds_ready=1
+              break
+            fi
+            if ! kill -0 "$kds_pid" 2>/dev/null; then
+              echo "KDS mock exited before becoming ready."
+              cat /tmp/kds-mock.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$kds_ready" -ne 1 ]; then
+            echo "KDS mock did not become ready."
+            cat /tmp/kds-mock.log || true
+            exit 1
+          fi
+
+          app_ready=0
           for attempt in $(seq 1 90); do
             if curl --fail --silent --show-error http://127.0.0.1:3000/api >/dev/null; then
-              ready=1
+              app_ready=1
               break
             fi
             if ! kill -0 "$server_pid" 2>/dev/null; then
@@ -114,10 +140,11 @@ jobs:
             sleep 1
           done
 
-          if [ "$ready" -ne 1 ]; then
+          if [ "$app_ready" -ne 1 ]; then
             echo "Production server did not become ready."
             cat /tmp/p0-server.log || true
             exit 1
           fi
 
           P0_BASE_URL=http://127.0.0.1:3000 bun run test:integration
+          P0_BASE_URL=http://127.0.0.1:3000 bun tests/integration/p0-kds-worker.ts
