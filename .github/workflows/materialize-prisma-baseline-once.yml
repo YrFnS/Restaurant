@@ -1,0 +1,90 @@
+name: Materialize Prisma Baseline Once
+
+on:
+  push:
+    branches:
+      - agent/p0-hardening
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prisma-baseline-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: "postgresql://baseline:baseline@127.0.0.1:5432/baseline?sslmode=disable"
+      BASELINE_NAME: "20260730000000_baseline"
+    steps:
+      - name: Check out source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate baseline from the pre-P0 schema
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target="prisma/migrations/${BASELINE_NAME}/migration.sql"
+          if [ -s "$target" ]; then
+            echo "Baseline migration is already committed."
+            exit 0
+          fi
+
+          git fetch origin main --depth=1
+          git show origin/main:prisma/schema.prisma > /tmp/restaurant-main-schema.prisma
+          mkdir -p "$(dirname "$target")"
+
+          bunx prisma migrate diff \
+            --from-empty \
+            --to-schema /tmp/restaurant-main-schema.prisma \
+            --script \
+            --output "$target"
+
+          test -s "$target"
+          grep -q 'CREATE TABLE "RestaurantSettings"' "$target"
+          grep -q 'CREATE TABLE "Order"' "$target"
+          grep -q 'CREATE TABLE "Employee"' "$target"
+
+          if grep -Eq 'CREATE TABLE "(AuditEvent|StaffSession|RateLimitCounter|KdsOutboxEvent)"' "$target"; then
+            echo "Baseline unexpectedly contains a P0 additive model."
+            exit 1
+          fi
+
+      - name: Commit generated baseline when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target="prisma/migrations/${BASELINE_NAME}/migration.sql"
+          if git diff --quiet -- "$target" && git ls-files --error-unmatch "$target" >/dev/null 2>&1; then
+            echo "Baseline migration is already committed."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$target"
+          git commit -m "db: add pre-P0 Prisma baseline migration"
+
+          branch="${{ github.event.pull_request.head.ref || github.ref_name }}"
+          git pull --rebase origin "$branch"
+          git push origin "HEAD:$branch"
