@@ -5,6 +5,7 @@ import {
   CASH_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const cashEntrySchema = z
   .object({
@@ -59,12 +60,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const entry = await db.cashDrawerEntry.create({
-      data: {
-        ...parsed.data,
-        note: parsed.data.note || null,
-        createdBy: auth.session.id,
-      },
+    const context = auditContextFromRequest(req);
+    const entry = await db.$transaction(async (tx) => {
+      const created = await tx.cashDrawerEntry.create({
+        data: {
+          ...parsed.data,
+          note: parsed.data.note || null,
+          createdBy: auth.session.id,
+        },
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: `cash.${created.type}`,
+        entityType: "CashDrawerEntry",
+        entityId: created.id,
+        context,
+        metadata: {
+          amount: created.amount,
+          note: created.note,
+        },
+      });
+
+      return created;
     });
 
     return NextResponse.json({ entry }, { status: 201 });
