@@ -16,7 +16,13 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { user: session },
+      {
+        user: {
+          id: session.id,
+          name: session.name,
+          role: session.role,
+        },
+      },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
