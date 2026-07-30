@@ -125,7 +125,7 @@ export function KitchenDisplay({ slug, initialScreen, initialSettings }: Kitchen
   });
   const settings = settingsQuery.data;
 
-  // ── Fetch active orders ─────────────────────────────────────────────────
+  // ── Fetch active orders and redacted operational metrics ────────────────
   const ordersQuery = useQuery<KdsKitchenResponse>({
     queryKey: ["kds-orders", slug, screen?.stationFilter],
     queryFn: async () => {
@@ -143,20 +143,7 @@ export function KitchenDisplay({ slug, initialScreen, initialSettings }: Kitchen
 
   const orders = ordersQuery.data?.orders ?? [];
   const allDay = ordersQuery.data?.allDay ?? [];
-
-  // ── Total today count ───────────────────────────────────────────────────
-  const totalTodayQuery = useQuery<number>({
-    queryKey: ["kds-total-today"],
-    queryFn: async () => {
-      const r = await fetch("/api/orders?limit=200");
-      const d = await r.json();
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      return d.orders?.filter((o: any) => new Date(o.createdAt) >= today).length ?? 0;
-    },
-    refetchInterval: 30000,
-  });
-  const totalToday = totalTodayQuery.data ?? 0;
+  const totalToday = ordersQuery.data?.totalToday ?? 0;
 
   const soundOn = soundOverride ?? settings?.soundOnNewTicket ?? true;
   const screenStationSlugs = useMemo(() => {
