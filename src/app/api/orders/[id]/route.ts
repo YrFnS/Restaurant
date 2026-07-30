@@ -6,6 +6,7 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 import { broadcastKds } from "@/lib/kds/broadcast";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const orderStatusSchema = z
   .object({
@@ -48,7 +49,14 @@ export async function PATCH(
 
     const existing = await db.order.findUnique({
       where: { id },
-      select: { id: true, status: true, tableId: true },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        paymentStatus: true,
+        total: true,
+        tableId: true,
+      },
     });
     if (!existing) {
       return NextResponse.json(
@@ -71,6 +79,7 @@ export async function PATCH(
       }
     }
 
+    const context = auditContextFromRequest(req);
     const order = await db.$transaction(async (tx) => {
       await tx.order.update({
         where: { id },
@@ -111,6 +120,24 @@ export async function PATCH(
             });
           }
         }
+      }
+
+      if (nextStatus !== existing.status) {
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "order.status.update",
+          entityType: "Order",
+          entityId: id,
+          context,
+          metadata: {
+            orderNumber: existing.orderNumber,
+            previousStatus: existing.status,
+            status: nextStatus,
+            paymentStatus: existing.paymentStatus,
+            total: existing.total,
+            tableId: existing.tableId,
+          },
+        });
       }
 
       return tx.order.findUniqueOrThrow({
