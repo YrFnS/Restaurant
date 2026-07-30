@@ -550,3 +550,23 @@ model RateLimitCounter {
   @@index([expiresAt])
 }
 
+// ─── Durable KDS transactional outbox ───
+model KdsOutboxEvent {
+  id            String    @id @default(cuid())
+  eventType     String
+  screenSlugs   Json
+  payload       Json?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lockedAt      DateTime?
+  lockToken     String?
+  deliveredAt   DateTime?
+  lastError     String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([deliveredAt, nextAttemptAt])
+  @@index([lockedAt])
+  @@index([createdAt])
+}
+
