@@ -4,23 +4,27 @@ on:
   push:
     branches:
       - agent/p0-hardening
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 concurrency:
-  group: wire-kds-outbox-${{ github.ref }}
+  group: wire-kds-outbox-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
   wire:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out branch
+      - name: Check out source branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 0
 
       - name: Wire transactional KDS events
@@ -44,4 +48,4 @@ jobs:
             "src/app/api/kitchen/route.ts" \
             "tests/integration/p0-smoke.ts"
           git commit -m "security: wire transactional KDS outbox events"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
