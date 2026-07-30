@@ -8,18 +8,20 @@ import { useI18n } from "@/lib/i18n";
 import { AdminLogin } from "./AdminLogin";
 import { AdminShell } from "./AdminShell";
 
+export interface AuthenticatedStaffUser {
+  id: string;
+  name: string;
+  role: string;
+}
+
 interface AuthSessionResponse {
-  user: {
-    id: string;
-    name: string;
-    role: string;
-  } | null;
+  user: AuthenticatedStaffUser | null;
 }
 
 export function AdminApp() {
   const { isRTL } = useI18n();
-  const setStaff = useRestaurantStore((s) => s.setStaff);
-  const clearStaff = useRestaurantStore((s) => s.clearStaff);
+  const setStaff = useRestaurantStore((state) => state.setStaff);
+  const clearStaff = useRestaurantStore((state) => state.clearStaff);
 
   const sessionQuery = useQuery<AuthSessionResponse | null>({
     queryKey: ["auth-session"],
@@ -66,7 +68,7 @@ export function AdminApp() {
           </button>
         </div>
       ) : sessionQuery.data?.user ? (
-        <AdminShell />
+        <AdminShell user={sessionQuery.data.user} />
       ) : (
         <AdminLogin />
       )}
