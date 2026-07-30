@@ -16,17 +16,16 @@ const authenticatedEmployeeSelect = {
 /**
  * Authenticate a staff PIN without storing or returning the raw PIN.
  *
- * The second lookup is a temporary zero-downtime bridge for databases whose
- * legacy `pin` column still contains plaintext. A successful legacy login
- * immediately replaces that value with the memory-hard verifier. The explicit
- * migration script should still be run during deployment so inactive and
- * rarely used accounts are migrated before production traffic is enabled.
+ * The existing database column remains named `pin` for a zero-downtime rollout,
+ * but secure rows contain a memory-hard verifier rather than plaintext. The
+ * second lookup is a temporary bridge for databases that have not run the PIN
+ * migration yet. A successful legacy login immediately upgrades that row.
  */
 export async function authenticateEmployeePin(pin: string) {
   const pinVerifier = await createPinVerifier(pin);
 
   const secureEmployee = await db.employee.findUnique({
-    where: { pinVerifier },
+    where: { pin: pinVerifier },
     select: authenticatedEmployeeSelect,
   });
 
@@ -35,7 +34,7 @@ export async function authenticateEmployeePin(pin: string) {
   }
 
   const legacyEmployee = await db.employee.findUnique({
-    where: { pinVerifier: pin },
+    where: { pin },
     select: authenticatedEmployeeSelect,
   });
 
@@ -43,7 +42,7 @@ export async function authenticateEmployeePin(pin: string) {
 
   return db.employee.update({
     where: { id: legacyEmployee.id },
-    data: { pinVerifier },
+    data: { pin: pinVerifier },
     select: authenticatedEmployeeSelect,
   });
 }
@@ -52,7 +51,7 @@ export async function replaceEmployeePin(employeeId: string, pin: string) {
   const pinVerifier = await createPinVerifier(pin);
   return db.employee.update({
     where: { id: employeeId },
-    data: { pinVerifier },
+    data: { pin: pinVerifier },
     select: authenticatedEmployeeSelect,
   });
 }
