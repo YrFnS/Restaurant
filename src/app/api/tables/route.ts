@@ -8,10 +8,7 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 
-const TABLE_READ_ROLES = [
-  ...ORDER_MANAGEMENT_ROLES,
-  "host",
-] as const;
+const TABLE_READ_ROLES = [...ORDER_MANAGEMENT_ROLES, "host"] as const;
 const tableStatusSchema = z.enum([
   "open",
   "seated",
@@ -27,6 +24,8 @@ const tableOperationSchema = z
     id: z.string().trim().min(1).max(191),
     status: tableStatusSchema,
     serverName: z.string().trim().max(160).default(""),
+    // Accepted for compatibility with the existing UI, but derived server-side.
+    seatedAt: z.string().datetime().nullable().optional(),
   })
   .strict();
 const tableCreateSchema = z
@@ -40,6 +39,9 @@ const tableCreateSchema = z
     y: z.number().min(-100_000).max(100_000).default(0),
     width: z.number().min(30).max(2_000).default(90),
     height: z.number().min(30).max(2_000).default(90),
+    // Accepted for compatibility. New tables are always created open/unassigned.
+    status: z.literal("open").optional(),
+    serverName: z.literal("").optional(),
   })
   .strict();
 const tablePatchSchema = z
@@ -148,9 +150,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { type: _type, ...tableData } = parsed.data;
+    const {
+      type: _type,
+      status: _status,
+      serverName: _serverName,
+      ...tableData
+    } = parsed.data;
     const table = await db.restaurantTable.create({
-      data: { ...tableData, status: "open" },
+      data: { ...tableData, status: "open", serverName: "" },
     });
     return NextResponse.json({ table }, { status: 201 });
   } catch (error) {
