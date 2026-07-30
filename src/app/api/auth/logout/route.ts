@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   clearStaffSession,
   getStaffSession,
+  type StaffSession,
 } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
-  let session = null;
+  let session: StaffSession | null = null;
 
   try {
     session = await getStaffSession();
