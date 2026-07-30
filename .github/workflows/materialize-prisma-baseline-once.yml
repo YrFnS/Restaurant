@@ -55,7 +55,7 @@ jobs:
 
           bunx prisma migrate diff \
             --from-empty \
-            --to-schema /tmp/restaurant-main-schema.prisma \
+            --to-schema-datamodel /tmp/restaurant-main-schema.prisma \
             --script \
             --output "$target"
 
