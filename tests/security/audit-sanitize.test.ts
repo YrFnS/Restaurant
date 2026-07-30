@@ -37,12 +37,30 @@ describe("audit metadata sanitizer", () => {
   });
 
   test("bounds deeply nested data", () => {
-    const sanitized = sanitizeAuditMetadata({
-      one: { two: { three: { four: { five: { six: "hidden" } } } } } },
-    });
+    const deeplyNested = {
+      one: {
+        two: {
+          three: {
+            four: {
+              five: {
+                six: "hidden",
+              },
+            },
+          },
+        },
+      },
+    };
 
-    expect(sanitized).toEqual({
-      one: { two: { three: { four: { five: "[truncated]" } } } },
+    expect(sanitizeAuditMetadata(deeplyNested)).toEqual({
+      one: {
+        two: {
+          three: {
+            four: {
+              five: "[truncated]",
+            },
+          },
+        },
+      },
     });
   });
 });
