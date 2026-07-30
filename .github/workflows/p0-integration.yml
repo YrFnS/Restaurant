@@ -150,3 +150,83 @@ jobs:
           P0_BASE_URL=http://127.0.0.1:3000 bun tests/integration/p0-authorization-matrix.ts
           P0_BASE_URL=http://127.0.0.1:3000 bun tests/integration/p0-kds-worker.ts
           bun tests/integration/p0-payment-ledger.ts
+
+  existing-data-rehearsal:
+    name: Existing-data baseline adoption rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: legacy
+          POSTGRES_PASSWORD: legacy
+          POSTGRES_DB: restaurant_legacy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U legacy -d restaurant_legacy"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      CI: "true"
+      DATABASE_URL: "postgresql://legacy:legacy@127.0.0.1:5432/restaurant_legacy?sslmode=disable"
+      AUTH_SECRET: "legacy-session-secret-0123456789abcdef0123456789abcdef"
+      AUTH_PIN_PEPPER: "legacy-pin-pepper-0123456789abcdef0123456789abcdef"
+      AUTH_ORDER_ACCESS_SECRET: "legacy-order-access-0123456789abcdef0123456789abcdef"
+      AUTH_CUSTOMER_ACCESS_SECRET: "legacy-customer-access-0123456789abcdef0123456789abcdef"
+      RATE_LIMIT_SECRET: "legacy-rate-limit-secret-0123456789abcdef0123456789abcdef"
+      KDS_OUTBOX_SECRET: "legacy-kds-outbox-secret-0123456789abcdef0123456789abcdef"
+
+    steps:
+      - name: Check out repository with main history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate current Prisma client
+        run: bun run db:generate
+
+      - name: Recreate the pre-P0 database and representative data
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx prisma db execute \
+            --file prisma/migrations/20260730000000_baseline/migration.sql \
+            --schema prisma/schema.prisma
+
+          mkdir -p .tmp
+          git show origin/main:prisma/seed.ts > .tmp/legacy-seed.ts
+          bun .tmp/legacy-seed.ts
+          bun tests/integration/p0-existing-data-rehearsal.ts \
+            snapshot /tmp/p0-existing-data.json
+
+      - name: Adopt the baseline and deploy additive P0 migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx prisma migrate resolve \
+            --applied 20260730000000_baseline \
+            --schema prisma/schema.prisma
+          bun run db:deploy
+          bunx prisma migrate status --schema prisma/schema.prisma
+
+      - name: Migrate credentials and verify data preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run auth:migrate-pins
+          bun run auth:check-pins
+          bun tests/integration/p0-existing-data-rehearsal.ts \
+            verify /tmp/p0-existing-data.json
