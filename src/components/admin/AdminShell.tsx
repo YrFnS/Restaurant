@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { DashboardTab } from "./tabs/DashboardTab";
 import { MenuTab } from "./tabs/MenuTab";
@@ -55,6 +55,7 @@ const TAB_COMPONENTS: Record<AdminTab, React.ComponentType> = {
 export function AdminShell() {
   const { t, isRTL, toggleLocale, locale } = useI18n();
   const { staffName, clearStaff } = useRestaurantStore();
+  const queryClient = useQueryClient();
   const [active, setActive] = useState<AdminTab>("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -79,9 +80,14 @@ export function AdminShell() {
     { id: "settings", label: t.admin.settings, icon: <SettingsIcon className="size-[18px]" /> },
   ];
 
-  const handleLogout = () => {
-    clearStaff();
-    toast.success(isRTL ? "تم تسجيل الخروج" : "Logged out");
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      clearStaff();
+      queryClient.setQueryData(["auth-session"], null);
+      toast.success(isRTL ? "تم تسجيل الخروج" : "Logged out");
+    }
   };
 
   const handleSelect = (id: AdminTab) => {
@@ -171,7 +177,7 @@ export function AdminShell() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={handleLogout}
+              onClick={() => void handleLogout()}
               className="text-muted-foreground hover:text-destructive"
               title={t.admin.logout}
             >
@@ -298,7 +304,7 @@ function SidebarFooter({
 }: {
   t: any;
   isRTL: boolean;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
 }) {
   return (
     <div className="px-3 py-3 border-t border-sidebar-border space-y-2">
@@ -309,7 +315,7 @@ function SidebarFooter({
         </Button>
       </Link>
       <button
-        onClick={onLogout}
+        onClick={() => void onLogout()}
         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-destructive/10 hover:text-destructive text-sm transition-colors"
       >
         <LogOut className={isRTL ? "size-4 rotate-180" : "size-4"} />
