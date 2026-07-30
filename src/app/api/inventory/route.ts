@@ -5,6 +5,7 @@ import {
   INVENTORY_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const ingredientFields = {
   name: z.string().trim().min(1).max(200),
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    const context = auditContextFromRequest(req);
 
     if (body?.type === "waste") {
       const parsed = wasteSchema.safeParse(body);
@@ -121,7 +123,7 @@ export async function POST(req: NextRequest) {
           ingredientName = ingredient.name;
         }
 
-        return tx.wasteLog.create({
+        const created = await tx.wasteLog.create({
           data: {
             ingredientId: parsed.data.ingredientId || null,
             ingredientName,
@@ -131,6 +133,22 @@ export async function POST(req: NextRequest) {
             reportedBy: auth.session.id,
           },
         });
+
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "inventory.waste.create",
+          entityType: "WasteLog",
+          entityId: created.id,
+          context,
+          metadata: {
+            ingredientId: created.ingredientId,
+            ingredientName: created.ingredientName,
+            quantity: created.quantity,
+            reason: created.reason,
+          },
+        });
+
+        return created;
       });
 
       return NextResponse.json({ waste }, { status: 201 });
@@ -148,13 +166,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const item = await db.ingredient.create({
-      data: {
-        ...parsed.data,
-        supplier: parsed.data.supplier || null,
-        category: parsed.data.category || null,
-      },
+    const item = await db.$transaction(async (tx) => {
+      const created = await tx.ingredient.create({
+        data: {
+          ...parsed.data,
+          supplier: parsed.data.supplier || null,
+          category: parsed.data.category || null,
+        },
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "inventory.ingredient.create",
+        entityType: "Ingredient",
+        entityId: created.id,
+        context,
+        metadata: {
+          name: created.name,
+          unit: created.unit,
+          quantity: created.quantity,
+          lowThreshold: created.lowThreshold,
+          costPerUnit: created.costPerUnit,
+        },
+      });
+
+      return created;
     });
+
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
     if (error instanceof InsufficientInventoryError) {
@@ -178,6 +216,7 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
+    const context = auditContextFromRequest(req);
 
     if (body?._delete === true) {
       const parsed = deleteIngredientSchema.safeParse(body);
@@ -188,7 +227,24 @@ export async function PATCH(req: NextRequest) {
         );
       }
 
-      await db.ingredient.delete({ where: { id: parsed.data.id } });
+      await db.$transaction(async (tx) => {
+        const deleted = await tx.ingredient.delete({
+          where: { id: parsed.data.id },
+        });
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "inventory.ingredient.delete",
+          entityType: "Ingredient",
+          entityId: deleted.id,
+          context,
+          metadata: {
+            name: deleted.name,
+            quantity: deleted.quantity,
+            unit: deleted.unit,
+          },
+        });
+      });
+
       return NextResponse.json({ ok: true });
     }
 
@@ -205,18 +261,37 @@ export async function PATCH(req: NextRequest) {
     }
 
     const { id, ...updateData } = parsed.data;
-    const item = await db.ingredient.update({
-      where: { id },
-      data: {
-        ...updateData,
-        ...(updateData.supplier !== undefined
-          ? { supplier: updateData.supplier || null }
-          : {}),
-        ...(updateData.category !== undefined
-          ? { category: updateData.category || null }
-          : {}),
-      },
+    const item = await db.$transaction(async (tx) => {
+      const updated = await tx.ingredient.update({
+        where: { id },
+        data: {
+          ...updateData,
+          ...(updateData.supplier !== undefined
+            ? { supplier: updateData.supplier || null }
+            : {}),
+          ...(updateData.category !== undefined
+            ? { category: updateData.category || null }
+            : {}),
+        },
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "inventory.ingredient.update",
+        entityType: "Ingredient",
+        entityId: id,
+        context,
+        metadata: {
+          changedFields: Object.keys(updateData),
+          quantity: updated.quantity,
+          lowThreshold: updated.lowThreshold,
+          costPerUnit: updated.costPerUnit,
+        },
+      });
+
+      return updated;
     });
+
     return NextResponse.json({ item });
   } catch (error) {
     console.error("[inventory] Failed to update inventory record", error);
