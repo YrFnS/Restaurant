@@ -44,8 +44,7 @@ server.log
 *.tsbuildinfo
 next-env.d.ts
 
-# Prisma
-prisma/migrations/
+# Prisma migrations are production source and must remain versioned.
 
 # Misc
 .temp/
