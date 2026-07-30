@@ -7,6 +7,7 @@ import {
   createPinVerifier,
   PinConfigurationError,
 } from "@/lib/auth/pin";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const EMPLOYEE_ROLES = [
   "owner",
@@ -91,9 +92,28 @@ export async function POST(req: NextRequest) {
 
     const { pin, ...employeeData } = parsed.data;
     const pinVerifier = await createPinVerifier(pin);
-    const employee = await db.employee.create({
-      data: { ...employeeData, pin: pinVerifier },
-      select: safeEmployeeSelect,
+    const context = auditContextFromRequest(req);
+    const employee = await db.$transaction(async (tx) => {
+      const created = await tx.employee.create({
+        data: { ...employeeData, pin: pinVerifier },
+        select: safeEmployeeSelect,
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "employee.create",
+        entityType: "Employee",
+        entityId: created.id,
+        context,
+        metadata: {
+          name: created.name,
+          role: created.role,
+          isActive: created.isActive,
+          hourlyWage: created.hourlyWage,
+        },
+      });
+
+      return created;
     });
 
     return NextResponse.json({ employee }, { status: 201 });
