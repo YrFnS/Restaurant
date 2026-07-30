@@ -5,6 +5,7 @@ import {
   MENU_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const mediaPathSchema = z
   .string()
@@ -57,6 +58,31 @@ const itemUpdateSchema = z
     "At least one editable field is required"
   );
 
+const categoryAuditSelect = {
+  id: true,
+  nameEn: true,
+  nameAr: true,
+  icon: true,
+  color: true,
+  sortOrder: true,
+  stationSlugs: true,
+  isAvailable: true,
+} as const;
+
+const itemAuditSelect = {
+  id: true,
+  nameEn: true,
+  nameAr: true,
+  price: true,
+  categoryId: true,
+  isAvailable: true,
+  isPopular: true,
+  isSpecial: true,
+  isNew: true,
+  preparationTime: true,
+  sortOrder: true,
+} as const;
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -67,6 +93,7 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await req.json();
+    const context = auditContextFromRequest(req);
 
     if (body?.type === "category") {
       const parsed = categoryUpdateSchema.safeParse(body);
@@ -81,8 +108,35 @@ export async function PATCH(
         );
       }
 
+      const existing = await db.menuCategory.findUnique({
+        where: { id },
+        select: categoryAuditSelect,
+      });
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Menu category not found", code: "MENU_CATEGORY_NOT_FOUND" },
+          { status: 404 }
+        );
+      }
+
       const { type: _type, ...data } = parsed.data;
-      const category = await db.menuCategory.update({ where: { id }, data });
+      const category = await db.$transaction(async (tx) => {
+        const updated = await tx.menuCategory.update({
+          where: { id },
+          data,
+          select: categoryAuditSelect,
+        });
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "menu.category.update",
+          entityType: "MenuCategory",
+          entityId: id,
+          context,
+          metadata: { before: existing, after: updated },
+        });
+        return updated;
+      });
+
       return NextResponse.json({ category });
     }
 
@@ -98,8 +152,35 @@ export async function PATCH(
       );
     }
 
+    const existing = await db.menuItem.findUnique({
+      where: { id },
+      select: itemAuditSelect,
+    });
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Menu item not found", code: "MENU_ITEM_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+
     const { type: _type, ...data } = parsed.data;
-    const item = await db.menuItem.update({ where: { id }, data });
+    const item = await db.$transaction(async (tx) => {
+      const updated = await tx.menuItem.update({
+        where: { id },
+        data,
+        select: itemAuditSelect,
+      });
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "menu.item.update",
+        entityType: "MenuItem",
+        entityId: id,
+        context,
+        metadata: { before: existing, after: updated },
+      });
+      return updated;
+    });
+
     return NextResponse.json({ item });
   } catch (error) {
     console.error("[menu] Failed to update menu record", error);
@@ -121,6 +202,7 @@ export async function DELETE(
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const kind = searchParams.get("kind");
+    const context = auditContextFromRequest(req);
 
     if (kind !== "category" && kind !== "item") {
       return NextResponse.json(
@@ -130,9 +212,51 @@ export async function DELETE(
     }
 
     if (kind === "category") {
-      await db.menuCategory.delete({ where: { id } });
+      const existing = await db.menuCategory.findUnique({
+        where: { id },
+        select: categoryAuditSelect,
+      });
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Menu category not found", code: "MENU_CATEGORY_NOT_FOUND" },
+          { status: 404 }
+        );
+      }
+
+      await db.$transaction(async (tx) => {
+        await tx.menuCategory.delete({ where: { id } });
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "menu.category.delete",
+          entityType: "MenuCategory",
+          entityId: id,
+          context,
+          metadata: { before: existing },
+        });
+      });
     } else {
-      await db.menuItem.delete({ where: { id } });
+      const existing = await db.menuItem.findUnique({
+        where: { id },
+        select: itemAuditSelect,
+      });
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Menu item not found", code: "MENU_ITEM_NOT_FOUND" },
+          { status: 404 }
+        );
+      }
+
+      await db.$transaction(async (tx) => {
+        await tx.menuItem.delete({ where: { id } });
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "menu.item.delete",
+          entityType: "MenuItem",
+          entityId: id,
+          context,
+          metadata: { before: existing },
+        });
+      });
     }
 
     return NextResponse.json({ ok: true });
