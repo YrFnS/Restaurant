@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -16,8 +17,10 @@ import { motion } from "framer-motion";
 
 export function AdminLogin() {
   const { t, isRTL, toggleLocale, locale } = useI18n();
-  const setStaff = useRestaurantStore((s) => s.setStaff);
+  const setStaff = useRestaurantStore((state) => state.setStaff);
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -45,6 +48,16 @@ export function AdminLogin() {
       setStaff(data.user.name);
       queryClient.setQueryData(["auth-session"], data);
       toast.success(`${t.admin.welcome}, ${data.user.name}`);
+
+      const nextPath = searchParams.get("next");
+      if (
+        nextPath &&
+        nextPath.startsWith("/") &&
+        !nextPath.startsWith("//")
+      ) {
+        router.replace(nextPath);
+        router.refresh();
+      }
     } catch {
       toast.error(t.admin.loginError);
     } finally {
@@ -54,7 +67,6 @@ export function AdminLogin() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Decorative background */}
       <div className="absolute inset-0 -z-10 opacity-50">
         <div className="absolute -top-32 -start-32 w-96 h-96 bg-primary/20 rounded-full blur-3xl" />
         <div className="absolute -bottom-32 -end-32 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
@@ -92,8 +104,10 @@ export function AdminLogin() {
                 autoComplete="current-password"
                 autoFocus
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
-                onKeyDown={(e) => e.key === "Enter" && void submit()}
+                onChange={(event) =>
+                  setPin(event.target.value.replace(/\D/g, "").slice(0, 8))
+                }
+                onKeyDown={(event) => event.key === "Enter" && void submit()}
                 placeholder="••••"
                 className="text-center text-2xl tracking-[0.5em] font-bold h-14"
                 dir="ltr"
