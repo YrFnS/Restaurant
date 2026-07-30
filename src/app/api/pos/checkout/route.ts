@@ -20,8 +20,28 @@ const checkoutOrderInclude = {
   table: true,
 } as const;
 
+const paymentEventSelect = {
+  id: true,
+  eventType: true,
+  method: true,
+  status: true,
+  amountCents: true,
+  tenderedCents: true,
+  changeCents: true,
+  currency: true,
+  createdAt: true,
+} as const;
+
 function toCents(value: number): number {
   return Math.round(value * 100);
+}
+
+function fromCents(value: number | null): number | null {
+  return value === null ? null : value / 100;
+}
+
+function captureKey(orderId: string): string {
+  return `cash-capture:${orderId}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -90,15 +110,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const tendered = input.tendered ?? existing.total;
+    const changeCents = Math.max(0, tenderedCents - totalCents);
+    const change = changeCents / 100;
+
     if (existing.paymentStatus === "paid") {
+      const paymentEvent = await db.paymentEvent.findUnique({
+        where: { idempotencyKey: captureKey(existing.id) },
+        select: paymentEventSelect,
+      });
+
       return NextResponse.json(
         {
           order: existing,
           payment: {
-            method: existing.paymentMethod,
-            total: existing.total,
-            tendered: input.tendered ?? existing.total,
-            change: Math.max(0, (input.tendered ?? existing.total) - existing.total),
+            eventId: paymentEvent?.id || null,
+            method: paymentEvent?.method || existing.paymentMethod,
+            status: paymentEvent?.status || "succeeded",
+            currency: paymentEvent?.currency || null,
+            total: paymentEvent ? paymentEvent.amountCents / 100 : existing.total,
+            tendered:
+              fromCents(paymentEvent?.tenderedCents ?? null) ??
+              input.tendered ??
+              existing.total,
+            change:
+              fromCents(paymentEvent?.changeCents ?? null) ??
+              Math.max(0, (input.tendered ?? existing.total) - existing.total),
           },
           replayed: true,
         },
@@ -107,8 +144,6 @@ export async function POST(req: NextRequest) {
     }
 
     const context = auditContextFromRequest(req);
-    const tendered = input.tendered ?? existing.total;
-    const change = Math.max(0, tendered - existing.total);
     const result = await db.$transaction(async (tx) => {
       const claimed = await tx.order.updateMany({
         where: { id: input.orderId, paymentStatus: "unpaid" },
@@ -120,11 +155,17 @@ export async function POST(req: NextRequest) {
       });
 
       if (claimed.count === 0) {
-        const replay = await tx.order.findUnique({
-          where: { id: input.orderId },
-          include: checkoutOrderInclude,
-        });
-        return { order: replay, replayed: true };
+        const [order, paymentEvent] = await Promise.all([
+          tx.order.findUnique({
+            where: { id: input.orderId },
+            include: checkoutOrderInclude,
+          }),
+          tx.paymentEvent.findUnique({
+            where: { idempotencyKey: captureKey(input.orderId) },
+            select: paymentEventSelect,
+          }),
+        ]);
+        return { order, paymentEvent, replayed: true };
       }
 
       const drawerEntry = await tx.cashDrawerEntry.create({
@@ -134,6 +175,33 @@ export async function POST(req: NextRequest) {
           note: `Sale ${existing.orderNumber}${existing.table ? ` / Table ${existing.table.number}` : ""}`,
           createdBy: auth.session.name,
         },
+      });
+
+      const settings = await tx.restaurantSettings.findUnique({
+        where: { id: "1" },
+        select: { currency: true },
+      });
+
+      const paymentEvent = await tx.paymentEvent.create({
+        data: {
+          idempotencyKey: captureKey(existing.id),
+          orderId: existing.id,
+          eventType: "capture",
+          method: "cash",
+          status: "succeeded",
+          amountCents: totalCents,
+          tenderedCents,
+          changeCents,
+          currency: settings?.currency || "USD",
+          actorId: auth.session.id,
+          actorName: auth.session.name,
+          metadata: {
+            orderNumber: existing.orderNumber,
+            tableId: existing.tableId,
+            cashDrawerEntryId: drawerEntry.id,
+          },
+        },
+        select: paymentEventSelect,
       });
 
       if (existing.tableId) {
@@ -146,14 +214,16 @@ export async function POST(req: NextRequest) {
       await writeAuditEvent(tx, {
         actor: auth.session,
         action: "payment.cash.capture",
-        entityType: "Order",
-        entityId: existing.id,
+        entityType: "PaymentEvent",
+        entityId: paymentEvent.id,
         context,
         metadata: {
+          orderId: existing.id,
           orderNumber: existing.orderNumber,
-          total: existing.total,
-          tendered,
-          change,
+          totalCents,
+          tenderedCents,
+          changeCents,
+          currency: paymentEvent.currency,
           cashDrawerEntryId: drawerEntry.id,
           tableId: existing.tableId,
         },
@@ -163,7 +233,7 @@ export async function POST(req: NextRequest) {
         where: { id: input.orderId },
         include: checkoutOrderInclude,
       });
-      return { order, replayed: false };
+      return { order, paymentEvent, replayed: false };
     });
 
     if (!result.order) {
@@ -177,10 +247,16 @@ export async function POST(req: NextRequest) {
       {
         order: result.order,
         payment: {
-          method: "cash",
-          total: result.order.total,
-          tendered,
-          change,
+          eventId: result.paymentEvent?.id || null,
+          method: result.paymentEvent?.method || "cash",
+          status: result.paymentEvent?.status || "succeeded",
+          currency: result.paymentEvent?.currency || null,
+          total: result.paymentEvent
+            ? result.paymentEvent.amountCents / 100
+            : result.order.total,
+          tendered:
+            fromCents(result.paymentEvent?.tenderedCents ?? null) ?? tendered,
+          change: fromCents(result.paymentEvent?.changeCents ?? null) ?? change,
         },
         replayed: result.replayed,
       },
