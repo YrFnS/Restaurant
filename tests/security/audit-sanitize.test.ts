@@ -26,7 +26,7 @@ describe("audit metadata sanitizer", () => {
     expect(
       sanitizeAuditMetadata({
         invalidNumber: Number.POSITIVE_INFINITY,
-        amount: 12n,
+        amount: BigInt(12),
         at: new Date("2026-07-31T00:00:00.000Z"),
       })
     ).toEqual({
