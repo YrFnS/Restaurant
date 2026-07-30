@@ -11,8 +11,11 @@ export interface AuditRequestContext {
   userAgent: string;
 }
 
+type AuditActor = Pick<StaffSession, "id" | "name" | "role"> &
+  Partial<Pick<StaffSession, "sessionId">>;
+
 export interface AuditEventInput {
-  actor?: Pick<StaffSession, "id" | "name" | "role"> | null;
+  actor?: AuditActor | null;
   action: string;
   entityType: string;
   entityId?: string | null;
@@ -56,6 +59,7 @@ export async function writeAuditEvent(
       actorId: input.actor?.id || null,
       actorName: input.actor?.name || "",
       actorRole: input.actor?.role || "",
+      sessionId: input.actor?.sessionId || null,
       action: input.action.slice(0, 160),
       entityType: input.entityType.slice(0, 120),
       entityId: input.entityId?.slice(0, 191) || null,
