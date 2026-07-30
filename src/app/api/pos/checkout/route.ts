@@ -5,6 +5,7 @@ import {
   CASH_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const checkoutSchema = z
   .object({
@@ -105,6 +106,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const context = auditContextFromRequest(req);
+    const tendered = input.tendered ?? existing.total;
+    const change = Math.max(0, tendered - existing.total);
     const result = await db.$transaction(async (tx) => {
       const claimed = await tx.order.updateMany({
         where: { id: input.orderId, paymentStatus: "unpaid" },
@@ -123,7 +127,7 @@ export async function POST(req: NextRequest) {
         return { order: replay, replayed: true };
       }
 
-      await tx.cashDrawerEntry.create({
+      const drawerEntry = await tx.cashDrawerEntry.create({
         data: {
           type: "sale",
           amount: existing.total,
@@ -138,6 +142,22 @@ export async function POST(req: NextRequest) {
           data: { status: "paid" },
         });
       }
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "payment.cash.capture",
+        entityType: "Order",
+        entityId: existing.id,
+        context,
+        metadata: {
+          orderNumber: existing.orderNumber,
+          total: existing.total,
+          tendered,
+          change,
+          cashDrawerEntryId: drawerEntry.id,
+          tableId: existing.tableId,
+        },
+      });
 
       const order = await tx.order.findUnique({
         where: { id: input.orderId },
@@ -159,11 +179,8 @@ export async function POST(req: NextRequest) {
         payment: {
           method: "cash",
           total: result.order.total,
-          tendered: input.tendered ?? result.order.total,
-          change: Math.max(
-            0,
-            (input.tendered ?? result.order.total) - result.order.total
-          ),
+          tendered,
+          change,
         },
         replayed: result.replayed,
       },
