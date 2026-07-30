@@ -14,6 +14,7 @@ const recentOrdersSchema = z
           .object({
             orderNumber: z.string().trim().min(1).max(100),
             accessToken: z.string().trim().min(20).max(200),
+            createdAt: z.string().datetime().optional(),
           })
           .strict()
       )
