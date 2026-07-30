@@ -5,11 +5,12 @@ import {
 } from "@/lib/security/request-policy";
 
 const STAFF_SESSION_COOKIE = "restaurant_staff_session";
-const SESSION_VERSION = 1;
+const SESSION_VERSION = 2;
 const MAX_REQUEST_ID_LENGTH = 128;
 
 interface SessionTokenPayload {
   v: number;
+  sid: string;
   sub: string;
   iat: number;
   exp: number;
@@ -48,10 +49,12 @@ function decodePayload(value: string): SessionTokenPayload | null {
 
     if (
       payload.v !== SESSION_VERSION ||
+      typeof payload.sid !== "string" ||
+      payload.sid.length < 16 ||
       typeof payload.sub !== "string" ||
+      payload.sub.length === 0 ||
       typeof payload.iat !== "number" ||
       typeof payload.exp !== "number" ||
-      payload.sub.length === 0 ||
       payload.exp <= now ||
       payload.iat > now + 60
     ) {
