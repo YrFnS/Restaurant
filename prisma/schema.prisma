@@ -497,3 +497,25 @@ model ComboMeal {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @default(now())
 }
+
+// ─── Append-only security and financial audit trail ───
+model AuditEvent {
+  id          String   @id @default(cuid())
+  actorId     String?
+  actorName   String   @default("")
+  actorRole   String   @default("")
+  action      String
+  entityType  String
+  entityId    String?
+  requestId   String?
+  sourceHash  String   @default("")
+  userAgent   String   @default("")
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
