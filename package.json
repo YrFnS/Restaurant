@@ -12,6 +12,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
+    "db:seed": "bun prisma/seed.ts && bun run auth:migrate-pins",
     "auth:migrate-pins": "bun scripts/migrate-employee-pins.ts",
     "auth:check-pins": "bun scripts/check-employee-pins.ts",
     "postinstall": "prisma generate"
