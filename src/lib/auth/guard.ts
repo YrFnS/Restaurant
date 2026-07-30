@@ -39,6 +39,7 @@ export const KITCHEN_OPERATION_ROLES = [
   "owner",
   "admin",
   "manager",
+  "server",
   "cook",
   "bartender",
 ] as const;
