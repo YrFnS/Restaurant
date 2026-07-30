@@ -82,11 +82,6 @@ export default function OrderTrackingPage() {
   const [inputToken, setInputToken] = useState(accessToken);
 
   useEffect(() => {
-    setInputNumber(routeOrderNumber);
-    setInputToken(accessToken);
-  }, [accessToken, routeOrderNumber]);
-
-  useEffect(() => {
     if (routeOrderNumber && tokenFromUrl) {
       rememberOrderAccess(`#${routeOrderNumber}`, tokenFromUrl);
     }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Banknote, CreditCard, Delete, Check, Loader2, Receipt, HandCoins,
@@ -17,6 +17,13 @@ import {
   type OrderType,
 } from "./types";
 import { posSubtotal, posTax, posTotal } from "./types";
+
+function createIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `pos-payment-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
 
 interface PaymentDialogProps {
   open: boolean;
@@ -53,14 +60,15 @@ export function PaymentDialog(props: PaymentDialogProps) {
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [tenderedStr, setTenderedStr] = useState<string>("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMethod("cash");
       setTenderedStr("");
       setIsProcessing(false);
+      idempotencyKeyRef.current = null;
     }
   }, [open]);
 
@@ -102,132 +110,99 @@ export function PaymentDialog(props: PaymentDialogProps) {
 
   async function handleComplete() {
     if (!canComplete || isProcessing) return;
+    if (method === "card") {
+      toast.error(
+        isRTL
+          ? "الدفع بالبطاقة معطل حتى يتم ربط مزود دفع"
+          : "Card payment is disabled until a payment processor is configured"
+      );
+      return;
+    }
+    if (orderType === "dine_in" && !table) {
+      toast.error(t.pos.noTableSelected);
+      return;
+    }
+    if (orderType === "delivery" && (!deliveryAddress.trim() || !customerPhone.trim())) {
+      toast.error(t.cart.deliveryAddress);
+      return;
+    }
+
     setIsProcessing(true);
+    idempotencyKeyRef.current ??= createIdempotencyKey();
+
     try {
-      // 1) Create the order
       const orderPayload = {
         type: orderType,
-        customerName: customerName || (table ? `Table ${table.number}` : "Walk-in"),
+        customerName:
+          customerName || (table ? `Table ${table.number}` : "Walk-in"),
         customerPhone,
-        deliveryAddress: orderType === "delivery" ? deliveryAddress : null,
-        notes,
-        subtotal,
-        taxAmount: tax,
-        deliveryFee: orderType === "delivery" ? deliveryFee : 0,
-        discountAmount: 0,
-        tipAmount: tip,
-        total,
-        paymentMethod: method,
-        paymentStatus: "paid",
-        serverName: serverName || "Server",
-        tableId: table?.id || null,
-        items: items.map((it) => ({
-          menuItemId: it.menuItemId,
-          quantity: it.quantity,
-          unitPrice: it.price,
-          modifiers: it.modifiers,
-          notes: it.notes,
-          totalPrice: it.totalPrice,
-          stationSlug: it.stationSlug,
-          course: it.course,
+        deliveryAddress:
+          orderType === "delivery" ? deliveryAddress : null,
+        tableNumber: orderType === "dine_in" ? table?.number : undefined,
+        notes: notes || null,
+        promoCode: null,
+        tip:
+          tip > 0
+            ? { mode: "amount" as const, value: tip }
+            : { mode: "none" as const },
+        items: items.map((item) => ({
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          modifierOptionIds: item.modifiers.map((modifier) => modifier.id),
+          notes: item.notes || null,
+          course: item.course,
         })),
       };
-      const r = await fetch("/api/orders", {
+
+      const createResponse = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKeyRef.current,
+        },
         body: JSON.stringify(orderPayload),
       });
-      if (!r.ok) throw new Error("Order create failed");
-      const { order } = await r.json();
-
-      // 2) If cash, log a cash drawer entry
-      if (method === "cash") {
-        try {
-          await fetch("/api/cash", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "sale",
-              amount: total,
-              note: `Sale ${order.orderNumber}${table ? ` / Table ${table.number}` : ""}`,
-              createdBy: serverName || "Server",
-            }),
-          });
-        } catch {
-          // drawer log is non-critical
-        }
+      const createData = await createResponse.json().catch(() => null);
+      if (!createResponse.ok || !createData?.order) {
+        throw new Error(createData?.error || t.common.error);
       }
 
-      // 3) Mark table to "paid" then auto-transition to "cleaning"
-      if (table) {
-        try {
-          await fetch("/api/tables", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "update",
-              id: table.id,
-              status: "paid",
-              serverName: table.serverName || serverName,
-            }),
-          });
-          // Schedule clearing → cleaning shortly after
-          setTimeout(async () => {
-            try {
-              await fetch("/api/tables", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  type: "update",
-                  id: table.id,
-                  status: "cleaning",
-                  serverName: "",
-                }),
-              });
-              setTimeout(async () => {
-                try {
-                  await fetch("/api/tables", {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      type: "update",
-                      id: table.id,
-                      status: "open",
-                      serverName: "",
-                    }),
-                  });
-                } catch {
-                  /* noop */
-                }
-              }, 1500);
-            } catch {
-              /* noop */
-            }
-          }, 800);
-        } catch {
-          /* noop */
-        }
+      const checkoutResponse = await fetch("/api/pos/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: createData.order.id,
+          paymentMethod: "cash",
+          tendered,
+        }),
+      });
+      const checkoutData = await checkoutResponse.json().catch(() => null);
+      if (!checkoutResponse.ok || !checkoutData?.order || !checkoutData?.payment) {
+        throw new Error(checkoutData?.error || t.common.error);
       }
 
-      toast.success(`${t.pos.saleCompleted} ${order.orderNumber}`, {
+      idempotencyKeyRef.current = null;
+      toast.success(`${t.pos.saleCompleted} ${checkoutData.order.orderNumber}`, {
         description:
-          method === "cash" && change > 0
-            ? `${t.pos.change}: ${fmtCurrency(change)}`
+          checkoutData.payment.change > 0
+            ? `${t.pos.change}: ${fmtCurrency(checkoutData.payment.change)}`
             : undefined,
       });
 
       onComplete({
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        method,
-        tendered,
-        change,
+        orderId: checkoutData.order.id,
+        orderNumber: checkoutData.order.orderNumber,
+        method: "cash",
+        tendered: checkoutData.payment.tendered,
+        change: checkoutData.payment.change,
       });
-    } catch (e) {
-      toast.error(t.common.error);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.common.error);
+    } finally {
       setIsProcessing(false);
     }
   }
+
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -263,10 +238,16 @@ export function PaymentDialog(props: PaymentDialogProps) {
             label={t.pos.cash}
           />
           <MethodButton
-            active={method === "card"}
-            onClick={() => setMethod("card")}
+            active={false}
+            onClick={() =>
+              toast.error(
+                isRTL
+                  ? "الدفع بالبطاقة غير متاح حالياً"
+                  : "Card payment is not available yet"
+              )
+            }
             icon={<CreditCard className="size-5" />}
-            label={t.pos.card}
+            label={`${t.pos.card} · ${isRTL ? "غير متاح" : "Unavailable"}`}
           />
         </div>
 
