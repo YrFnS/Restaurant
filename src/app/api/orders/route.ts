@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession } from "@/lib/auth/guard";
+import { getStaffSession } from "@/lib/auth/session";
 import {
   calculateOrderPricing,
   fromCents,
@@ -17,6 +18,7 @@ import {
   orderIdFromIdempotencyKey,
 } from "@/lib/orders/access";
 import { broadcastKds, stationSlugsFromItems } from "@/lib/kds/broadcast";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const ORDER_READ_ROLES = [
   "owner",
@@ -211,6 +213,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const [actor, context] = await Promise.all([
+      getStaffSession().catch(() => null),
+      Promise.resolve(auditContextFromRequest(req)),
+    ]);
     const order = await db.$transaction(async (tx) => {
       const replay = await tx.order.findUnique({
         where: { id: orderId },
@@ -305,6 +311,30 @@ export async function POST(req: NextRequest) {
           data: { status: "ordered" },
         });
       }
+
+      await writeAuditEvent(tx, {
+        actor,
+        action: "order.create",
+        entityType: "Order",
+        entityId: created.id,
+        context,
+        metadata: {
+          orderNumber: created.orderNumber,
+          type: created.type,
+          status: created.status,
+          subtotal: created.subtotal,
+          taxAmount: created.taxAmount,
+          deliveryFee: created.deliveryFee,
+          discountAmount: created.discountAmount,
+          tipAmount: created.tipAmount,
+          total: created.total,
+          itemCount: created.items.length,
+          tableId,
+          promoCode: pricing.promoCode,
+          dynamicMultiplier: pricing.dynamicMultiplier,
+          activePricingRules: pricing.activePricingRules,
+        },
+      });
 
       return created;
     });
