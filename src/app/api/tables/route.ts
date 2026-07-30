@@ -3,12 +3,13 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
-  ORDER_MANAGEMENT_ROLES,
   STAFF_ADMIN_ROLES,
+  TABLE_OPERATION_ROLES,
   requireStaffSession,
+  roleIsAllowed,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
-const TABLE_READ_ROLES = [...ORDER_MANAGEMENT_ROLES, "host"] as const;
 const tableStatusSchema = z.enum([
   "open",
   "seated",
@@ -18,6 +19,7 @@ const tableStatusSchema = z.enum([
   "cleaning",
   "reserved",
 ]);
+
 const tableOperationSchema = z
   .object({
     type: z.literal("update"),
@@ -28,6 +30,7 @@ const tableOperationSchema = z
     seatedAt: z.string().datetime().nullable().optional(),
   })
   .strict();
+
 const tableCreateSchema = z
   .object({
     type: z.literal("create").optional(),
@@ -44,6 +47,7 @@ const tableCreateSchema = z
     serverName: z.literal("").optional(),
   })
   .strict();
+
 const tablePatchSchema = z
   .object({
     id: z.string().trim().min(1).max(191),
@@ -63,8 +67,58 @@ const tablePatchSchema = z
     message: "At least one editable field is required",
   });
 
+const tableAuditSelect = {
+  id: true,
+  number: true,
+  capacity: true,
+  section: true,
+  status: true,
+  shape: true,
+  x: true,
+  y: true,
+  width: true,
+  height: true,
+  serverName: true,
+  seatedAt: true,
+} as const;
+
+function permissionDenied() {
+  return NextResponse.json(
+    { error: "Permission denied", code: "PERMISSION_DENIED" },
+    { status: 403, headers: { "Cache-Control": "no-store" } }
+  );
+}
+
+function operationalUpdateData(input: {
+  status?: z.infer<typeof tableStatusSchema>;
+  serverName?: string;
+}): Prisma.RestaurantTableUpdateInput {
+  const data: Prisma.RestaurantTableUpdateInput = {};
+
+  if (input.status !== undefined) {
+    data.status = input.status;
+    if (input.status === "seated") {
+      data.seatedAt = new Date();
+    } else if (["open", "cleaning"].includes(input.status)) {
+      data.seatedAt = null;
+    }
+  }
+  if (input.serverName !== undefined) {
+    data.serverName = input.serverName;
+  }
+
+  return data;
+}
+
+function isRecordMissing(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025"
+  );
+}
+
 export async function GET() {
-  const auth = await requireStaffSession(TABLE_READ_ROLES);
+  const auth = await requireStaffSession(TABLE_OPERATION_ROLES);
   if ("response" in auth) return auth.response;
 
   try {
@@ -79,7 +133,6 @@ export async function GET() {
             id: true,
             orderNumber: true,
             status: true,
-            total: true,
             serverName: true,
             createdAt: true,
           },
@@ -100,12 +153,17 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireStaffSession();
+  if ("response" in auth) return auth.response;
+
   try {
     const body = await req.json();
+    const context = auditContextFromRequest(req);
 
     if (body?.type === "update") {
-      const auth = await requireStaffSession(TABLE_READ_ROLES);
-      if ("response" in auth) return auth.response;
+      if (!roleIsAllowed(auth.session.role, TABLE_OPERATION_ROLES)) {
+        return permissionDenied();
+      }
 
       const parsed = tableOperationSchema.safeParse(body);
       if (!parsed.success) {
@@ -119,24 +177,36 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const table = await db.restaurantTable.update({
-        where: { id: parsed.data.id },
-        data: {
-          status: parsed.data.status,
-          serverName: parsed.data.serverName,
-          seatedAt:
-            parsed.data.status === "seated"
-              ? new Date()
-              : ["open", "cleaning"].includes(parsed.data.status)
-                ? null
-                : undefined,
-        },
+      const table = await db.$transaction(async (tx) => {
+        const before = await tx.restaurantTable.findUniqueOrThrow({
+          where: { id: parsed.data.id },
+          select: tableAuditSelect,
+        });
+        const updated = await tx.restaurantTable.update({
+          where: { id: parsed.data.id },
+          data: operationalUpdateData({
+            status: parsed.data.status,
+            serverName: parsed.data.serverName,
+          }),
+          select: tableAuditSelect,
+        });
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "table.operation.update",
+          entityType: "RestaurantTable",
+          entityId: updated.id,
+          context,
+          metadata: { before, after: updated },
+        });
+        return updated;
       });
+
       return NextResponse.json({ table });
     }
 
-    const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
-    if ("response" in auth) return auth.response;
+    if (!roleIsAllowed(auth.session.role, STAFF_ADMIN_ROLES)) {
+      return permissionDenied();
+    }
 
     const parsed = tableCreateSchema.safeParse(body);
     if (!parsed.success) {
@@ -156,9 +226,22 @@ export async function POST(req: NextRequest) {
       serverName: _serverName,
       ...tableData
     } = parsed.data;
-    const table = await db.restaurantTable.create({
-      data: { ...tableData, status: "open", serverName: "" },
+    const table = await db.$transaction(async (tx) => {
+      const created = await tx.restaurantTable.create({
+        data: { ...tableData, status: "open", serverName: "" },
+        select: tableAuditSelect,
+      });
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "table.create",
+        entityType: "RestaurantTable",
+        entityId: created.id,
+        context,
+        metadata: { after: created },
+      });
+      return created;
     });
+
     return NextResponse.json({ table }, { status: 201 });
   } catch (error) {
     if (
@@ -168,6 +251,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "That table number already exists", code: "TABLE_NUMBER_IN_USE" },
         { status: 409 }
+      );
+    }
+    if (isRecordMissing(error)) {
+      return NextResponse.json(
+        { error: "Table not found", code: "TABLE_NOT_FOUND" },
+        { status: 404 }
       );
     }
 
@@ -180,7 +269,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
+  const auth = await requireStaffSession();
   if ("response" in auth) return auth.response;
 
   try {
@@ -196,11 +285,45 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const { id, ...tableData } = parsed.data;
-    const table = await db.restaurantTable.update({
-      where: { id },
-      data: tableData,
+    const { id, status, serverName, ...structuralData } = parsed.data;
+    const hasStructuralChanges = Object.values(structuralData).some(
+      (value) => value !== undefined
+    );
+    const allowedRoles = hasStructuralChanges
+      ? STAFF_ADMIN_ROLES
+      : TABLE_OPERATION_ROLES;
+
+    if (!roleIsAllowed(auth.session.role, allowedRoles)) {
+      return permissionDenied();
+    }
+
+    const context = auditContextFromRequest(req);
+    const table = await db.$transaction(async (tx) => {
+      const before = await tx.restaurantTable.findUniqueOrThrow({
+        where: { id },
+        select: tableAuditSelect,
+      });
+      const updated = await tx.restaurantTable.update({
+        where: { id },
+        data: {
+          ...structuralData,
+          ...operationalUpdateData({ status, serverName }),
+        },
+        select: tableAuditSelect,
+      });
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: hasStructuralChanges
+          ? "table.structure.update"
+          : "table.operation.update",
+        entityType: "RestaurantTable",
+        entityId: updated.id,
+        context,
+        metadata: { before, after: updated },
+      });
+      return updated;
     });
+
     return NextResponse.json({ table });
   } catch (error) {
     if (
@@ -210,6 +333,12 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(
         { error: "That table number already exists", code: "TABLE_NUMBER_IN_USE" },
         { status: 409 }
+      );
+    }
+    if (isRecordMissing(error)) {
+      return NextResponse.json(
+        { error: "Table not found", code: "TABLE_NOT_FOUND" },
+        { status: 404 }
       );
     }
 
