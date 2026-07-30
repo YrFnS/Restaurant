@@ -1,19 +1,116 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
+import { REPORTING_ROLES, requireStaffSession } from "@/lib/auth/guard";
+
+const feedbackSchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    email: z
+      .union([z.literal(""), z.string().trim().email().max(254)])
+      .nullable()
+      .optional(),
+    rating: z.number().int().min(1).max(5),
+    comment: z.string().trim().min(1).max(5_000),
+  })
+  .strict();
+
+const FEEDBACK_WINDOW_MS = 60_000;
+const MAX_FEEDBACK_PER_WINDOW = 10;
+type FeedbackBucket = { count: number; resetAt: number };
+const globalForFeedbackLimit = globalThis as unknown as {
+  restaurantFeedbackRateLimits?: Map<string, FeedbackBucket>;
+};
+const feedbackRateLimits =
+  globalForFeedbackLimit.restaurantFeedbackRateLimits ??
+  new Map<string, FeedbackBucket>();
+if (!globalForFeedbackLimit.restaurantFeedbackRateLimits) {
+  globalForFeedbackLimit.restaurantFeedbackRateLimits = feedbackRateLimits;
+}
+
+function clientKey(req: NextRequest): string {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown"
+  );
+}
+
+function consumeLimit(key: string): number | null {
+  const now = Date.now();
+  const existing = feedbackRateLimits.get(key);
+  const bucket =
+    existing && existing.resetAt > now
+      ? existing
+      : { count: 0, resetAt: now + FEEDBACK_WINDOW_MS };
+  bucket.count += 1;
+  feedbackRateLimits.set(key, bucket);
+  if (bucket.count <= MAX_FEEDBACK_PER_WINDOW) return null;
+  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
+}
 
 export async function GET() {
-  const feedback = await db.feedback.findMany({ orderBy: { createdAt: "desc" }, take: 50 });
-  return NextResponse.json({ feedback });
+  const auth = await requireStaffSession(REPORTING_ROLES);
+  if ("response" in auth) return auth.response;
+
+  try {
+    const feedback = await db.feedback.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    return NextResponse.json(
+      { feedback },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
+    console.error("[feedback] Failed to load feedback", error);
+    return NextResponse.json(
+      { error: "Unable to load feedback", code: "FEEDBACK_LOAD_FAILED" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: NextRequest) {
+  const retryAfter = consumeLimit(clientKey(req));
+  if (retryAfter) {
+    return NextResponse.json(
+      { error: "Too many feedback submissions", code: "FEEDBACK_RATE_LIMITED" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
+      }
+    );
+  }
+
   try {
-    const body = await req.json();
-    const f = await db.feedback.create({
-      data: { name: body.name, email: body.email || null, rating: body.rating, comment: body.comment },
+    const parsed = feedbackSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid feedback",
+          code: "VALIDATION_ERROR",
+          details: parsed.error.flatten().fieldErrors,
+        },
+        { status: 400 }
+      );
+    }
+
+    const feedback = await db.feedback.create({
+      data: {
+        ...parsed.data,
+        email: parsed.data.email
+          ? parsed.data.email.toLowerCase()
+          : null,
+      },
+      select: { id: true, rating: true, createdAt: true },
     });
-    return NextResponse.json({ feedback: f });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ feedback }, { status: 201 });
+  } catch (error) {
+    console.error("[feedback] Failed to create feedback", error);
+    return NextResponse.json(
+      { error: "Unable to submit feedback", code: "FEEDBACK_CREATE_FAILED" },
+      { status: 500 }
+    );
   }
 }
