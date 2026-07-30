@@ -22,11 +22,11 @@ export interface CartModifier {
 }
 
 export interface CartItem {
-  id: string; // unique cart line id
+  id: string;
   menuItemId: string;
   nameEn: string;
   nameAr: string;
-  price: number; // unit price including modifiers
+  price: number;
   basePrice: number;
   quantity: number;
   image: string;
@@ -34,16 +34,20 @@ export interface CartItem {
   notes: string;
   course: number;
   totalPrice: number;
-  stationSlug?: string; // kitchen station routing
-  categoryId?: string; // for station derivation
+  stationSlug?: string;
+  categoryId?: string;
+}
+
+export interface RecentOrderAccess {
+  orderNumber: string;
+  accessToken: string;
+  createdAt: string;
 }
 
 interface RestaurantState {
-  // Navigation
   activeSection: ActiveSection;
   setActiveSection: (section: ActiveSection) => void;
 
-  // Cart
   cart: CartItem[];
   orderType: "dine_in" | "takeout" | "delivery";
   deliveryAddress: string;
@@ -56,33 +60,32 @@ interface RestaurantState {
   tipCustom: number;
   orderNotes: string;
 
-  // Favorites
   favorites: string[];
-
-  // Recent searches
   recentSearches: string[];
+  recentOrders: RecentOrderAccess[];
 
-  // Non-sensitive staff display state. Authentication lives in an HTTP-only cookie.
+  // Non-sensitive display state only. Staff authentication lives in an HTTP-only cookie.
   staffName: string | null;
 
-  // Actions
   addToCart: (item: CartItem) => void;
   updateCartQty: (id: string, qty: number) => void;
   removeFromCart: (id: string) => void;
   clearCart: () => void;
-  setOrderType: (t: "dine_in" | "takeout" | "delivery") => void;
-  setDeliveryAddress: (a: string) => void;
-  setTableNumber: (t: string) => void;
-  setCustomerName: (n: string) => void;
-  setCustomerPhone: (p: string) => void;
+  setOrderType: (type: "dine_in" | "takeout" | "delivery") => void;
+  setDeliveryAddress: (address: string) => void;
+  setTableNumber: (tableNumber: string) => void;
+  setCustomerName: (name: string) => void;
+  setCustomerPhone: (phone: string) => void;
   setPromo: (code: string, discount: number) => void;
   clearPromo: () => void;
   setTip: (percent: number, custom?: number) => void;
-  setOrderNotes: (n: string) => void;
+  setOrderNotes: (notes: string) => void;
 
   toggleFavorite: (id: string) => void;
-  addRecentSearch: (q: string) => void;
+  addRecentSearch: (query: string) => void;
   clearRecentSearches: () => void;
+  rememberOrderAccess: (orderNumber: string, accessToken: string) => void;
+  forgetOrderAccess: (orderNumber: string) => void;
 
   setStaff: (name: string) => void;
   clearStaff: () => void;
@@ -111,7 +114,6 @@ function purgeLegacyPersistedStaffCredentials() {
       window.localStorage.setItem("rs-store", JSON.stringify(persisted));
     }
   } catch {
-    // Corrupt persisted state should not block the application from loading.
     window.localStorage.removeItem("rs-store");
   }
 }
@@ -122,7 +124,7 @@ export const useRestaurantStore = create<RestaurantState>()(
   persist(
     (set) => ({
       activeSection: "home",
-      setActiveSection: (section) => set({ activeSection: section }),
+      setActiveSection: (activeSection) => set({ activeSection }),
 
       cart: [],
       orderType: "dine_in",
@@ -138,12 +140,11 @@ export const useRestaurantStore = create<RestaurantState>()(
 
       favorites: [],
       recentSearches: [],
-
+      recentOrders: [],
       staffName: null,
 
       addToCart: (item) =>
         set((state) => {
-          // merge identical lines (same item + modifiers + notes)
           const existing = state.cart.find(
             (cartItem) =>
               cartItem.menuItemId === item.menuItemId &&
@@ -157,7 +158,8 @@ export const useRestaurantStore = create<RestaurantState>()(
                   ? {
                       ...cartItem,
                       quantity: cartItem.quantity + item.quantity,
-                      totalPrice: (cartItem.quantity + item.quantity) * cartItem.price,
+                      totalPrice:
+                        (cartItem.quantity + item.quantity) * cartItem.price,
                     }
                   : cartItem
               ),
@@ -166,20 +168,26 @@ export const useRestaurantStore = create<RestaurantState>()(
           return { cart: [...state.cart, item] };
         }),
 
-      updateCartQty: (id, qty) =>
+      updateCartQty: (id, quantity) =>
         set((state) => ({
           cart:
-            qty <= 0
+            quantity <= 0
               ? state.cart.filter((cartItem) => cartItem.id !== id)
               : state.cart.map((cartItem) =>
                   cartItem.id === id
-                    ? { ...cartItem, quantity: qty, totalPrice: qty * cartItem.price }
+                    ? {
+                        ...cartItem,
+                        quantity,
+                        totalPrice: quantity * cartItem.price,
+                      }
                     : cartItem
                 ),
         })),
 
       removeFromCart: (id) =>
-        set((state) => ({ cart: state.cart.filter((cartItem) => cartItem.id !== id) })),
+        set((state) => ({
+          cart: state.cart.filter((cartItem) => cartItem.id !== id),
+        })),
 
       clearCart: () =>
         set({
@@ -220,6 +228,27 @@ export const useRestaurantStore = create<RestaurantState>()(
 
       clearRecentSearches: () => set({ recentSearches: [] }),
 
+      rememberOrderAccess: (orderNumber, accessToken) =>
+        set((state) => ({
+          recentOrders: [
+            {
+              orderNumber,
+              accessToken,
+              createdAt: new Date().toISOString(),
+            },
+            ...state.recentOrders.filter(
+              (recent) => recent.orderNumber !== orderNumber
+            ),
+          ].slice(0, 20),
+        })),
+
+      forgetOrderAccess: (orderNumber) =>
+        set((state) => ({
+          recentOrders: state.recentOrders.filter(
+            (recent) => recent.orderNumber !== orderNumber
+          ),
+        })),
+
       setStaff: (staffName) => set({ staffName }),
       clearStaff: () => set({ staffName: null }),
     }),
@@ -230,6 +259,7 @@ export const useRestaurantStore = create<RestaurantState>()(
         orderType: state.orderType,
         favorites: state.favorites,
         recentSearches: state.recentSearches,
+        recentOrders: state.recentOrders,
         customerName: state.customerName,
         customerPhone: state.customerPhone,
       }),
@@ -237,7 +267,6 @@ export const useRestaurantStore = create<RestaurantState>()(
   )
 );
 
-// Cart helpers
 export function cartSubtotal(cart: CartItem[]): number {
   return cart.reduce((sum, item) => sum + item.totalPrice, 0);
 }
