@@ -88,6 +88,36 @@ interface RestaurantState {
   clearStaff: () => void;
 }
 
+function purgeLegacyPersistedStaffCredentials() {
+  if (typeof window === "undefined") return;
+
+  try {
+    const raw = window.localStorage.getItem("rs-store");
+    if (!raw) return;
+
+    const persisted = JSON.parse(raw) as {
+      state?: Record<string, unknown>;
+      version?: number;
+    };
+    if (!persisted.state) return;
+
+    const hadSensitiveState =
+      Object.prototype.hasOwnProperty.call(persisted.state, "staffPin") ||
+      Object.prototype.hasOwnProperty.call(persisted.state, "staffName");
+
+    if (hadSensitiveState) {
+      delete persisted.state.staffPin;
+      delete persisted.state.staffName;
+      window.localStorage.setItem("rs-store", JSON.stringify(persisted));
+    }
+  } catch {
+    // Corrupt persisted state should not block the application from loading.
+    window.localStorage.removeItem("rs-store");
+  }
+}
+
+purgeLegacyPersistedStaffCredentials();
+
 export const useRestaurantStore = create<RestaurantState>()(
   persist(
     (set) => ({
@@ -112,38 +142,44 @@ export const useRestaurantStore = create<RestaurantState>()(
       staffName: null,
 
       addToCart: (item) =>
-        set((s) => {
+        set((state) => {
           // merge identical lines (same item + modifiers + notes)
-          const existing = s.cart.find(
-            (c) =>
-              c.menuItemId === item.menuItemId &&
-              c.notes === item.notes &&
-              JSON.stringify(c.modifiers) === JSON.stringify(item.modifiers)
+          const existing = state.cart.find(
+            (cartItem) =>
+              cartItem.menuItemId === item.menuItemId &&
+              cartItem.notes === item.notes &&
+              JSON.stringify(cartItem.modifiers) === JSON.stringify(item.modifiers)
           );
           if (existing) {
             return {
-              cart: s.cart.map((c) =>
-                c.id === existing.id
-                  ? { ...c, quantity: c.quantity + item.quantity, totalPrice: (c.quantity + item.quantity) * c.price }
-                  : c
+              cart: state.cart.map((cartItem) =>
+                cartItem.id === existing.id
+                  ? {
+                      ...cartItem,
+                      quantity: cartItem.quantity + item.quantity,
+                      totalPrice: (cartItem.quantity + item.quantity) * cartItem.price,
+                    }
+                  : cartItem
               ),
             };
           }
-          return { cart: [...s.cart, item] };
+          return { cart: [...state.cart, item] };
         }),
 
       updateCartQty: (id, qty) =>
-        set((s) => ({
+        set((state) => ({
           cart:
             qty <= 0
-              ? s.cart.filter((c) => c.id !== id)
-              : s.cart.map((c) =>
-                  c.id === id ? { ...c, quantity: qty, totalPrice: qty * c.price } : c
+              ? state.cart.filter((cartItem) => cartItem.id !== id)
+              : state.cart.map((cartItem) =>
+                  cartItem.id === id
+                    ? { ...cartItem, quantity: qty, totalPrice: qty * cartItem.price }
+                    : cartItem
                 ),
         })),
 
       removeFromCart: (id) =>
-        set((s) => ({ cart: s.cart.filter((c) => c.id !== id) })),
+        set((state) => ({ cart: state.cart.filter((cartItem) => cartItem.id !== id) })),
 
       clearCart: () =>
         set({
@@ -157,53 +193,45 @@ export const useRestaurantStore = create<RestaurantState>()(
           deliveryAddress: "",
         }),
 
-      setOrderType: (t) => set({ orderType: t }),
-      setDeliveryAddress: (a) => set({ deliveryAddress: a }),
-      setTableNumber: (t) => set({ tableNumber: t }),
-      setCustomerName: (n) => set({ customerName: n }),
-      setCustomerPhone: (p) => set({ customerPhone: p }),
-      setPromo: (code, discount) =>
-        set({ promoCode: code, promoDiscount: discount }),
+      setOrderType: (orderType) => set({ orderType }),
+      setDeliveryAddress: (deliveryAddress) => set({ deliveryAddress }),
+      setTableNumber: (tableNumber) => set({ tableNumber }),
+      setCustomerName: (customerName) => set({ customerName }),
+      setCustomerPhone: (customerPhone) => set({ customerPhone }),
+      setPromo: (promoCode, promoDiscount) => set({ promoCode, promoDiscount }),
       clearPromo: () => set({ promoCode: "", promoDiscount: 0 }),
-      setTip: (percent, custom = 0) =>
-        set({ tipPercent: percent, tipCustom: custom }),
-      setOrderNotes: (n) => set({ orderNotes: n }),
+      setTip: (tipPercent, tipCustom = 0) => set({ tipPercent, tipCustom }),
+      setOrderNotes: (orderNotes) => set({ orderNotes }),
 
       toggleFavorite: (id) =>
-        set((s) => ({
-          favorites: s.favorites.includes(id)
-            ? s.favorites.filter((f) => f !== id)
-            : [...s.favorites, id],
+        set((state) => ({
+          favorites: state.favorites.includes(id)
+            ? state.favorites.filter((favorite) => favorite !== id)
+            : [...state.favorites, id],
         })),
 
-      addRecentSearch: (q) =>
-        set((s) => ({
+      addRecentSearch: (query) =>
+        set((state) => ({
           recentSearches: [
-            q,
-            ...s.recentSearches.filter((r) => r !== q),
+            query,
+            ...state.recentSearches.filter((recent) => recent !== query),
           ].slice(0, 8),
         })),
 
       clearRecentSearches: () => set({ recentSearches: [] }),
 
-      setStaff: (name) => set({ staffName: name }),
+      setStaff: (staffName) => set({ staffName }),
       clearStaff: () => set({ staffName: null }),
     }),
     {
       name: "rs-store",
-      version: 1,
-      migrate: (persistedState) => {
-        const state = (persistedState || {}) as Record<string, unknown>;
-        const { staffPin: _legacyStaffPin, staffName: _legacyStaffName, ...safeState } = state;
-        return safeState as Partial<RestaurantState>;
-      },
-      partialize: (s) => ({
-        cart: s.cart,
-        orderType: s.orderType,
-        favorites: s.favorites,
-        recentSearches: s.recentSearches,
-        customerName: s.customerName,
-        customerPhone: s.customerPhone,
+      partialize: (state) => ({
+        cart: state.cart,
+        orderType: state.orderType,
+        favorites: state.favorites,
+        recentSearches: state.recentSearches,
+        customerName: state.customerName,
+        customerPhone: state.customerPhone,
       }),
     }
   )
@@ -211,5 +239,5 @@ export const useRestaurantStore = create<RestaurantState>()(
 
 // Cart helpers
 export function cartSubtotal(cart: CartItem[]): number {
-  return cart.reduce((sum, i) => sum + i.totalPrice, 0);
+  return cart.reduce((sum, item) => sum + item.totalPrice, 0);
 }
