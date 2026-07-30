@@ -9,7 +9,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: p0-validation-${{ github.ref }}
@@ -37,8 +37,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -47,22 +45,6 @@ jobs:
 
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
-
-      - name: Materialize persisted session schema
-        run: python3 scripts/materialize-persisted-sessions.py
-
-      - name: Commit persisted session schema
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          if git diff --quiet -- prisma/schema.prisma; then
-            echo "Persisted session schema is already current."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add prisma/schema.prisma
-          git commit -m "db: materialize persisted staff sessions"
-          git push origin HEAD:${GITHUB_HEAD_REF}
 
       - name: Validate Prisma schema
         run: bunx prisma validate
