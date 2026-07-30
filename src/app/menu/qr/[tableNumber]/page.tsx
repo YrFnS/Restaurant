@@ -25,6 +25,13 @@ function createIdempotencyKey(): string {
   return `qr-order-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
 }
 
+function createIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `qr-order-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
 interface CartLine {
   menuItemId: string;
   nameEn: string; nameAr: string;
@@ -49,6 +56,7 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
   const [detailItem, setDetailItem] = useState<any>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
   const idempotencyKeyRef = useRef<string | null>(null);
 
   const { data: settingsData } = useQuery({
