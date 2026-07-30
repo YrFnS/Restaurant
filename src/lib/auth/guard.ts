@@ -7,48 +7,21 @@ import {
   type StaffSession,
 } from "@/lib/auth/session";
 
-export const STAFF_ADMIN_ROLES = ["owner", "admin", "manager"] as const;
-export const MENU_MANAGEMENT_ROLES = ["owner", "admin", "manager"] as const;
-export const SETTINGS_MANAGEMENT_ROLES = ["owner", "admin", "manager"] as const;
-export const CASH_MANAGEMENT_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "cashier",
-] as const;
-export const INVENTORY_MANAGEMENT_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "inventory_manager",
-] as const;
-export const REPORTING_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "analyst",
-] as const;
-export const ORDER_MANAGEMENT_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "cashier",
-  "server",
-] as const;
-export const KITCHEN_OPERATION_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "server",
-  "cook",
-  "bartender",
-] as const;
-export const RESERVATION_MANAGEMENT_ROLES = [
-  "owner",
-  "admin",
-  "manager",
-  "host",
-] as const;
+export {
+  CASH_MANAGEMENT_ROLES,
+  INVENTORY_MANAGEMENT_ROLES,
+  KITCHEN_OPERATION_ROLES,
+  MENU_MANAGEMENT_ROLES,
+  ORDER_MANAGEMENT_ROLES,
+  REPORTING_ROLES,
+  RESERVATION_MANAGEMENT_ROLES,
+  SETTINGS_MANAGEMENT_ROLES,
+  STAFF_ADMIN_ROLES,
+  STAFF_ROLES,
+  TABLE_OPERATION_ROLES,
+  roleIsAllowed,
+  type StaffRole,
+} from "@/lib/auth/roles";
 
 export type StaffGuardResult =
   | { session: StaffSession; response?: never }
