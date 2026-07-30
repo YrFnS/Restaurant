@@ -12,6 +12,11 @@ export async function POST(req: NextRequest) {
 
   try {
     session = await getStaffSession();
+  } catch (error) {
+    console.error("[auth/logout] Session lookup failed", error);
+  }
+
+  try {
     await clearStaffSession();
   } catch (error) {
     console.error("[auth/logout] Session revocation failed", error);
