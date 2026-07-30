@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   AuthConfigurationError,
+  clearStaffSession,
   setStaffSession,
 } from "@/lib/auth/session";
 import { authenticateEmployeePin } from "@/lib/auth/employee-pin";
@@ -108,17 +109,29 @@ export async function POST(req: NextRequest) {
       return invalidCredentials();
     }
 
-    await writeAuditEvent(db, {
-      actor: employee,
-      action: "auth.login.success",
-      entityType: "Employee",
-      entityId: employee.id,
-      context: auditContextFromRequest(req),
-      metadata: {
-        role: employee.role,
-      },
-    });
-    await setStaffSession(employee.id);
+    const issuedSession = await setStaffSession(employee.id);
+    try {
+      await writeAuditEvent(db, {
+        actor: {
+          id: employee.id,
+          name: employee.name,
+          role: employee.role,
+          sessionId: issuedSession.sessionId,
+        },
+        action: "auth.login.success",
+        entityType: "Employee",
+        entityId: employee.id,
+        context: auditContextFromRequest(req),
+        metadata: {
+          role: employee.role,
+          expiresAt: issuedSession.expiresAt,
+        },
+      });
+    } catch (auditError) {
+      await clearStaffSession().catch(() => undefined);
+      throw auditError;
+    }
+
     loginAttempts.delete(clientKey);
 
     return NextResponse.json(
