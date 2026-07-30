@@ -62,8 +62,7 @@ interface RestaurantState {
   // Recent searches
   recentSearches: string[];
 
-  // KDS / staff session
-  staffPin: string | null;
+  // Non-sensitive staff display state. Authentication lives in an HTTP-only cookie.
   staffName: string | null;
 
   // Actions
@@ -85,13 +84,13 @@ interface RestaurantState {
   addRecentSearch: (q: string) => void;
   clearRecentSearches: () => void;
 
-  setStaff: (pin: string, name: string) => void;
+  setStaff: (name: string) => void;
   clearStaff: () => void;
 }
 
 export const useRestaurantStore = create<RestaurantState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       activeSection: "home",
       setActiveSection: (section) => set({ activeSection: section }),
 
@@ -110,7 +109,6 @@ export const useRestaurantStore = create<RestaurantState>()(
       favorites: [],
       recentSearches: [],
 
-      staffPin: null,
       staffName: null,
 
       addToCart: (item) =>
@@ -188,12 +186,17 @@ export const useRestaurantStore = create<RestaurantState>()(
 
       clearRecentSearches: () => set({ recentSearches: [] }),
 
-      setStaff: (pin, name) => set({ staffPin: pin, staffName: name }),
-      clearStaff: () => set({ staffPin: null, staffName: null }),
+      setStaff: (name) => set({ staffName: name }),
+      clearStaff: () => set({ staffName: null }),
     }),
     {
       name: "rs-store",
-      version: 0,
+      version: 1,
+      migrate: (persistedState) => {
+        const state = (persistedState || {}) as Record<string, unknown>;
+        const { staffPin: _legacyStaffPin, staffName: _legacyStaffName, ...safeState } = state;
+        return safeState as Partial<RestaurantState>;
+      },
       partialize: (s) => ({
         cart: s.cart,
         orderType: s.orderType,
@@ -201,8 +204,6 @@ export const useRestaurantStore = create<RestaurantState>()(
         recentSearches: s.recentSearches,
         customerName: s.customerName,
         customerPhone: s.customerPhone,
-        staffPin: s.staffPin,
-        staffName: s.staffName,
       }),
     }
   )
