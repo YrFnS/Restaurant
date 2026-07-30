@@ -148,3 +148,4 @@ jobs:
 
           P0_BASE_URL=http://127.0.0.1:3000 bun run test:integration
           P0_BASE_URL=http://127.0.0.1:3000 bun tests/integration/p0-kds-worker.ts
+          bun tests/integration/p0-payment-ledger.ts
