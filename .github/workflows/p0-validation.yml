@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Typecheck, lint, and build
+    name: Typecheck, tests, lint, and build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -27,6 +27,7 @@ jobs:
       AUTH_PIN_PEPPER: "validation-pin-pepper-0123456789abcdef0123456789abcdef"
       AUTH_ORDER_ACCESS_SECRET: "validation-order-access-0123456789abcdef0123456789abcdef"
       AUTH_CUSTOMER_ACCESS_SECRET: "validation-customer-access-0123456789abcdef0123456789abcdef"
+      APP_ALLOWED_ORIGINS: ""
       NEXTAUTH_SECRET: "validation-nextauth-secret-0123456789abcdef0123456789abcdef"
       NEXTAUTH_URL: "http://localhost:3000"
       KDS_REALTIME_URL: "http://127.0.0.1:3003/broadcast"
@@ -64,6 +65,9 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+
+      - name: Unit tests
+        run: bun run test:unit
 
       - name: Lint
         run: bun run lint
