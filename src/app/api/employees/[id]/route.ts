@@ -100,6 +100,10 @@ export async function PATCH(
     const updateData: Prisma.EmployeeUpdateInput = { ...employeeData };
     if (pin) updateData.pin = await createPinVerifier(pin);
 
+    const revokeSessions =
+      Boolean(pin) ||
+      parsed.data.isActive === false ||
+      (parsed.data.role !== undefined && parsed.data.role !== target.role);
     const context = auditContextFromRequest(req);
     const employee = await db.$transaction(async (tx) => {
       const updated = await tx.employee.update({
@@ -107,6 +111,15 @@ export async function PATCH(
         data: updateData,
         select: safeEmployeeSelect,
       });
+
+      let revokedSessionCount = 0;
+      if (revokeSessions) {
+        const revoked = await tx.staffSession.updateMany({
+          where: { employeeId: id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        revokedSessionCount = revoked.count;
+      }
 
       await writeAuditEvent(tx, {
         actor: auth.session,
@@ -121,6 +134,7 @@ export async function PATCH(
           role: updated.role,
           previousActive: target.isActive,
           isActive: updated.isActive,
+          revokedSessionCount,
         },
       });
 
@@ -190,6 +204,9 @@ export async function DELETE(
 
     const context = auditContextFromRequest(req);
     await db.$transaction(async (tx) => {
+      const deletedSessions = await tx.staffSession.deleteMany({
+        where: { employeeId: id },
+      });
       await tx.employee.delete({ where: { id } });
       await writeAuditEvent(tx, {
         actor: auth.session,
@@ -201,6 +218,7 @@ export async function DELETE(
           name: target.name,
           role: target.role,
           wasActive: target.isActive,
+          deletedSessionCount: deletedSessions.count,
         },
       });
     });
