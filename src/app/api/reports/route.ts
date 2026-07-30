@@ -1,61 +1,103 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import {
+  REPORTING_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
 
 export async function GET() {
-  const now = new Date();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startWeek = new Date(startToday);
-  startWeek.setDate(startWeek.getDate() - 7);
+  const auth = await requireStaffSession(REPORTING_ROLES);
+  if ("response" in auth) return auth.response;
 
-  const [todayOrders, weekOrders, allOrders, tables, lowStock, menuItems] = await Promise.all([
-    db.order.findMany({ where: { createdAt: { gte: startToday } }, include: { items: true } }),
-    db.order.findMany({ where: { createdAt: { gte: startWeek } } }),
-    db.order.findMany({ where: { createdAt: { gte: startToday } }, include: { items: { include: { menuItem: true } } } }),
-    db.restaurantTable.findMany(),
-    db.ingredient.findMany({ where: { quantity: { lte: 5 } } }),
-    db.menuItem.count(),
-  ]);
+  try {
+    const now = new Date();
+    const startToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+    const startWeek = new Date(startToday);
+    startWeek.setDate(startWeek.getDate() - 7);
 
-  const todaySales = todayOrders.reduce((s, o) => s + o.total, 0);
-  const weekSales = weekOrders.reduce((s, o) => s + o.total, 0);
-  const activeTables = tables.filter((t) => ["seated", "ordered", "served"].includes(t.status)).length;
+    const [todayOrders, weekOrders, allOrders, tables, lowStock, menuItems] =
+      await Promise.all([
+        db.order.findMany({
+          where: { createdAt: { gte: startToday } },
+          include: { items: true },
+        }),
+        db.order.findMany({ where: { createdAt: { gte: startWeek } } }),
+        db.order.findMany({
+          where: { createdAt: { gte: startToday } },
+          include: { items: { include: { menuItem: true } } },
+        }),
+        db.restaurantTable.findMany(),
+        db.ingredient.findMany({ where: { quantity: { lte: 5 } } }),
+        db.menuItem.count(),
+      ]);
 
-  // sales by hour
-  const salesByHour: { hour: number; total: number }[] = [];
-  for (let h = 0; h < 24; h++) {
-    const hourTotal = todayOrders
-      .filter((o) => new Date(o.createdAt).getHours() === h)
-      .reduce((s, o) => s + o.total, 0);
-    salesByHour.push({ hour: h, total: hourTotal });
-  }
+    const todaySales = todayOrders.reduce(
+      (sum, order) => sum + order.total,
+      0
+    );
+    const weekSales = weekOrders.reduce(
+      (sum, order) => sum + order.total,
+      0
+    );
+    const activeTables = tables.filter((table) =>
+      ["seated", "ordered", "served"].includes(table.status)
+    ).length;
 
-  // orders by status
-  const statusCounts: Record<string, number> = {};
-  todayOrders.forEach((o) => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1; });
+    const salesByHour = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      total: todayOrders
+        .filter((order) => new Date(order.createdAt).getHours() === hour)
+        .reduce((sum, order) => sum + order.total, 0),
+    }));
 
-  // top items
-  const itemCounts: Record<string, { name: string; count: number; revenue: number }> = {};
-  allOrders.forEach((o) => {
-    o.items.forEach((it) => {
-      const key = it.menuItemId;
-      const name = it.menuItem?.nameEn || "Unknown";
-      if (!itemCounts[key]) itemCounts[key] = { name, count: 0, revenue: 0 };
-      itemCounts[key].count += it.quantity;
-      itemCounts[key].revenue += it.totalPrice;
+    const statusCounts: Record<string, number> = {};
+    todayOrders.forEach((order) => {
+      statusCounts[order.status] = (statusCounts[order.status] || 0) + 1;
     });
-  });
-  const topItems = Object.values(itemCounts).sort((a, b) => b.count - a.count).slice(0, 8);
 
-  return NextResponse.json({
-    todaySales,
-    weekSales,
-    todayOrderCount: todayOrders.length,
-    activeTables,
-    totalTables: tables.length,
-    salesByHour,
-    statusCounts,
-    topItems,
-    lowStock,
-    menuItems,
-  });
+    const itemCounts: Record<
+      string,
+      { name: string; count: number; revenue: number }
+    > = {};
+    allOrders.forEach((order) => {
+      order.items.forEach((item) => {
+        const key = item.menuItemId;
+        const name = item.menuItem?.nameEn || "Unknown";
+        if (!itemCounts[key]) {
+          itemCounts[key] = { name, count: 0, revenue: 0 };
+        }
+        itemCounts[key].count += item.quantity;
+        itemCounts[key].revenue += item.totalPrice;
+      });
+    });
+    const topItems = Object.values(itemCounts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+
+    return NextResponse.json(
+      {
+        todaySales,
+        weekSales,
+        todayOrderCount: todayOrders.length,
+        activeTables,
+        totalTables: tables.length,
+        salesByHour,
+        statusCounts,
+        topItems,
+        lowStock,
+        menuItems,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
+    console.error("[reports] Failed to build report", error);
+    return NextResponse.json(
+      { error: "Unable to load reports", code: "REPORTS_FAILED" },
+      { status: 500 }
+    );
+  }
 }
