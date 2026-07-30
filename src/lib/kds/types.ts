@@ -22,10 +22,8 @@ export interface KdsOrderItem {
   menuItemId: string;
   menuItem: KdsMenuItem;
   quantity: number;
-  unitPrice: number;
-  modifiers: string; // JSON string of KdsModifierOption[]
+  modifiers: string;
   notes: string | null;
-  totalPrice: number;
   status: "pending" | "preparing" | "ready" | "served" | "cancelled";
   stationSlug: string;
   course: number;
@@ -33,6 +31,8 @@ export interface KdsOrderItem {
   firedAt: string | null;
   readyAt: string | null;
   seatNumber?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface KdsTable {
@@ -47,7 +47,6 @@ export interface KdsOrder {
   type: "dine_in" | "takeout" | "delivery";
   status: "pending" | "confirmed" | "preparing" | "ready" | "completed" | "cancelled";
   customerName: string;
-  customerPhone: string;
   notes: string | null;
   serverName: string;
   tableId: string | null;
@@ -112,7 +111,6 @@ export interface KdsSettings {
   avgPrepTimeMin: number;
 }
 
-// Ticket age bucket — drives border/background color
 export type AgeBucket = "fresh" | "warning" | "urgent" | "overdue";
 
 export function getAgeBucket(elapsedMin: number, settings: KdsSettings): AgeBucket {
