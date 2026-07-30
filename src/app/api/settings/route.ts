@@ -5,6 +5,7 @@ import {
   requireStaffSession,
   SETTINGS_MANAGEMENT_ROLES,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const optionalLinkSchema = z
@@ -100,10 +101,37 @@ export async function PUT(req: NextRequest) {
       updatedAt: _updatedAt,
       ...settingsData
     } = parsed.data;
-    const settings = await db.restaurantSettings.upsert({
-      where: { id: "1" },
-      update: settingsData,
-      create: { id: "1", ...settingsData },
+    const context = auditContextFromRequest(req);
+    const settings = await db.$transaction(async (tx) => {
+      const saved = await tx.restaurantSettings.upsert({
+        where: { id: "1" },
+        update: settingsData,
+        create: { id: "1", ...settingsData },
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "settings.update",
+        entityType: "RestaurantSettings",
+        entityId: "1",
+        context,
+        metadata: {
+          changedFields: Object.keys(settingsData),
+          taxRate: saved.taxRate,
+          currency: saved.currency,
+          deliveryFee: saved.deliveryFee,
+          minDeliveryOrder: saved.minDeliveryOrder,
+          openTime: saved.openTime,
+          closeTime: saved.closeTime,
+          kdsThresholds: {
+            green: saved.kdsGreenMin,
+            yellow: saved.kdsYellowMin,
+            red: saved.kdsRedMin,
+          },
+        },
+      });
+
+      return saved;
     });
 
     return NextResponse.json({ settings });
