@@ -58,6 +58,21 @@ function expectStatus(
   );
 }
 
+function assertNoKeysMatching(value: unknown, pattern: RegExp, path = "root") {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      assertNoKeysMatching(entry, pattern, `${path}[${index}]`)
+    );
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    assert.ok(!pattern.test(key), `Sensitive KDS key ${path}.${key} was exposed`);
+    assertNoKeysMatching(nested, pattern, `${path}.${key}`);
+  }
+}
+
 async function login(pin: string): Promise<string> {
   const result = await request("/api/auth/login", {
     method: "POST",
@@ -140,11 +155,21 @@ async function main() {
     200,
     "Server order read"
   );
-  expectStatus(
-    await request("/api/kitchen?screen=grill", { headers: { cookie: cookCookie } }),
-    200,
-    "Cook KDS read"
+
+  const kitchenResult = await request("/api/kitchen?screen=grill", {
+    headers: { cookie: cookCookie },
+  });
+  expectStatus(kitchenResult, 200, "Cook KDS read");
+  assert.equal(
+    typeof kitchenResult.data?.totalToday,
+    "number",
+    "KDS response must include the redacted daily order count"
   );
+  assertNoKeysMatching(
+    kitchenResult.data,
+    /^(customerPhone|deliveryAddress|subtotal|taxAmount|deliveryFee|discountAmount|tipAmount|total|paymentMethod|paymentStatus|unitPrice|totalPrice)$/i
+  );
+
   expectStatus(
     await request("/api/orders?limit=5", { headers: { cookie: cookCookie } }),
     403,
@@ -189,6 +214,11 @@ async function main() {
     await request("/api/reports", { headers: { cookie: analystCookie } }),
     200,
     "Analyst report read"
+  );
+  expectStatus(
+    await request("/api/orders?limit=5", { headers: { cookie: analystCookie } }),
+    403,
+    "Analyst full order read"
   );
   expectStatus(
     await request("/api/employees", { headers: { cookie: analystCookie } }),
