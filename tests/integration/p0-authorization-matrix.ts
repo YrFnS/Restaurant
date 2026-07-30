@@ -68,7 +68,7 @@ function assertNoKeysMatching(value: unknown, pattern: RegExp, path = "root") {
   if (!value || typeof value !== "object") return;
 
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    assert.ok(!pattern.test(key), `Sensitive KDS key ${path}.${key} was exposed`);
+    assert.ok(!pattern.test(key), `Sensitive key ${path}.${key} was exposed`);
     assertNoKeysMatching(nested, pattern, `${path}.${key}`);
   }
 }
@@ -113,6 +113,7 @@ async function main() {
   expectStatus(await request("/api/kitchen?screen=grill"), 401, "Anonymous KDS data");
   expectStatus(await request("/api/cash"), 401, "Anonymous cash ledger");
   expectStatus(await request("/api/inventory"), 401, "Anonymous inventory");
+  expectStatus(await request("/api/tables"), 401, "Anonymous table data");
 
   const adminCookie = await login("1234");
   const managerCookie = await login("2222");
@@ -175,6 +176,66 @@ async function main() {
     403,
     "Cook administrative order read"
   );
+
+  const serverTables = await request("/api/tables", {
+    headers: { cookie: serverCookie },
+  });
+  expectStatus(serverTables, 200, "Server table read");
+  assertNoKeysMatching(
+    serverTables.data,
+    /^(customerPhone|deliveryAddress|total|paymentMethod|paymentStatus)$/i
+  );
+  const table = (serverTables.data?.tables || []).find(
+    (candidate: any) => candidate.status === "open"
+  ) || serverTables.data?.tables?.[0];
+  assert.ok(table, "Seed data must provide at least one restaurant table");
+
+  expectStatus(
+    await request("/api/tables", {
+      method: "PATCH",
+      headers: { cookie: serverCookie },
+      body: JSON.stringify({ id: table.id, status: table.status }),
+    }),
+    200,
+    "Server table status update"
+  );
+  expectStatus(
+    await request("/api/tables", {
+      method: "PATCH",
+      headers: { cookie: hostCookie },
+      body: JSON.stringify({ id: table.id, status: table.status }),
+    }),
+    200,
+    "Host table status update"
+  );
+  expectStatus(
+    await request("/api/tables", {
+      method: "PATCH",
+      headers: { cookie: serverCookie },
+      body: JSON.stringify({ id: table.id, x: table.x }),
+    }),
+    403,
+    "Server floor-layout update"
+  );
+  expectStatus(
+    await request("/api/tables", {
+      method: "PATCH",
+      headers: { cookie: managerCookie },
+      body: JSON.stringify({ id: table.id, x: table.x }),
+    }),
+    200,
+    "Manager floor-layout update"
+  );
+  expectStatus(
+    await request("/api/tables", {
+      method: "PATCH",
+      headers: { cookie: analystCookie },
+      body: JSON.stringify({ id: table.id, status: table.status }),
+    }),
+    403,
+    "Analyst table status update"
+  );
+
   expectStatus(
     await request("/api/reservations", { headers: { cookie: hostCookie } }),
     200,
