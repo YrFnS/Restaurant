@@ -9,8 +9,6 @@
     "allowJs": true,
     "skipLibCheck": true,
     "types": ["bun-types"],
-    "types": ["bun-types"],
-    "types": ["bun-types"],
     "strict": true,
     "noEmit": true,
     "noImplicitAny": false,
