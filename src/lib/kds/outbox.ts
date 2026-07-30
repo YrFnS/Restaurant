@@ -22,6 +22,9 @@ interface ClaimedOutboxEvent {
 }
 
 export interface KdsOutboxFlushResult {
+  /** Preferred public API name for the number of attempted events. */
+  processed: number;
+  /** Backward-compatible internal name retained for existing callers. */
   claimed: number;
   delivered: number;
   failed: number;
@@ -171,7 +174,8 @@ export async function flushKdsOutbox(
     }
   }
 
-  return { claimed: events.length, delivered, failed };
+  const processed = events.length;
+  return { processed, claimed: processed, delivered, failed };
 }
 
 export async function flushKdsOutboxBestEffort(limit = 10): Promise<void> {
