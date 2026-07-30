@@ -7,6 +7,7 @@ import {
   createPinVerifier,
   PinConfigurationError,
 } from "@/lib/auth/pin";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const EMPLOYEE_ROLES = [
   "owner",
@@ -76,7 +77,7 @@ export async function PATCH(
 
     const target = await db.employee.findUnique({
       where: { id },
-      select: { id: true, role: true },
+      select: { id: true, name: true, role: true, isActive: true },
     });
     if (!target) {
       return NextResponse.json(
@@ -99,10 +100,31 @@ export async function PATCH(
     const updateData: Prisma.EmployeeUpdateInput = { ...employeeData };
     if (pin) updateData.pin = await createPinVerifier(pin);
 
-    const employee = await db.employee.update({
-      where: { id },
-      data: updateData,
-      select: safeEmployeeSelect,
+    const context = auditContextFromRequest(req);
+    const employee = await db.$transaction(async (tx) => {
+      const updated = await tx.employee.update({
+        where: { id },
+        data: updateData,
+        select: safeEmployeeSelect,
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "employee.update",
+        entityType: "Employee",
+        entityId: id,
+        context,
+        metadata: {
+          changedFields: Object.keys(employeeData),
+          pinChanged: Boolean(pin),
+          previousRole: target.role,
+          role: updated.role,
+          previousActive: target.isActive,
+          isActive: updated.isActive,
+        },
+      });
+
+      return updated;
     });
 
     return NextResponse.json({ employee });
@@ -133,7 +155,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
@@ -150,7 +172,7 @@ export async function DELETE(
 
     const target = await db.employee.findUnique({
       where: { id },
-      select: { role: true },
+      select: { name: true, role: true, isActive: true },
     });
     if (!target) {
       return NextResponse.json(
@@ -166,7 +188,23 @@ export async function DELETE(
       );
     }
 
-    await db.employee.delete({ where: { id } });
+    const context = auditContextFromRequest(req);
+    await db.$transaction(async (tx) => {
+      await tx.employee.delete({ where: { id } });
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "employee.delete",
+        entityType: "Employee",
+        entityId: id,
+        context,
+        metadata: {
+          name: target.name,
+          role: target.role,
+          wasActive: target.isActive,
+        },
+      });
+    });
+
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[employees] Failed to delete employee", error);
