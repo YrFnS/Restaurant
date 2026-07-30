@@ -27,8 +27,32 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           fetch-depth: 0
 
+      - name: Normalize one-off script literals
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/wire-kds-outbox.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              '        """main().catch((error) => {',
+              '        r"""main().catch((error) => {',
+              1,
+          )
+          text = text.replace(
+              '        """main()\n  .catch((error) => {',
+              '        r"""main()\n  .catch((error) => {',
+              1,
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Wire transactional KDS events
         run: python3 scripts/wire-kds-outbox.py
+
+      - name: Restore one-off script
+        run: git restore scripts/wire-kds-outbox.py
 
       - name: Commit source changes when needed
         shell: bash
