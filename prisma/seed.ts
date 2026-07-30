@@ -11,6 +11,7 @@ async function main() {
   console.log("🌱 Seeding database...");
 
   const tables = [
+    "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",
     "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",
     "ModifierOption", "ModifierGroup", "MenuItem", "MenuCategory",
     "RestaurantTable", "KitchenScreen", "KitchenStation",

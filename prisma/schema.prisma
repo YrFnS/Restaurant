@@ -170,6 +170,7 @@ model Order {
   customerId      String?
   customer        Customer?    @relation(fields: [customerId], references: [id])
   items           OrderItem[]
+  paymentEvents   PaymentEvent[]
   estimatedReady  DateTime?
   completedAt     DateTime?
   createdAt       DateTime     @default(now())
@@ -567,6 +568,29 @@ model KdsOutboxEvent {
 
   @@index([deliveredAt, nextAttemptAt])
   @@index([lockedAt])
+  @@index([createdAt])
+}
+
+// ─── Immutable payment event ledger ───
+model PaymentEvent {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  eventType      String
+  method         String
+  status         String   @default("succeeded")
+  amountCents    Int
+  tenderedCents  Int?
+  changeCents    Int?
+  currency       String   @default("USD")
+  actorId        String?
+  actorName      String   @default("")
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([eventType, createdAt])
   @@index([createdAt])
 }
 
