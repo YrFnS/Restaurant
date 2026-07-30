@@ -72,13 +72,12 @@ export async function PATCH(
     }
 
     const order = await db.$transaction(async (tx) => {
-      const updatedOrder = await tx.order.update({
+      await tx.order.update({
         where: { id },
         data: {
           status: nextStatus,
           ...(nextStatus === "completed" ? { completedAt: new Date() } : {}),
         },
-        include: { items: { include: { menuItem: true } }, table: true },
       });
 
       if (nextStatus === "completed") {
@@ -97,19 +96,33 @@ export async function PATCH(
           where: { orderId: id, status: { not: "served" } },
           data: { status: "cancelled", hold: false },
         });
+        if (existing.tableId) {
+          const otherActiveOrders = await tx.order.count({
+            where: {
+              tableId: existing.tableId,
+              id: { not: id },
+              status: { in: ["pending", "confirmed", "preparing", "ready"] },
+            },
+          });
+          if (otherActiveOrders === 0) {
+            await tx.restaurantTable.update({
+              where: { id: existing.tableId },
+              data: { status: "open", seatedAt: null },
+            });
+          }
+        }
       }
 
-      return updatedOrder;
+      return tx.order.findUniqueOrThrow({
+        where: { id },
+        include: { items: { include: { menuItem: true } }, table: true },
+      });
     });
 
-    try {
-      await broadcastKds({
-        type: "order:status",
-        payload: { orderId: order.id, status: nextStatus },
-      });
-    } catch {
-      // Polling remains the fallback when the realtime service is unavailable.
-    }
+    await broadcastKds({
+      type: "order:status",
+      payload: { orderId: order.id, status: nextStatus },
+    });
 
     return NextResponse.json({ order });
   } catch (error) {
