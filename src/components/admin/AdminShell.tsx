@@ -123,127 +123,125 @@ export function AdminShell({ user }: AdminShellProps) {
   const settings = settingsData?.settings;
   const restaurantName = (isRTL ? settings?.nameAr : settings?.nameEn) || t.app.name;
 
-  const navItems = useMemo<AdminNavItem[]>(
-    () =>
-      [
-        {
-          id: "dashboard",
-          label: t.admin.dashboard,
-          icon: <LayoutDashboard className="size-[18px]" />,
-          roles: REPORTING_ROLES,
-        },
-        {
-          id: "menu",
-          label: t.admin.menu,
-          icon: <UtensilsCrossed className="size-[18px]" />,
-          roles: MENU_MANAGEMENT_ROLES,
-        },
-        {
-          id: "orders",
-          label: t.admin.orders,
-          icon: <ClipboardList className="size-[18px]" />,
-          roles: ORDER_MANAGEMENT_ROLES,
-        },
-        {
-          id: "tables",
-          label: t.admin.tables,
-          icon: <Armchair className="size-[18px]" />,
-          roles: TABLE_OPERATION_ROLES,
-        },
-        {
-          id: "reservations",
-          label: t.admin.reservations,
-          icon: <CalendarCheck className="size-[18px]" />,
-          roles: RESERVATION_MANAGEMENT_ROLES,
-        },
-        {
-          id: "staff",
-          label: t.admin.staff,
-          icon: <Users className="size-[18px]" />,
-          roles: STAFF_ADMIN_ROLES,
-        },
-        {
-          id: "inventory",
-          label: t.admin.inventory,
-          icon: <Boxes className="size-[18px]" />,
-          roles: INVENTORY_MANAGEMENT_ROLES,
-        },
-        {
-          id: "reports",
-          label: t.admin.reports,
-          icon: <BarChart3 className="size-[18px]" />,
-          roles: REPORTING_ROLES,
-        },
-        {
-          id: "kds",
-          label: t.admin.kdsScreens,
-          icon: <MonitorSmartphone className="size-[18px]" />,
-          roles: STAFF_ADMIN_ROLES,
-        },
-        {
-          id: "settings",
-          label: t.admin.settings,
-          icon: <SettingsIcon className="size-[18px]" />,
-          roles: SETTINGS_MANAGEMENT_ROLES,
-        },
-      ].filter((item) => roleIsAllowed(user.role, item.roles)),
-    [t, user.role]
-  );
+  const navItems = useMemo<AdminNavItem[]>(() => {
+    const items: AdminNavItem[] = [
+      {
+        id: "dashboard",
+        label: t.admin.dashboard,
+        icon: <LayoutDashboard className="size-[18px]" />,
+        roles: REPORTING_ROLES,
+      },
+      {
+        id: "menu",
+        label: t.admin.menu,
+        icon: <UtensilsCrossed className="size-[18px]" />,
+        roles: MENU_MANAGEMENT_ROLES,
+      },
+      {
+        id: "orders",
+        label: t.admin.orders,
+        icon: <ClipboardList className="size-[18px]" />,
+        roles: ORDER_MANAGEMENT_ROLES,
+      },
+      {
+        id: "tables",
+        label: t.admin.tables,
+        icon: <Armchair className="size-[18px]" />,
+        roles: TABLE_OPERATION_ROLES,
+      },
+      {
+        id: "reservations",
+        label: t.admin.reservations,
+        icon: <CalendarCheck className="size-[18px]" />,
+        roles: RESERVATION_MANAGEMENT_ROLES,
+      },
+      {
+        id: "staff",
+        label: t.admin.staff,
+        icon: <Users className="size-[18px]" />,
+        roles: STAFF_ADMIN_ROLES,
+      },
+      {
+        id: "inventory",
+        label: t.admin.inventory,
+        icon: <Boxes className="size-[18px]" />,
+        roles: INVENTORY_MANAGEMENT_ROLES,
+      },
+      {
+        id: "reports",
+        label: t.admin.reports,
+        icon: <BarChart3 className="size-[18px]" />,
+        roles: REPORTING_ROLES,
+      },
+      {
+        id: "kds",
+        label: t.admin.kdsScreens,
+        icon: <MonitorSmartphone className="size-[18px]" />,
+        roles: STAFF_ADMIN_ROLES,
+      },
+      {
+        id: "settings",
+        label: t.admin.settings,
+        icon: <SettingsIcon className="size-[18px]" />,
+        roles: SETTINGS_MANAGEMENT_ROLES,
+      },
+    ];
+    return items.filter((item) => roleIsAllowed(user.role, item.roles));
+  }, [t, user.role]);
 
-  const secondaryLinks = useMemo<SecondaryLink[]>(
-    () =>
-      [
-        {
-          href: "/admin/featured",
-          label: isRTL ? "إدارة المميز" : "Featured Items",
-          icon: <Award className="size-[18px]" />,
-          roles: MENU_MANAGEMENT_ROLES,
-        },
-        {
-          href: "/admin/reservations-calendar",
-          label: isRTL ? "تقويم الحجوزات" : "Reservations Calendar",
-          icon: <CalendarDays className="size-[18px]" />,
-          roles: RESERVATION_MANAGEMENT_ROLES,
-        },
-        {
-          href: "/admin/analytics",
-          label: isRTL ? "تحليلات المبيعات" : "Sales Analytics",
-          icon: <TrendingUp className="size-[18px]" />,
-          roles: REPORTING_ROLES,
-        },
-        {
-          href: "/admin/floor-editor",
-          label: isRTL ? "محرر الطاولات" : "Floor Plan Editor",
-          icon: <Grid3x3 className="size-[18px]" />,
-          roles: STAFF_ADMIN_ROLES,
-        },
-        {
-          href: "/admin/inventory",
-          label: isRTL ? "لوحة المخزون" : "Inventory Dashboard",
-          icon: <Package className="size-[18px]" />,
-          roles: INVENTORY_MANAGEMENT_ROLES,
-        },
-        {
-          href: "/admin/qr",
-          label: isRTL ? "رموز الطاولات" : "Table QR Codes",
-          icon: <QrCode className="size-[18px]" />,
-          roles: STAFF_ADMIN_ROLES,
-        },
-        {
-          href: "/admin/feedback",
-          label: isRTL ? "آراء العملاء" : "Customer Feedback",
-          icon: <MessageSquare className="size-[18px]" />,
-          roles: STAFF_ADMIN_ROLES,
-        },
-        {
-          href: "/admin/timesheet",
-          label: isRTL ? "سجل الدوام" : "Staff Timesheet",
-          icon: <Timer className="size-[18px]" />,
-          roles: STAFF_ADMIN_ROLES,
-        },
-      ].filter((item) => roleIsAllowed(user.role, item.roles)),
-    [isRTL, user.role]
-  );
+  const secondaryLinks = useMemo<SecondaryLink[]>(() => {
+    const items: SecondaryLink[] = [
+      {
+        href: "/admin/featured",
+        label: isRTL ? "إدارة المميز" : "Featured Items",
+        icon: <Award className="size-[18px]" />,
+        roles: MENU_MANAGEMENT_ROLES,
+      },
+      {
+        href: "/admin/reservations-calendar",
+        label: isRTL ? "تقويم الحجوزات" : "Reservations Calendar",
+        icon: <CalendarDays className="size-[18px]" />,
+        roles: RESERVATION_MANAGEMENT_ROLES,
+      },
+      {
+        href: "/admin/analytics",
+        label: isRTL ? "تحليلات المبيعات" : "Sales Analytics",
+        icon: <TrendingUp className="size-[18px]" />,
+        roles: REPORTING_ROLES,
+      },
+      {
+        href: "/admin/floor-editor",
+        label: isRTL ? "محرر الطاولات" : "Floor Plan Editor",
+        icon: <Grid3x3 className="size-[18px]" />,
+        roles: STAFF_ADMIN_ROLES,
+      },
+      {
+        href: "/admin/inventory",
+        label: isRTL ? "لوحة المخزون" : "Inventory Dashboard",
+        icon: <Package className="size-[18px]" />,
+        roles: INVENTORY_MANAGEMENT_ROLES,
+      },
+      {
+        href: "/admin/qr",
+        label: isRTL ? "رموز الطاولات" : "Table QR Codes",
+        icon: <QrCode className="size-[18px]" />,
+        roles: STAFF_ADMIN_ROLES,
+      },
+      {
+        href: "/admin/feedback",
+        label: isRTL ? "آراء العملاء" : "Customer Feedback",
+        icon: <MessageSquare className="size-[18px]" />,
+        roles: STAFF_ADMIN_ROLES,
+      },
+      {
+        href: "/admin/timesheet",
+        label: isRTL ? "سجل الدوام" : "Staff Timesheet",
+        icon: <Timer className="size-[18px]" />,
+        roles: STAFF_ADMIN_ROLES,
+      },
+    ];
+    return items.filter((item) => roleIsAllowed(user.role, item.roles));
+  }, [isRTL, user.role]);
 
   const active =
     requestedActive && navItems.some((item) => item.id === requestedActive)
