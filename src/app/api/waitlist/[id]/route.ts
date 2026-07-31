@@ -38,6 +38,17 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const customerAuthorized = verifyCustomerAccessToken(
+      "waitlist",
+      id,
+      accessToken(req)
+    );
+
+    if (!customerAuthorized) {
+      const auth = await requireStaffSession(RESERVATION_MANAGEMENT_ROLES);
+      if ("response" in auth) return auth.response;
+    }
+
     const parsed = waitlistUpdateSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json(
@@ -57,11 +68,6 @@ export async function PATCH(
       );
     }
 
-    const customerAuthorized = verifyCustomerAccessToken(
-      "waitlist",
-      existing.id,
-      accessToken(req)
-    );
     if (customerAuthorized) {
       if (
         parsed.data.status !== "cancelled" ||
@@ -75,9 +81,6 @@ export async function PATCH(
           { status: 409 }
         );
       }
-    } else {
-      const auth = await requireStaffSession(RESERVATION_MANAGEMENT_ROLES);
-      if ("response" in auth) return auth.response;
     }
 
     if (
@@ -122,7 +125,10 @@ export async function PATCH(
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
       return NextResponse.json(
-        { error: "Waitlist access is not configured", code: "CUSTOMER_ACCESS_NOT_CONFIGURED" },
+        {
+          error: "Waitlist access is not configured",
+          code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
+        },
         { status: 503 }
       );
     }
