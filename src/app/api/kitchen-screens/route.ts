@@ -7,6 +7,11 @@ import {
   STAFF_ADMIN_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+} from "@/lib/kds/outbox";
 
 const slugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 const stationFilterSchema = z
@@ -124,7 +129,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const screen = await db.kitchenScreen.create({ data: parsed.data });
+    const context = auditContextFromRequest(req);
+    const screen = await db.$transaction(async (tx) => {
+      const created = await tx.kitchenScreen.create({ data: parsed.data });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "kds.screen.create",
+        entityType: "KitchenScreen",
+        entityId: created.id,
+        context,
+        metadata: {
+          slug: created.slug,
+          screenType: created.screenType,
+          layoutType: created.layoutType,
+          stationFilter: created.stationFilter,
+          isActive: created.isActive,
+        },
+      });
+
+      await queueKdsEvent(tx, {
+        type: "screen:update",
+        screenSlugs: [created.slug],
+        payload: { screenId: created.id, created: true },
+      });
+
+      return created;
+    });
+
+    await flushKdsOutboxBestEffort(10);
     return NextResponse.json({ screen }, { status: 201 });
   } catch (error) {
     if (
