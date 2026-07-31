@@ -369,7 +369,12 @@ async function main() {
         await tx.schedule.deleteMany({
           where: { employeeId: cleanupTargetId },
         });
-        await tx.employee.deleteMany({ where: { id: cleanupTargetId } });
+        // The clock-in/out events are an immutable audit ledger. Preserve the
+        // employee record they reference and retire the disposable account.
+        await tx.employee.updateMany({
+          where: { id: cleanupTargetId },
+          data: { isActive: false },
+        });
       });
     }
   }
