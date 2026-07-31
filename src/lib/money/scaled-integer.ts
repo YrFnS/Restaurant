@@ -5,7 +5,9 @@ export const UNIT_COST_MICRO_DIGITS = 6;
 
 const BIGINT_ZERO = BigInt(0);
 const BIGINT_ONE = BigInt(1);
+const BIGINT_TWO = BigInt(2);
 const BIGINT_TEN = BigInt(10);
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 export class ExactValueError extends Error {
   constructor(message: string) {
@@ -14,7 +16,7 @@ export class ExactValueError extends Error {
   }
 }
 
-function scaleForDigits(scaleDigits: number): bigint {
+export function scaleForDigits(scaleDigits: number): bigint {
   if (!Number.isInteger(scaleDigits) || scaleDigits < 0 || scaleDigits > 12) {
     throw new ExactValueError("Scale digits must be an integer between 0 and 12");
   }
@@ -70,14 +72,18 @@ export function formatScaledInteger(
   return `${whole}.${fraction}`;
 }
 
+export function scaledIntegerToSafeInteger(value: bigint): number {
+  if (value < BIGINT_ZERO || value > MAX_SAFE_BIGINT) {
+    throw new ExactValueError("Integer value cannot be represented safely as a number");
+  }
+  return Number(value);
+}
+
 export function scaledIntegerToSafeNumber(
   value: bigint,
   scaleDigits: number
 ): number {
-  if (
-    value < BIGINT_ZERO ||
-    value > BigInt(Number.MAX_SAFE_INTEGER)
-  ) {
+  if (value < BIGINT_ZERO || value > MAX_SAFE_BIGINT) {
     throw new ExactValueError("Scaled value cannot be represented safely as a number");
   }
 
@@ -86,4 +92,42 @@ export function scaledIntegerToSafeNumber(
     throw new ExactValueError("Scaled value cannot be represented safely as a number");
   }
   return numeric;
+}
+
+/** Round a non-negative integer ratio half-up without using floating point. */
+export function divideAndRoundHalfUp(
+  numerator: bigint,
+  denominator: bigint
+): bigint {
+  if (numerator < BIGINT_ZERO) {
+    throw new ExactValueError("Numerator must be non-negative");
+  }
+  if (denominator <= BIGINT_ZERO) {
+    throw new ExactValueError("Denominator must be positive");
+  }
+  return (numerator + denominator / BIGINT_TWO) / denominator;
+}
+
+/**
+ * Apply one or more equally scaled non-negative factors and round once at the
+ * end. This avoids binary floating point and avoids cumulative per-rule
+ * rounding drift.
+ */
+export function applyScaledFactors(
+  value: bigint,
+  factors: readonly bigint[],
+  factorScaleDigits: number
+): bigint {
+  if (value < BIGINT_ZERO || factors.some((factor) => factor < BIGINT_ZERO)) {
+    throw new ExactValueError("Scaled values and factors must be non-negative");
+  }
+  if (factors.length === 0) return value;
+
+  const factorScale = scaleForDigits(factorScaleDigits);
+  const numerator = factors.reduce(
+    (result, factor) => result * factor,
+    value
+  );
+  const denominator = factorScale ** BigInt(factors.length);
+  return divideAndRoundHalfUp(numerator, denominator);
 }
