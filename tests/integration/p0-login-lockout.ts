@@ -9,7 +9,10 @@ const BASE_URL = (process.env.P0_BASE_URL || "http://127.0.0.1:3000").replace(
 );
 const ADMIN_SOURCE = "198.51.100.33";
 const ATTEMPT_SOURCE = "198.51.100.34";
+const CLOCK_SOURCE = "198.51.100.37";
 const LOGIN_SCOPES = ["auth-login-source", "auth-login-pin"];
+const CLOCK_SCOPES = ["employee-clock-source", "employee-clock-pin"];
+const ALL_TEST_SCOPES = [...LOGIN_SCOPES, ...CLOCK_SCOPES];
 
 type Json = Record<string, any> | null;
 
@@ -81,6 +84,34 @@ async function login(pin: string, source: string) {
   );
 }
 
+async function setActive(
+  employeeId: string,
+  isActive: boolean,
+  adminCookie: string,
+  label: string
+) {
+  const result = await request(
+    `/api/employees/${encodeURIComponent(employeeId)}`,
+    {
+      method: "PATCH",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ isActive }),
+    }
+  );
+  expectStatus(result, 200, label);
+}
+
+async function clock(pin: string, action: "in" | "out") {
+  return request(
+    "/api/employees/clock",
+    {
+      method: "POST",
+      body: JSON.stringify({ pin, action }),
+    },
+    CLOCK_SOURCE
+  );
+}
+
 async function main() {
   let targetId: string | null = null;
   const testStartedAt = new Date(Date.now() - 1_000);
@@ -108,33 +139,30 @@ async function main() {
     targetId = String(created.data?.employee?.id || "");
     assert.ok(targetId, "Employee creation must return an ID");
 
-    const deactivate = await request(
-      `/api/employees/${encodeURIComponent(targetId)}`,
-      {
-        method: "PATCH",
-        headers: { cookie: adminCookie },
-        body: JSON.stringify({ isActive: false }),
-      }
+    await setActive(
+      targetId,
+      false,
+      adminCookie,
+      "Deactivate login lockout test employee"
     );
-    expectStatus(deactivate, 200, "Deactivate lockout test employee");
 
-    console.log("[p0-lockout] exhausting the shared per-credential allowance");
+    console.log("[p0-lockout] exhausting the shared login credential allowance");
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       const failed = await login(targetPin, ATTEMPT_SOURCE);
-      expectStatus(failed, 401, `Inactive credential attempt ${attempt}`);
+      expectStatus(failed, 401, `Inactive login attempt ${attempt}`);
       assert.equal(failed.data?.code, "INVALID_CREDENTIALS");
       assert.equal(failed.data?.error, "Invalid credentials");
     }
 
     const blocked = await login(targetPin, ATTEMPT_SOURCE);
-    expectStatus(blocked, 429, "Credential attempt beyond threshold");
+    expectStatus(blocked, 429, "Login attempt beyond threshold");
     assert.equal(blocked.data?.code, "LOGIN_RATE_LIMITED");
     assert.ok(
       Number(blocked.response.headers.get("retry-after")) >= 1,
-      "Rate-limited response must include Retry-After"
+      "Rate-limited login response must include Retry-After"
     );
 
-    const limiterRows = await db.rateLimitCounter.findMany({
+    const loginLimiterRows = await db.rateLimitCounter.findMany({
       where: {
         scope: { in: LOGIN_SCOPES },
         createdAt: { gte: testStartedAt },
@@ -142,44 +170,41 @@ async function main() {
       orderBy: { createdAt: "asc" },
     });
     assert.equal(
-      new Set(limiterRows.map((row) => row.scope)).size,
+      new Set(loginLimiterRows.map((row) => row.scope)).size,
       2,
       "Login attempts must create both source and credential counters"
     );
     assert.ok(
-      limiterRows.some(
+      loginLimiterRows.some(
         (row) => row.scope === "auth-login-pin" && row.count >= 6
       ),
-      "Credential counter must record the blocked attempt"
+      "Login credential counter must record the blocked attempt"
     );
     assert.ok(
-      limiterRows.some(
+      loginLimiterRows.some(
         (row) => row.scope === "auth-login-source" && row.count >= 6
       ),
-      "Source counter must record every attempt"
+      "Login source counter must record every attempt"
     );
-    const limiterKeys = limiterRows.map((row) => row.key);
+    const loginLimiterKeys = loginLimiterRows.map((row) => row.key);
 
-    const reactivate = await request(
-      `/api/employees/${encodeURIComponent(targetId)}`,
-      {
-        method: "PATCH",
-        headers: { cookie: adminCookie },
-        body: JSON.stringify({ isActive: true }),
-      }
+    await setActive(
+      targetId,
+      true,
+      adminCookie,
+      "Reactivate login lockout test employee"
     );
-    expectStatus(reactivate, 200, "Reactivate lockout test employee");
 
     const stillBlocked = await login(targetPin, ATTEMPT_SOURCE);
     expectStatus(
       stillBlocked,
       429,
-      "Reactivation alone must not bypass the active credential window"
+      "Reactivation alone must not bypass the active login window"
     );
 
-    console.log("[p0-lockout] simulating fixed-window expiry and validating recovery");
+    console.log("[p0-lockout] simulating login window expiry and validating recovery");
     await db.rateLimitCounter.deleteMany({
-      where: { key: { in: limiterKeys } },
+      where: { key: { in: loginLimiterKeys } },
     });
 
     const recovered = await login(targetPin, ATTEMPT_SOURCE);
@@ -187,11 +212,11 @@ async function main() {
     assert.equal(recovered.data?.user?.id, targetId);
     const recoveredCookie = cookieFrom(recovered.response);
 
-    const remainingCounters = await db.rateLimitCounter.count({
-      where: { key: { in: limiterKeys } },
+    const remainingLoginCounters = await db.rateLimitCounter.count({
+      where: { key: { in: loginLimiterKeys } },
     });
     assert.equal(
-      remainingCounters,
+      remainingLoginCounters,
       0,
       "Successful login must reset its current source and credential counters"
     );
@@ -218,11 +243,119 @@ async function main() {
     );
     expectStatus(logout, 200, "Recovered employee logout");
 
-    console.log("[p0-lockout] Shared lockout and recovery assertions passed.");
+    console.log("[p0-lockout] exhausting the shared clock-kiosk credential allowance");
+    await setActive(
+      targetId,
+      false,
+      adminCookie,
+      "Deactivate clock lockout test employee"
+    );
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const failedClock = await clock(targetPin, "in");
+      expectStatus(failedClock, 401, `Inactive clock attempt ${attempt}`);
+      assert.equal(failedClock.data?.code, "INVALID_CREDENTIALS");
+      assert.equal(failedClock.data?.error, "Invalid credentials");
+    }
+
+    const blockedClock = await clock(targetPin, "in");
+    expectStatus(blockedClock, 429, "Clock attempt beyond threshold");
+    assert.equal(blockedClock.data?.code, "CLOCK_RATE_LIMITED");
+    assert.ok(
+      Number(blockedClock.response.headers.get("retry-after")) >= 1,
+      "Rate-limited clock response must include Retry-After"
+    );
+
+    const clockLimiterRows = await db.rateLimitCounter.findMany({
+      where: {
+        scope: { in: CLOCK_SCOPES },
+        createdAt: { gte: testStartedAt },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    assert.equal(
+      new Set(clockLimiterRows.map((row) => row.scope)).size,
+      2,
+      "Clock attempts must create both source and credential counters"
+    );
+    assert.ok(
+      clockLimiterRows.some(
+        (row) => row.scope === "employee-clock-pin" && row.count >= 6
+      ),
+      "Clock credential counter must record the blocked attempt"
+    );
+    assert.ok(
+      clockLimiterRows.some(
+        (row) => row.scope === "employee-clock-source" && row.count >= 6
+      ),
+      "Clock source counter must record every attempt"
+    );
+    const clockLimiterKeys = clockLimiterRows.map((row) => row.key);
+
+    await setActive(
+      targetId,
+      true,
+      adminCookie,
+      "Reactivate clock lockout test employee"
+    );
+    const stillClockBlocked = await clock(targetPin, "in");
+    expectStatus(
+      stillClockBlocked,
+      429,
+      "Reactivation alone must not bypass the active clock window"
+    );
+
+    await db.rateLimitCounter.deleteMany({
+      where: { key: { in: clockLimiterKeys } },
+    });
+
+    const clockIn = await clock(targetPin, "in");
+    expectStatus(clockIn, 200, "Clock in after fixed-window expiry");
+    assert.equal(clockIn.data?.employee?.id, targetId);
+    assert.equal(clockIn.data?.employee?.clockedIn, true);
+
+    const remainingClockCounters = await db.rateLimitCounter.count({
+      where: { key: { in: clockLimiterKeys } },
+    });
+    assert.equal(
+      remainingClockCounters,
+      0,
+      "Successful clock authentication must reset its counters"
+    );
+
+    const clockInAudit = await db.auditEvent.findFirst({
+      where: {
+        action: "employee.clock.in",
+        entityType: "Employee",
+        entityId: targetId,
+        createdAt: { gte: testStartedAt },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(clockInAudit, "Successful clock-in must create an audit event");
+    assert.equal((clockInAudit.metadata as any)?.via, "pin");
+
+    const clockOut = await clock(targetPin, "out");
+    expectStatus(clockOut, 200, "Clock out with valid PIN");
+    assert.equal(clockOut.data?.employee?.clockedIn, false);
+
+    const clockOutAudit = await db.auditEvent.findFirst({
+      where: {
+        action: "employee.clock.out",
+        entityType: "Employee",
+        entityId: targetId,
+        createdAt: { gte: testStartedAt },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(clockOutAudit, "Successful clock-out must create an audit event");
+    assert.equal((clockOutAudit.metadata as any)?.via, "pin");
+
+    console.log("[p0-lockout] Login and clock lockout assertions passed.");
   } finally {
     await db.rateLimitCounter.deleteMany({
       where: {
-        scope: { in: LOGIN_SCOPES },
+        scope: { in: ALL_TEST_SCOPES },
         createdAt: { gte: testStartedAt },
       },
     });
