@@ -175,52 +175,73 @@ enum PurchaseReceiptStatus {
   reversed
 }
 
+enum TimeEventType {
+  clock_in
+  clock_out
+  break_start
+  break_end
+}
+
+enum TimeEventSource {
+  kiosk
+  manager
+  import
+  system
+}
+
+enum TimeShiftStatus {
+  open
+  closed
+}
+
 // ─── Restaurant-wide settings (singleton) ───
 model RestaurantSettings {
-  id                    String   @id @default("1")
-  nameEn                String   @default("")
-  nameAr                String   @default("")
-  taglineEn             String   @default("")
-  taglineAr             String   @default("")
-  descriptionEn         String   @default("")
-  descriptionAr         String   @default("")
-  phone                  String   @default("")
-  email                  String   @default("")
-  addressEn              String   @default("")
-  addressAr              String   @default("")
-  latitude               Float    @default(0)
-  longitude              Float    @default(0)
-  taxRate                Float    @default(0)
+  id                         String   @id @default("1")
+  nameEn                     String   @default("")
+  nameAr                     String   @default("")
+  taglineEn                  String   @default("")
+  taglineAr                  String   @default("")
+  descriptionEn              String   @default("")
+  descriptionAr              String   @default("")
+  phone                      String   @default("")
+  email                      String   @default("")
+  addressEn                  String   @default("")
+  addressAr                  String   @default("")
+  latitude                   Float    @default(0)
+  longitude                  Float    @default(0)
+  taxRate                    Float    @default(0)
   // P1 exact value; scale 1_000_000. Globally omitted unless explicitly selected.
-  taxRateMicros          BigInt   @default(0)
-  currency               String   @default("USD")
-  currencySymbol         String   @default("$")
-  deliveryFee            Float    @default(0)
-  deliveryFeeMinor       BigInt   @default(0)
-  minDeliveryOrder       Float    @default(0)
-  minDeliveryOrderMinor  BigInt   @default(0)
-  deliveryRadiusKm       Float    @default(0)
-  avgPrepTimeMin         Int      @default(20)
-  tipPresets             String   @default("10,15,20")
-  openTime               String   @default("09:00")
-  closeTime              String   @default("23:00")
-  logoUrl                 String   @default("")
-  heroImageUrl            String   @default("")
-  facebookUrl             String   @default("")
-  instagramUrl            String   @default("")
-  twitterUrl              String   @default("")
-  whatsappUrl             String   @default("")
-  giftCardAmounts         String   @default("25,50,75,100")
-  statsOrdersServed       Int      @default(0)
-  statsHappyCustomers     Int      @default(0)
-  statsYearsService       Int      @default(0)
+  taxRateMicros              BigInt   @default(0)
+  currency                   String   @default("USD")
+  currencySymbol             String   @default("$")
+  deliveryFee                Float    @default(0)
+  deliveryFeeMinor           BigInt   @default(0)
+  minDeliveryOrder           Float    @default(0)
+  minDeliveryOrderMinor      BigInt   @default(0)
+  deliveryRadiusKm           Float    @default(0)
+  avgPrepTimeMin             Int      @default(20)
+  tipPresets                 String   @default("10,15,20")
+  openTime                   String   @default("09:00")
+  closeTime                  String   @default("23:00")
+  timezone                   String   @default("UTC")
+  operationalDayStartMinutes Int      @default(0)
+  logoUrl                    String   @default("")
+  heroImageUrl               String   @default("")
+  facebookUrl                String   @default("")
+  instagramUrl               String   @default("")
+  twitterUrl                 String   @default("")
+  whatsappUrl                String   @default("")
+  giftCardAmounts            String   @default("25,50,75,100")
+  statsOrdersServed          Int      @default(0)
+  statsHappyCustomers        Int      @default(0)
+  statsYearsService          Int      @default(0)
   // KDS timing thresholds (minutes)
-  kdsGreenMin             Int      @default(10)
-  kdsYellowMin            Int      @default(18)
-  kdsRedMin               Int      @default(25)
-  soundOnNewTicket        Boolean  @default(true)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  kdsGreenMin                Int      @default(10)
+  kdsYellowMin               Int      @default(18)
+  kdsRedMin                  Int      @default(25)
+  soundOnNewTicket           Boolean  @default(true)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 }
 
 // ─── Menu ───
@@ -285,19 +306,19 @@ model ModifierGroup {
 }
 
 model ModifierOption {
-  id         String        @id @default(cuid())
-  nameEn     String
-  nameAr     String
-  price      Float         @default(0)
-  priceMinor BigInt        @default(0)
-  isDefault  Boolean       @default(false)
+  id               String            @id @default(cuid())
+  nameEn           String
+  nameAr           String
+  price            Float             @default(0)
+  priceMinor       BigInt            @default(0)
+  isDefault        Boolean           @default(false)
   // preset tag: none, no, extra, side, light — for kitchen readability
-  preset     String        @default("none")
-  groupId    String
-  group            ModifierGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  preset           String            @default("none")
+  groupId          String
+  group            ModifierGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
   recipeComponents RecipeComponent[]
-  createdAt        DateTime         @default(now())
-  updatedAt  DateTime      @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 }
 
 // ─── Customers ───
@@ -357,35 +378,35 @@ model Order {
 }
 
 model OrderItem {
-  id              String          @id @default(cuid())
-  orderId         String
-  order           Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  menuItemId      String
-  menuItem        MenuItem        @relation(fields: [menuItemId], references: [id])
-  quantity        Int             @default(1)
-  unitPrice       Float
-  unitPriceMinor  BigInt          @default(0)
+  id                        String                    @id @default(cuid())
+  orderId                   String
+  order                     Order                     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId                String
+  menuItem                  MenuItem                  @relation(fields: [menuItemId], references: [id])
+  quantity                  Int                       @default(1)
+  unitPrice                 Float
+  unitPriceMinor            BigInt                    @default(0)
   // JSON string of selected modifier options [{id,nameEn,nameAr,price}]
-  modifiers       String          @default("[]")
-  notes           String?
-  totalPrice      Float
-  totalPriceMinor BigInt          @default(0)
-  status          OrderItemStatus @default(pending)
+  modifiers                 String                    @default("[]")
+  notes                     String?
+  totalPrice                Float
+  totalPriceMinor           BigInt                    @default(0)
+  status                    OrderItemStatus           @default(pending)
   // which kitchen station handles this item
-  stationSlug     String          @default("")
+  stationSlug               String                    @default("")
   // course number for course firing (1 = first course, 2 = main, etc.)
-  course          Int             @default(1)
-  hold            Boolean         @default(false) // held until expo fires it
-  firedAt         DateTime?
-  readyAt         DateTime?
+  course                    Int                       @default(1)
+  hold                      Boolean                   @default(false) // held until expo fires it
+  firedAt                   DateTime?
+  readyAt                   DateTime?
   seatNumber                Int?
   inventoryConsumptionState InventoryConsumptionState @default(pending)
-  inventoryRecipeId          String?
-  inventoryRecipe            Recipe?                   @relation("OrderItemInventoryRecipe", fields: [inventoryRecipeId], references: [id], onDelete: Restrict)
-  inventoryRecipeVersion     Int?
-  inventoryConsumedAt        DateTime?
-  createdAt                  DateTime                   @default(now())
-  updatedAt                  DateTime                   @updatedAt
+  inventoryRecipeId         String?
+  inventoryRecipe           Recipe?                   @relation("OrderItemInventoryRecipe", fields: [inventoryRecipeId], references: [id], onDelete: Restrict)
+  inventoryRecipeVersion    Int?
+  inventoryConsumedAt       DateTime?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
 
   @@index([inventoryConsumptionState, createdAt], map: "OrderItem_inventory_state_idx")
   @@index([inventoryRecipeId, createdAt], map: "OrderItem_inventory_recipe_idx")
@@ -543,21 +564,23 @@ model NewsletterSubscription {
 
 // ─── Staff ───
 model Employee {
-  id              String     @id @default(cuid())
+  id              String              @id @default(cuid())
   name            String
-  pin             String     @unique
-  role            StaffRole  @default(staff)
-  hourlyWage      Float      @default(15.0)
-  hourlyWageMinor BigInt     @default(0)
-  isActive        Boolean    @default(true)
+  pin             String              @unique
+  role            StaffRole           @default(staff)
+  hourlyWage      Float               @default(15.0)
+  hourlyWageMinor BigInt               @default(0)
+  isActive        Boolean             @default(true)
   email           String?
   phone           String?
-  clockedIn       Boolean    @default(false)
+  clockedIn       Boolean             @default(false)
   lastClockIn     DateTime?
   lastClockOut    DateTime?
   schedules       Schedule[]
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  timeEvents      EmployeeTimeEvent[]
+  shifts          EmployeeShift[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 }
 
 model Schedule {
@@ -572,29 +595,124 @@ model Schedule {
   updatedAt  DateTime @updatedAt
 }
 
-// ─── Inventory ───
-model Ingredient {
-  id                String   @id @default(cuid())
-  name              String
-  unit              String   @default("pcs")
-  quantity          Float    @default(0)
-  quantityMicros    BigInt   @default(0)
-  allowNegativeStock Boolean @default(false)
-  lowThreshold      Float    @default(10)
-  costPerUnit       Float    @default(0)
-  // Unit cost uses scale 1_000_000 during the compatibility window.
-  costPerUnitMicros BigInt   @default(0)
-  supplier          String?
-  category          String?
-  unitConversions   IngredientUnitConversion[]
-  recipeComponents  RecipeComponent[]
-  stockMovements    StockMovement[]
-  purchaseOrderLines PurchaseOrderLine[]
-  purchaseReceiptLines PurchaseReceiptLine[]
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @default(now()) @updatedAt
+model EmployeeTimeEvent {
+  id              String             @id
+  idempotencyKey  String             @unique(map: "EmployeeTimeEvent_idempotencyKey_key")
+  employeeId      String
+  employee        Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  eventType       TimeEventType
+  source          TimeEventSource
+  occurredAt      DateTime           @db.Timestamptz(3)
+  operationalDate DateTime           @db.Date
+  actorId         String?
+  actorName       String             @default("")
+  actorRole       String             @default("")
+  reasonCode      String             @default("")
+  reason          String?
+  metadata        Json?
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  clockInShift    EmployeeShift?     @relation("EmployeeShiftClockIn")
+  clockOutShift   EmployeeShift?     @relation("EmployeeShiftClockOut")
+  startedBreak    EmployeeBreak?     @relation("EmployeeBreakStart")
+  endedBreak      EmployeeBreak?     @relation("EmployeeBreakEnd")
+
+  @@index([employeeId, occurredAt(sort: Desc)], map: "EmployeeTimeEvent_employee_occurredAt_idx")
+  @@index([operationalDate, occurredAt], map: "EmployeeTimeEvent_operationalDate_idx")
+  @@index([eventType, createdAt(sort: Desc)], map: "EmployeeTimeEvent_type_createdAt_idx")
 }
 
+model EmployeeShift {
+  id                 String                   @id
+  employeeId         String
+  employee           Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  status             TimeShiftStatus          @default(open)
+  operationalDate    DateTime                 @db.Date
+  startedAt          DateTime                 @db.Timestamptz(3)
+  endedAt            DateTime?                @db.Timestamptz(3)
+  clockInEventId     String                   @unique(map: "EmployeeShift_clockInEventId_key")
+  clockInEvent       EmployeeTimeEvent        @relation("EmployeeShiftClockIn", fields: [clockInEventId], references: [id], onDelete: Restrict)
+  clockOutEventId    String?                  @unique(map: "EmployeeShift_clockOutEventId_key")
+  clockOutEvent      EmployeeTimeEvent?       @relation("EmployeeShiftClockOut", fields: [clockOutEventId], references: [id], onDelete: Restrict)
+  grossSeconds       Int                      @default(0)
+  breakSeconds       Int                      @default(0)
+  paidSeconds        Int                      @default(0)
+  hourlyWageMinor    BigInt
+  baseLaborCostMinor BigInt                   @default(0)
+  openedById         String?
+  openedByName       String                   @default("")
+  closedById         String?
+  closedByName       String?
+  createdAt          DateTime                 @default(now()) @db.Timestamptz(3)
+  closedAt           DateTime?                @db.Timestamptz(3)
+  breaks             EmployeeBreak[]
+  adjustments        EmployeeTimeAdjustment[]
+
+  @@index([employeeId, operationalDate(sort: Desc), startedAt(sort: Desc)], map: "EmployeeShift_employee_operationalDate_idx")
+  @@index([status, startedAt], map: "EmployeeShift_status_startedAt_idx")
+}
+
+model EmployeeBreak {
+  id              String             @id
+  shiftId         String
+  shift           EmployeeShift      @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  status          TimeShiftStatus    @default(open)
+  startedAt       DateTime           @db.Timestamptz(3)
+  endedAt         DateTime?          @db.Timestamptz(3)
+  startEventId    String             @unique(map: "EmployeeBreak_startEventId_key")
+  startEvent      EmployeeTimeEvent  @relation("EmployeeBreakStart", fields: [startEventId], references: [id], onDelete: Restrict)
+  endEventId      String?            @unique(map: "EmployeeBreak_endEventId_key")
+  endEvent        EmployeeTimeEvent? @relation("EmployeeBreakEnd", fields: [endEventId], references: [id], onDelete: Restrict)
+  durationSeconds Int                @default(0)
+  openedById      String?
+  openedByName    String             @default("")
+  closedById      String?
+  closedByName    String?
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  closedAt        DateTime?          @db.Timestamptz(3)
+
+  @@index([shiftId, startedAt], map: "EmployeeBreak_shift_startedAt_idx")
+}
+
+model EmployeeTimeAdjustment {
+  id                  String        @id
+  idempotencyKey      String        @unique(map: "EmployeeTimeAdjustment_idempotencyKey_key")
+  shiftId             String
+  shift               EmployeeShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  paidSecondsDelta    Int
+  laborCostDeltaMinor BigInt
+  reasonCode          String
+  reason              String
+  actorId             String
+  actorName           String
+  actorRole           String
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([shiftId, createdAt], map: "EmployeeTimeAdjustment_shift_createdAt_idx")
+  @@index([actorId, createdAt(sort: Desc)], map: "EmployeeTimeAdjustment_actor_createdAt_idx")
+}
+
+// ─── Inventory ───
+model Ingredient {
+  id                   String                @id @default(cuid())
+  name                 String
+  unit                 String                @default("pcs")
+  quantity             Float                 @default(0)
+  quantityMicros       BigInt                @default(0)
+  allowNegativeStock   Boolean               @default(false)
+  lowThreshold         Float                 @default(10)
+  costPerUnit          Float                 @default(0)
+  // Unit cost uses scale 1_000_000 during the compatibility window.
+  costPerUnitMicros    BigInt                @default(0)
+  supplier             String?
+  category             String?
+  unitConversions      IngredientUnitConversion[]
+  recipeComponents     RecipeComponent[]
+  stockMovements       StockMovement[]
+  purchaseOrderLines   PurchaseOrderLine[]
+  purchaseReceiptLines PurchaseReceiptLine[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @default(now()) @updatedAt
+}
 
 model IngredientUnitConversion {
   id           String     @id
@@ -645,30 +763,30 @@ model RecipeComponent {
 }
 
 model StockMovement {
-  id                  String            @id
-  idempotencyKey      String            @unique(map: "StockMovement_idempotencyKey_key")
-  ingredientId        String
-  ingredient          Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
-  movementType        StockMovementType
-  quantityDeltaMicros BigInt
-  unitCostMicros      BigInt            @default(0)
-  totalCostMinor      BigInt            @default(0)
-  balanceAfterMicros  BigInt            @default(0)
-  sourceType          String            @default("")
-  sourceId            String?
-  sourceLineId        String?
-  reversalOfId        String?
-  reversalOf          StockMovement?    @relation("StockMovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversals           StockMovement[]   @relation("StockMovementReversal")
-  purchaseReceiptLines PurchaseReceiptLine[] @relation("PurchaseReceiptLineStockMovement")
+  id                           String                @id
+  idempotencyKey               String                @unique(map: "StockMovement_idempotencyKey_key")
+  ingredientId                 String
+  ingredient                   Ingredient            @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  movementType                 StockMovementType
+  quantityDeltaMicros          BigInt
+  unitCostMicros               BigInt                @default(0)
+  totalCostMinor               BigInt                @default(0)
+  balanceAfterMicros           BigInt                @default(0)
+  sourceType                   String                @default("")
+  sourceId                     String?
+  sourceLineId                 String?
+  reversalOfId                 String?
+  reversalOf                   StockMovement?        @relation("StockMovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals                    StockMovement[]       @relation("StockMovementReversal")
+  purchaseReceiptLines         PurchaseReceiptLine[] @relation("PurchaseReceiptLineStockMovement")
   purchaseReceiptReversalLines PurchaseReceiptLine[] @relation("PurchaseReceiptLineReversalMovement")
-  reasonCode          String            @default("")
-  reason              String?
-  actorId             String?
-  actorName           String            @default("")
-  metadata            Json?
-  occurredAt          DateTime          @default(now())
-  createdAt           DateTime          @default(now())
+  reasonCode                   String                @default("")
+  reason                       String?
+  actorId                      String?
+  actorName                    String                @default("")
+  metadata                     Json?
+  occurredAt                   DateTime              @default(now())
+  createdAt                    DateTime              @default(now())
 
   @@index([ingredientId, createdAt(sort: Desc)], map: "StockMovement_ingredient_createdAt_idx")
   @@index([sourceType, sourceId, sourceLineId], map: "StockMovement_source_idx")
@@ -689,19 +807,19 @@ model WasteLog {
 }
 
 model Supplier {
-  id           String         @id
-  code         String         @unique(map: "Supplier_code_key")
-  name         String
-  contactName  String         @default("")
-  phone        String         @default("")
-  email        String         @default("")
-  address      String         @default("")
-  paymentTerms String         @default("")
-  notes        String?
-  status       SupplierStatus @default(active)
+  id             String          @id
+  code           String          @unique(map: "Supplier_code_key")
+  name           String
+  contactName    String          @default("")
+  phone          String          @default("")
+  email          String          @default("")
+  address        String          @default("")
+  paymentTerms   String          @default("")
+  notes          String?
+  status         SupplierStatus  @default(active)
   purchaseOrders PurchaseOrder[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   @@index([status, name], map: "Supplier_status_name_idx")
 }
@@ -740,26 +858,26 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderLine {
-  id                              String        @id
-  purchaseOrderId                 String
-  purchaseOrder                   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
-  lineNumber                      Int
-  ingredientId                    String
-  ingredient                      Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
-  ingredientName                  String
-  baseUnit                        String
-  purchaseUnit                    String
-  conversionToBaseMicros          BigInt
-  orderedPurchaseQuantityMicros   BigInt
-  orderedBaseQuantityMicros       BigInt
-  receivedBaseQuantityMicros      BigInt        @default(0)
-  purchaseUnitCostMicros          BigInt
-  baseUnitCostMicros              BigInt
-  lineTotalMinor                  BigInt
-  notes                           String?
-  receiptLines                    PurchaseReceiptLine[]
-  createdAt                       DateTime      @default(now())
-  updatedAt                       DateTime      @updatedAt
+  id                            String                @id
+  purchaseOrderId               String
+  purchaseOrder                 PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  lineNumber                    Int
+  ingredientId                  String
+  ingredient                    Ingredient            @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  ingredientName                String
+  baseUnit                      String
+  purchaseUnit                  String
+  conversionToBaseMicros        BigInt
+  orderedPurchaseQuantityMicros BigInt
+  orderedBaseQuantityMicros     BigInt
+  receivedBaseQuantityMicros    BigInt                @default(0)
+  purchaseUnitCostMicros        BigInt
+  baseUnitCostMicros            BigInt
+  lineTotalMinor                BigInt
+  notes                         String?
+  receiptLines                  PurchaseReceiptLine[]
+  createdAt                     DateTime              @default(now())
+  updatedAt                     DateTime              @updatedAt
 
   @@unique([purchaseOrderId, lineNumber], map: "PurchaseOrderLine_order_lineNumber_key")
   @@index([ingredientId, createdAt(sort: Desc)], map: "PurchaseOrderLine_ingredient_createdAt_idx")
@@ -767,50 +885,50 @@ model PurchaseOrderLine {
 }
 
 model PurchaseReceipt {
-  id             String                @id
-  receiptNumber  String                @unique(map: "PurchaseReceipt_receiptNumber_key")
-  idempotencyKey String                @unique(map: "PurchaseReceipt_idempotencyKey_key")
-  reversalKey    String?
+  id              String                @id
+  receiptNumber   String                @unique(map: "PurchaseReceipt_receiptNumber_key")
+  idempotencyKey  String                @unique(map: "PurchaseReceipt_idempotencyKey_key")
+  reversalKey     String?
   purchaseOrderId String
-  purchaseOrder  PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
-  status         PurchaseReceiptStatus @default(posted)
-  totalCostMinor BigInt                @default(0)
-  notes          String?
-  receivedById   String
-  receivedByName String
-  occurredAt     DateTime              @default(now())
-  reversedById   String?
-  reversedByName String?
-  reversedAt     DateTime?
-  reversalReason String?
-  lines          PurchaseReceiptLine[]
-  createdAt      DateTime              @default(now())
+  purchaseOrder   PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  status          PurchaseReceiptStatus @default(posted)
+  totalCostMinor  BigInt                @default(0)
+  notes           String?
+  receivedById    String
+  receivedByName  String
+  occurredAt      DateTime              @default(now())
+  reversedById    String?
+  reversedByName  String?
+  reversedAt      DateTime?
+  reversalReason  String?
+  lines           PurchaseReceiptLine[]
+  createdAt       DateTime              @default(now())
 
   @@index([purchaseOrderId, createdAt(sort: Desc)], map: "PurchaseReceipt_order_createdAt_idx")
   @@index([status, createdAt(sort: Desc)], map: "PurchaseReceipt_status_createdAt_idx")
 }
 
 model PurchaseReceiptLine {
-  id                         String            @id
-  receiptId                  String
-  receipt                    PurchaseReceipt   @relation(fields: [receiptId], references: [id], onDelete: Restrict)
-  purchaseOrderLineId        String
-  purchaseOrderLine          PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
-  ingredientId               String
-  ingredient                 Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
-  ingredientName             String
-  submittedUnit              String
-  submittedQuantityMicros    BigInt
-  conversionToBaseMicros     BigInt
-  baseQuantityMicros         BigInt
-  purchaseUnitCostMicros     BigInt
-  baseUnitCostMicros         BigInt
-  totalCostMinor             BigInt
-  stockMovementId            String            @unique(map: "PurchaseReceiptLine_stockMovement_key")
-  stockMovement              StockMovement     @relation("PurchaseReceiptLineStockMovement", fields: [stockMovementId], references: [id], onDelete: Restrict)
-  reversalMovementId         String?
-  reversalMovement           StockMovement?    @relation("PurchaseReceiptLineReversalMovement", fields: [reversalMovementId], references: [id], onDelete: Restrict)
-  createdAt                  DateTime           @default(now())
+  id                      String            @id
+  receiptId               String
+  receipt                 PurchaseReceipt   @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  purchaseOrderLineId     String
+  purchaseOrderLine       PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+  ingredientId            String
+  ingredient              Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  ingredientName          String
+  submittedUnit           String
+  submittedQuantityMicros BigInt
+  conversionToBaseMicros  BigInt
+  baseQuantityMicros      BigInt
+  purchaseUnitCostMicros  BigInt
+  baseUnitCostMicros      BigInt
+  totalCostMinor          BigInt
+  stockMovementId         String            @unique(map: "PurchaseReceiptLine_stockMovement_key")
+  stockMovement           StockMovement     @relation("PurchaseReceiptLineStockMovement", fields: [stockMovementId], references: [id], onDelete: Restrict)
+  reversalMovementId      String?
+  reversalMovement        StockMovement?    @relation("PurchaseReceiptLineReversalMovement", fields: [reversalMovementId], references: [id], onDelete: Restrict)
+  createdAt               DateTime          @default(now())
 
   @@unique([receiptId, purchaseOrderLineId], map: "PurchaseReceiptLine_receipt_orderLine_key")
   @@index([purchaseOrderLineId, createdAt(sort: Desc)], map: "PurchaseReceiptLine_orderLine_createdAt_idx")
@@ -819,16 +937,16 @@ model PurchaseReceiptLine {
 
 // ─── Cash registers, sessions, and drawer ledger ───
 model CashRegister {
-  id                                String                @id
-  code                              String                @unique(map: "CashRegister_code_key")
-  name                              String
-  deviceId                          String                @unique(map: "CashRegister_deviceId_key")
-  location                          String                @default("")
+  id                                 String                @id
+  code                               String                @unique(map: "CashRegister_code_key")
+  name                               String
+  deviceId                           String                @unique(map: "CashRegister_deviceId_key")
+  location                           String                @default("")
   discrepancyApprovalThresholdMinor BigInt                @default(0)
-  isActive                          Boolean               @default(true)
-  sessions                          CashRegisterSession[]
-  createdAt                         DateTime              @default(now())
-  updatedAt                         DateTime              @updatedAt
+  isActive                           Boolean               @default(true)
+  sessions                           CashRegisterSession[]
+  createdAt                          DateTime              @default(now())
+  updatedAt                          DateTime              @updatedAt
 
   @@index([isActive, name], map: "CashRegister_active_name_idx")
 }
