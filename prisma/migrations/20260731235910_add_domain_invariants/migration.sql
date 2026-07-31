@@ -19,8 +19,7 @@ ALTER TABLE "ModifierGroup"
   ADD CONSTRAINT "ModifierGroup_selection_bounds" CHECK (
     "minSelect" >= 0 AND
     "maxSelect" >= 1 AND
-    "minSelect" <= "maxSelect" AND
-    (NOT "isRequired" OR "minSelect" >= 1)
+    "minSelect" <= "maxSelect"
   ) NOT VALID;
 
 ALTER TABLE "Customer"
