@@ -6,6 +6,7 @@ function source(path: string): string {
   return readFileSync(resolve(path), "utf8");
 }
 
+const schema = source("prisma/schema.prisma");
 const migration = source(
   "prisma/migrations/20260731235920_add_cash_register_sessions/migration.sql"
 );
@@ -20,7 +21,7 @@ const registerControl = source("src/components/pos/RegisterSessionControl.tsx");
 const paymentDialog = source("src/components/pos/PaymentDialog.tsx");
 
 describe("cash-register session source inventory", () => {
-  test("commits the register, session, close, and ledger-link schema", () => {
+  test("commits the register, session, close, and ledger-link migration", () => {
     for (const marker of [
       'CREATE TABLE "CashRegister"',
       'CREATE TABLE "CashRegisterSession"',
@@ -31,6 +32,25 @@ describe("cash-register session source inventory", () => {
       'PaymentEvent_registerSession_createdAt_idx',
     ]) {
       expect(migration).toContain(marker);
+    }
+  });
+
+  test("maps the migration in Prisma so later migrations cannot drop it as drift", () => {
+    for (const marker of [
+      "enum CashRegisterSessionStatus",
+      "model CashRegister {",
+      "model CashRegisterSession {",
+      "model CashRegisterClose {",
+      "discrepancyApprovalThresholdMinor",
+      "openingFloatMinor",
+      "expectedCashMinor",
+      "countedCashMinor",
+      "discrepancyMinor",
+      "registerSessionId String?",
+      'map: "CashDrawerEntry_registerSession_createdAt_idx"',
+      'map: "PaymentEvent_registerSession_createdAt_idx"',
+    ]) {
+      expect(schema).toContain(marker);
     }
   });
 
