@@ -6,6 +6,10 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  parseNonNegativeDecimalToScaledInteger,
+  UNIT_COST_MICRO_DIGITS,
+} from "@/lib/money/scaled-integer";
 
 const ingredientFields = {
   name: z.string().trim().min(1).max(200),
@@ -58,6 +62,14 @@ const wasteSchema = z
   .strict();
 
 class InsufficientInventoryError extends Error {}
+
+function unitCostMicros(value: number): bigint {
+  return parseNonNegativeDecimalToScaledInteger(
+    String(value),
+    UNIT_COST_MICRO_DIGITS,
+    BigInt(Number.MAX_SAFE_INTEGER)
+  );
+}
 
 export async function GET() {
   const auth = await requireStaffSession(INVENTORY_MANAGEMENT_ROLES);
@@ -166,10 +178,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const costPerUnitMicros = unitCostMicros(parsed.data.costPerUnit);
     const item = await db.$transaction(async (tx) => {
       const created = await tx.ingredient.create({
         data: {
           ...parsed.data,
+          costPerUnitMicros,
           supplier: parsed.data.supplier || null,
           category: parsed.data.category || null,
         },
@@ -187,6 +201,7 @@ export async function POST(req: NextRequest) {
           quantity: created.quantity,
           lowThreshold: created.lowThreshold,
           costPerUnit: created.costPerUnit,
+          costPerUnitMicros: costPerUnitMicros.toString(),
         },
       });
 
@@ -261,11 +276,16 @@ export async function PATCH(req: NextRequest) {
     }
 
     const { id, ...updateData } = parsed.data;
+    const costPerUnitMicros =
+      updateData.costPerUnit === undefined
+        ? null
+        : unitCostMicros(updateData.costPerUnit);
     const item = await db.$transaction(async (tx) => {
       const updated = await tx.ingredient.update({
         where: { id },
         data: {
           ...updateData,
+          ...(costPerUnitMicros === null ? {} : { costPerUnitMicros }),
           ...(updateData.supplier !== undefined
             ? { supplier: updateData.supplier || null }
             : {}),
@@ -286,6 +306,9 @@ export async function PATCH(req: NextRequest) {
           quantity: updated.quantity,
           lowThreshold: updated.lowThreshold,
           costPerUnit: updated.costPerUnit,
+          ...(costPerUnitMicros === null
+            ? {}
+            : { costPerUnitMicros: costPerUnitMicros.toString() }),
         },
       });
 
