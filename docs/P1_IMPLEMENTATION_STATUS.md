@@ -20,21 +20,20 @@ The existing-data job generated a legacy Prisma Client from the legacy schema be
 
 ## Representation and rollout decision
 
-The final Prisma application model remains the `NUMERIC`/`Decimal` design recorded in [`P1_DATA_INTEGRITY_PLAN.md`](./P1_DATA_INTEGRITY_PLAN.md). The scaled integer columns in the first migration are temporary **expand-phase sentinels** used to:
+The application will standardize on scaled integers because its authoritative order and payment calculations already use integer minor units. This avoids Prisma `Decimal` JSON serialization ambiguity and keeps database storage aligned with calculation inputs.
 
-- prove every legacy float can be converted deterministically;
-- keep old application versions deployable while migration work continues;
-- reject negative, non-finite, implausibly large, or divergent values at the database boundary;
-- provide an independent comparison target during the Decimal cutover.
+Reviewed scales:
 
-Current sentinel scales are:
+- currency amounts and wages: minor units, scale `100`;
+- tax rates and dynamic multipliers: micros, scale `1_000_000`;
+- percentage discounts: basis points, scale `100`;
+- ingredient unit costs: micros, scale `1_000_000`.
 
-- currency amounts and wages: `100`;
-- tax rates and dynamic multipliers: `1_000_000`;
-- percentage discounts: `100` at the current checkpoint;
-- ingredient unit cost: `1_000_000`.
+The rollout remains staged:
 
-The shadow columns are not exposed by Prisma Client and are not the final public/domain API. Application cutover will use Prisma `Decimal` fields with explicit numeric JSON serializers, after which the sentinels and legacy float storage can be removed in a rehearsed contract migration.
+1. **Expand:** exact columns are added, backfilled, constrained, and synchronized while legacy application versions remain deployable.
+2. **Application cutover:** exact fields become first-class Prisma fields; supported workflows read and write exact values while compatibility values remain available for older code and numeric API responses.
+3. **Contract:** once no runtime path depends on the legacy financial columns, synchronization triggers and legacy columns are removed through a rehearsed migration.
 
 ## P1-A01 — Exact financial storage
 
@@ -51,22 +50,22 @@ The shadow columns are not exposed by Prisma Client and are not the final public
 
 ### Phase 2: application cutover
 
-- [x] Add exact decimal-string/scaled-integer parsing and formatting primitives.
-- [ ] Define the reviewed Decimal precision and currency-scale contract.
-- [ ] Convert Prisma financial fields to `Decimal` through an additive/cutover migration.
-- [ ] Read authoritative prices and totals from Decimal fields.
-- [ ] Write Decimal fields directly in every supported transaction.
-- [ ] Preserve numeric public API contracts through explicit serializers.
-- [ ] Remove business calculations that depend on binary floating-point values.
-- [ ] Add Decimal round-trip, overflow, currency-scale, and serialization tests.
+- [x] Add exact decimal-string/scaled-integer parsing, formatting, and safe-number primitives.
+- [x] Define the current scale contract for currency, rates, percentages, and unit costs.
+- [ ] Make exact fields first-class Prisma Client fields while omitting them from unreviewed default response payloads.
+- [ ] Read authoritative prices and totals from exact fields in supported order, payment, cash, inventory-cost, wage, gift-card, and reporting workflows.
+- [ ] Write exact fields directly while maintaining compatibility during the transition.
+- [ ] Preserve numeric public API contracts through explicit safe serializers.
+- [ ] Remove business calculations that depend on persisted binary floating-point values.
+- [ ] Add exact-field API round-trip, overflow, currency-scale, and serialization tests.
 
 ### Phase 3: contract
 
 - [ ] Confirm no runtime reads or writes depend on legacy financial `Float` columns.
 - [ ] Rehearse the contract migration against a protected production-like copy.
-- [ ] Remove synchronization triggers and temporary sentinel columns.
+- [ ] Remove synchronization triggers.
 - [ ] Remove or rename legacy columns without data loss.
-- [ ] Make final exact fields the only first-class Prisma Client fields.
+- [ ] Make exact fields the only authoritative first-class Prisma fields.
 - [ ] Update baseline and deployment documentation.
 
 ## P1-A03 — Domain constraints and enums
@@ -96,7 +95,7 @@ The shadow columns are not exposed by Prisma Client and are not the final public
 - [x] Clean-database migrations, seeding, and exact-value verification pass.
 - [x] Existing-data adoption, record preservation, and exact-value verification pass.
 - [x] P0 security and restaurant integration suites remain green.
-- [ ] Decimal application cutover and numeric JSON compatibility pass.
+- [ ] Exact-field application cutover and numeric JSON compatibility pass.
 - [ ] Protected deployment-copy rehearsal and contract-migration rollback pass.
 
 ## Change log
@@ -104,4 +103,4 @@ The shadow columns are not exposed by Prisma Client and are not the final public
 | Date | Change | Validation |
 | --- | --- | --- |
 | 2026-07-31 | Created the stacked P1 data-integrity branch and staged migration plan. | Branch confirmed identical to the validated P0 head before P1 changes. |
-| 2026-07-31 | Added PostgreSQL enums, migration preflight, timestamp corrections, exact-value sentinels, synchronization triggers, financial constraints, verification tooling, and executed database tests. | Validation #433 and Integration #263 passed on `6389f94`. |
+| 2026-07-31 | Added PostgreSQL enums, migration preflight, timestamp corrections, exact-value expansion columns, synchronization triggers, financial constraints, verification tooling, and database tests. | Validation #433 and Integration #263 passed on `6389f94`. |
