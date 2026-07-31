@@ -49,16 +49,16 @@ describe("payment reversal source inventory", () => {
   });
 
   test("maps the reversal relationship in Prisma to prevent migration drift", () => {
-    for (const marker of [
-      'parentEventId    String?',
-      '@relation("PaymentEventReversals"',
-      'reversals        PaymentEvent[]',
-      'reasonCode       String',
-      'reason           String?',
-      'map: "PaymentEvent_parent_createdAt_idx"',
-      'map: "PaymentEvent_order_status_createdAt_idx"',
+    for (const pattern of [
+      /\bparentEventId\s+String\?\b/,
+      /\bparentEvent\s+PaymentEvent\?\s+@relation\("PaymentEventReversals"/,
+      /\breversals\s+PaymentEvent\[\]\s+@relation\("PaymentEventReversals"\)/,
+      /\breasonCode\s+String\s+@default\(""\)/,
+      /\breason\s+String\?/,
+      /@@index\(\[parentEventId, createdAt\(sort: Desc\)\], map: "PaymentEvent_parent_createdAt_idx"\)/,
+      /@@index\(\[orderId, status, createdAt\(sort: Desc\)\], map: "PaymentEvent_order_status_createdAt_idx"\)/,
     ]) {
-      expect(schema).toContain(marker);
+      expect(schema).toMatch(pattern);
     }
   });
 
