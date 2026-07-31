@@ -1,0 +1,404 @@
+name: Apply timekeeping correctness hardening
+
+on:
+  push:
+    branches:
+      - agent/p1-employee-timekeeping
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-timekeeping-correctness
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    if: ${{ github.event.head_commit.message != 'fix: harden timekeeping replay and summaries' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-employee-timekeeping
+          fetch-depth: 0
+
+      - name: Bind replay payloads and aggregate exact raw values
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/lib/timekeeping/timekeeping.ts')
+          text = path.read_text()
+
+          clock_function = text.index('export async function clockEmployee(')
+          start = text.index('  const key = boundedText(input.idempotencyKey, 191);', clock_function)
+          end = text.index('  const employee = await lockedEmployee', start)
+          replacement = r'''  const key = boundedText(input.idempotencyKey, 191);
+  if (!key) {
+    throw new TimekeepingError(
+      "An idempotency key is required",
+      "IDEMPOTENCY_KEY_REQUIRED",
+      400
+    );
+  }
+  const submittedOccurredAt =
+    input.occurredAt === null ||
+    input.occurredAt === undefined ||
+    input.occurredAt === ""
+      ? null
+      : input.occurredAt instanceof Date
+        ? input.occurredAt
+        : new Date(input.occurredAt);
+  if (submittedOccurredAt && Number.isNaN(submittedOccurredAt.getTime())) {
+    throw new TimekeepingError(
+      "A valid clock time is required",
+      "INVALID_CLOCK_TIME",
+      400
+    );
+  }
+  const reasonCode = boundedText(input.reasonCode, 80);
+  const reason = boundedText(input.reason, 2000) || null;
+  const actorName = boundedText(input.actor.name, 160);
+  const actorRole = boundedText(input.actor.role, 80);
+
+  await lockKey(client, "employee-time-event", key);
+  const replay = await eventByKey(client, key);
+  if (replay) {
+    if (
+      replay.employeeId !== input.employeeId ||
+      replay.eventType !== input.action ||
+      replay.source !== input.source ||
+      replay.actorId !== input.actor.id ||
+      replay.actorName !== actorName ||
+      replay.actorRole !== actorRole ||
+      replay.reasonCode !== reasonCode ||
+      (replay.reason ?? null) !== reason ||
+      (submittedOccurredAt !== null &&
+        replay.occurredAt.getTime() !== submittedOccurredAt.getTime())
+    ) {
+      throw new TimekeepingError(
+        "The timekeeping idempotency key was used for another event payload",
+        "TIME_EVENT_IDEMPOTENCY_CONFLICT",
+        409
+      );
+    }
+    const status = await readClockStatusForEmployee(client, input.employeeId);
+    if (!status) {
+      throw new TimekeepingError(
+        "Unable to load replayed employee status",
+        "TIMEKEEPING_STATUS_MISSING",
+        500
+      );
+    }
+    return { event: replay, employee: status, replayed: true };
+  }
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          old = '''    reasonCode: input.reasonCode,
+    reason: input.reason,'''
+          new = '''    reasonCode,
+    reason,'''
+          clock_end = text.index('export async function readClockStatuses', clock_function)
+          clock_segment = text[clock_function:clock_end]
+          if old not in clock_segment:
+            raise SystemExit('Clock-event normalization marker was not found')
+          clock_segment = clock_segment.replace(old, new, 1)
+          text = text[:clock_function] + clock_segment + text[clock_end:]
+
+          old = '''    WHERE shift."operationalDate" BETWEEN ${options.from}::date AND ${options.to}::date
+      ${employeeFilter}'''
+          new = '''    WHERE shift."operationalDate" BETWEEN ${options.from}::date AND ${options.to}::date
+      AND shift."status" = 'closed'
+      ${employeeFilter}'''
+          if old not in text:
+            raise SystemExit('Closed-shift query marker was not found')
+          text = text.replace(old, new, 1)
+
+          summary_start = text.index('  const shifts = rows.map(serializeTimesheet);', text.index('export async function readTimesheet('))
+          summary_end = text.index('\n}\n\nasync function adjustmentByKey', summary_start)
+          summary = r'''  const shifts = rows.map(serializeTimesheet);
+  const totalPaidSeconds = rows.reduce(
+    (total, shift) => total + shift.effectivePaidSeconds,
+    0
+  );
+  const totalBreakSeconds = rows.reduce(
+    (total, shift) => total + shift.breakSeconds,
+    0
+  );
+  const totalLaborCostMinor = rows.reduce(
+    (total, shift) => total + shift.effectiveLaborCostMinor,
+    0n
+  );
+  return {
+    shifts,
+    summary: {
+      shiftCount: rows.length,
+      paidHours: secondsToHours(totalPaidSeconds),
+      breakHours: secondsToHours(totalBreakSeconds),
+      laborCost: minorToNumber(totalLaborCostMinor),
+      adjustmentCount: rows.reduce(
+        (total, shift) => total + shift.adjustmentCount,
+        0
+      ),
+    },
+  };'''
+          text = text[:summary_start] + summary + text[summary_end:]
+
+          adjustment_function = text.index('export async function addTimeAdjustment(')
+          start = text.index('  const key = boundedText(input.idempotencyKey, 191);', adjustment_function)
+          end = text.index('  const shifts = await client.$queryRaw<ShiftRow[]>', start)
+          replacement = r'''  const key = boundedText(input.idempotencyKey, 191);
+  if (!key) {
+    throw new TimekeepingError(
+      "An idempotency key is required",
+      "IDEMPOTENCY_KEY_REQUIRED",
+      400
+    );
+  }
+  if (!Number.isFinite(input.paidMinutesDelta)) {
+    throw new TimekeepingError(
+      "A valid paid-time adjustment is required",
+      "INVALID_TIME_ADJUSTMENT",
+      400
+    );
+  }
+  const paidSecondsDelta = Math.round(input.paidMinutesDelta * 60);
+  if (paidSecondsDelta === 0 || Math.abs(paidSecondsDelta) > 604_800) {
+    throw new TimekeepingError(
+      "Adjustment must be non-zero and no larger than 168 hours",
+      "INVALID_TIME_ADJUSTMENT",
+      400
+    );
+  }
+  const reasonCode = boundedText(input.reasonCode, 80);
+  const reason = boundedText(input.reason, 2000);
+  if (!reasonCode || reason.length < 3) {
+    throw new TimekeepingError(
+      "A reason code and explanation are required",
+      "TIME_ADJUSTMENT_REASON_REQUIRED",
+      400
+    );
+  }
+  const actorName = boundedText(input.actor.name, 160);
+  const actorRole = boundedText(input.actor.role, 80);
+
+  await lockKey(client, "employee-time-adjustment", key);
+  const replay = await adjustmentByKey(client, key);
+  if (replay) {
+    if (
+      replay.shiftId !== input.shiftId ||
+      replay.paidSecondsDelta !== paidSecondsDelta ||
+      replay.reasonCode !== reasonCode ||
+      replay.reason !== reason ||
+      replay.actorId !== input.actor.id ||
+      replay.actorName !== actorName ||
+      replay.actorRole !== actorRole
+    ) {
+      throw new TimekeepingError(
+        "The adjustment idempotency key was used for another payload",
+        "TIME_ADJUSTMENT_IDEMPOTENCY_CONFLICT",
+        409
+      );
+    }
+    return { adjustment: serializeAdjustment(replay), replayed: true };
+  }
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          adjustment_end = text.index('function databaseErrorDetails', adjustment_function)
+          segment = text[adjustment_function:adjustment_end]
+          old = '''      ${boundedText(input.actor.name, 160)},
+      ${boundedText(input.actor.role, 80)}'''
+          new = '''      ${actorName},
+      ${actorRole}'''
+          if old not in segment:
+            raise SystemExit('Adjustment actor normalization marker was not found')
+          segment = segment.replace(old, new, 1)
+          text = text[:adjustment_function] + segment + text[adjustment_end:]
+          path.write_text(text)
+
+          test_path = Path('tests/security/employee-timekeeping-source-inventory.test.ts')
+          tests = test_path.read_text()
+          old = '''      "addTimeAdjustment",
+      'INSERT INTO "EmployeeTimeAdjustment"','''
+          new = '''      "addTimeAdjustment",
+      "replay.source !== input.source",
+      "replay.paidSecondsDelta !== paidSecondsDelta",
+      'AND shift."status" = \'closed\'',
+      "totalPaidSeconds",
+      "totalLaborCostMinor",
+      'INSERT INTO "EmployeeTimeAdjustment"','''
+          if old not in tests:
+            raise SystemExit('Timekeeping source-inventory marker was not found')
+          test_path.write_text(tests.replace(old, new, 1))
+
+          lockout_path = Path('tests/integration/p0-login-lockout.ts')
+          lockout = lockout_path.read_text()
+          lockout = lockout.replace(
+            '''        action: "employee.clock.in",
+        entityType: "Employee",
+        entityId: targetId,
+        createdAt: { gte: testStartedAt },''',
+            '''        action: "employee.time.clock_in",
+        entityType: "EmployeeTimeEvent",
+        metadata: { path: ["employeeId"], equals: targetId },
+        createdAt: { gte: testStartedAt },''',
+            1,
+          )
+          lockout = lockout.replace(
+            '''    assert.equal((clockInAudit.metadata as any)?.via, "pin");''',
+            '''    assert.equal((clockInAudit.metadata as any)?.source, "kiosk");''',
+            1,
+          )
+          lockout = lockout.replace(
+            '''        action: "employee.clock.out",
+        entityType: "Employee",
+        entityId: targetId,
+        createdAt: { gte: testStartedAt },''',
+            '''        action: "employee.time.clock_out",
+        entityType: "EmployeeTimeEvent",
+        metadata: { path: ["employeeId"], equals: targetId },
+        createdAt: { gte: testStartedAt },''',
+            1,
+          )
+          lockout = lockout.replace(
+            '''    assert.equal((clockOutAudit.metadata as any)?.via, "pin");''',
+            '''    assert.equal((clockOutAudit.metadata as any)?.source, "kiosk");''',
+            1,
+          )
+          lockout_path.write_text(lockout)
+
+          integration_path = Path('tests/integration/p1-employee-timekeeping.ts')
+          integration = integration_path.read_text()
+          marker = '''  assertStatus(clockInReplay.response, 200, "Clock-in replay");
+  assert.equal(clockInReplay.data.replayed, true);
+'''
+          insertion = marker + '''
+  const clockInConflict = await api<any>("/api/employees/clock", {
+    method: "POST",
+    headers: { cookie: adminCookie, "Idempotency-Key": clockInKey },
+    body: JSON.stringify({
+      employeeId: employee.id,
+      action: "clock_in",
+      occurredAt: clockInAt.toISOString(),
+      reasonCode: "integration_test",
+      reason: "A different replay payload must be rejected",
+    }),
+  });
+  assertStatus(clockInConflict.response, 409, "Clock-in payload conflict");
+  assert.equal(clockInConflict.data.code, "TIME_EVENT_IDEMPOTENCY_CONFLICT");
+'''
+          if marker not in integration:
+            raise SystemExit('Clock replay integration marker was not found')
+          integration = integration.replace(marker, insertion, 1)
+
+          marker = '''  assertStatus(adjustmentReplay.response, 200, "Adjustment replay");
+  assert.equal(adjustmentReplay.data.replayed, true);
+'''
+          insertion = marker + '''
+  const adjustmentConflict = await api<any>("/api/timekeeping", {
+    method: "POST",
+    headers: {
+      cookie: adminCookie,
+      "Idempotency-Key": adjustmentKey,
+    },
+    body: JSON.stringify({
+      shiftId: shiftRows[0].id,
+      paidMinutesDelta: 45,
+      reasonCode: "missed_work",
+      reason: "A different adjustment payload must be rejected",
+    }),
+  });
+  assertStatus(adjustmentConflict.response, 409, "Adjustment payload conflict");
+  assert.equal(
+    adjustmentConflict.data.code,
+    "TIME_ADJUSTMENT_IDEMPOTENCY_CONFLICT"
+  );
+'''
+          if marker not in integration:
+            raise SystemExit('Adjustment replay integration marker was not found')
+          integration = integration.replace(marker, insertion, 1)
+
+          marker = '''  assert.equal(corrected.data.shifts[0].adjustmentCount, 1);
+
+  const excessiveNegative = await api<any>("/api/timekeeping", {'''
+          insertion = '''  assert.equal(corrected.data.shifts[0].adjustmentCount, 1);
+
+  const roundingEmployee = await createEmployee(
+    adminCookie,
+    `P1 Raw Summary ${suffix}`,
+    60
+  );
+  const firstShortStart = new Date(Date.now() - 10 * 60_000);
+  const firstShortEnd = new Date(firstShortStart.getTime() + 61_000);
+  const secondShortStart = new Date(firstShortEnd.getTime() + 60_000);
+  const secondShortEnd = new Date(secondShortStart.getTime() + 61_000);
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_in", firstShortStart)).response,
+    201,
+    "First short shift clock in"
+  );
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_out", firstShortEnd)).response,
+    201,
+    "First short shift clock out"
+  );
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_in", secondShortStart)).response,
+    201,
+    "Second short shift clock in"
+  );
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_out", secondShortEnd)).response,
+    201,
+    "Second short shift clock out"
+  );
+  const rawSummary = await api<any>(
+    `/api/timekeeping?from=${from}&to=${to}&employeeId=${encodeURIComponent(roundingEmployee.id)}`,
+    { headers: { cookie: adminCookie } }
+  );
+  assertStatus(rawSummary.response, 200, "Raw-second timesheet summary");
+  assert.equal(rawSummary.data.shifts.length, 2);
+  assert.deepEqual(
+    rawSummary.data.shifts.map((shift: any) => shift.paidHours),
+    [0.02, 0.02]
+  );
+  assert.equal(rawSummary.data.summary.paidHours, 0.03);
+  assert.equal(rawSummary.data.summary.laborCost, 2.04);
+
+  const excessiveNegative = await api<any>("/api/timekeeping", {'''
+          if marker not in integration:
+            raise SystemExit('Raw summary integration marker was not found')
+          integration_path.write_text(integration.replace(marker, insertion, 1))
+
+          design_path = Path('docs/P1_EMPLOYEE_TIMEKEEPING.md')
+          design = design_path.read_text()
+          marker = '''Receipt idempotency keys make retries safe.''' if False else '''Clock and break event idempotency keys make retries safe.'''
+          if marker in design:
+            design = design.replace(
+              marker,
+              marker + ' Replays must match the original employee, action, source, explicit timestamp, actor, reason code, and explanation.',
+              1,
+            )
+          elif 'idempotency' not in design.lower():
+            design += '''\n\n## Replay and reporting precision\n\nClock and adjustment idempotency keys bind to the full normalized request payload. Historical timesheet summaries include closed shifts only and aggregate raw seconds plus exact minor-unit labor costs before converting once for display.\n'''
+          else:
+            design += '''\n\n## Replay and reporting precision\n\nReplays must match the original normalized event or adjustment payload. Historical timesheet summaries include closed shifts only and aggregate raw seconds plus exact minor-unit labor costs before converting once for display.\n'''
+          design_path.write_text(design)
+          PY
+
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/lib/timekeeping/timekeeping.ts \
+            tests/security/employee-timekeeping-source-inventory.test.ts \
+            tests/integration/p0-login-lockout.ts \
+            tests/integration/p1-employee-timekeeping.ts \
+            docs/P1_EMPLOYEE_TIMEKEEPING.md
+          git commit -m "fix: harden timekeeping replay and summaries"
+          git push origin HEAD:agent/p1-employee-timekeeping
