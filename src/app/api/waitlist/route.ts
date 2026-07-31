@@ -27,37 +27,6 @@ const waitlistCreateSchema = z
 
 const WAITLIST_WINDOW_MS = 60_000;
 const MAX_JOINS_PER_WINDOW = 10;
-type WaitlistBucket = { count: number; resetAt: number };
-const globalForWaitlistLimit = globalThis as unknown as {
-  restaurantWaitlistRateLimits?: Map<string, WaitlistBucket>;
-};
-const waitlistRateLimits =
-  globalForWaitlistLimit.restaurantWaitlistRateLimits ??
-  new Map<string, WaitlistBucket>();
-if (!globalForWaitlistLimit.restaurantWaitlistRateLimits) {
-  globalForWaitlistLimit.restaurantWaitlistRateLimits = waitlistRateLimits;
-}
-
-function clientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeWaitlistLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = waitlistRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + WAITLIST_WINDOW_MS };
-  bucket.count += 1;
-  waitlistRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_JOINS_PER_WINDOW) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -105,10 +74,7 @@ export async function GET(req: NextRequest) {
         updatedAt: true,
       },
     });
-    if (
-      !entry ||
-      !verifyCustomerAccessToken("waitlist", entry.id, token)
-    ) {
+    if (!entry || !verifyCustomerAccessToken("waitlist", entry.id, token)) {
       return NextResponse.json(
         { entry: null, position: 0, waitingCount },
         { status: 404, headers: { "Cache-Control": "no-store" } }
@@ -131,7 +97,10 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
       return NextResponse.json(
-        { error: "Waitlist access is not configured", code: "CUSTOMER_ACCESS_NOT_CONFIGURED" },
+        {
+          error: "Waitlist access is not configured",
+          code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
+        },
         { status: 503 }
       );
     }
@@ -156,13 +125,19 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[waitlist] Shared rate limiter failed", error);
     return NextResponse.json(
-      { error: "The waitlist is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      {
+        error: "The waitlist is temporarily unavailable",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
   if (!waitlistLimit.allowed) {
     return NextResponse.json(
-      { error: "Too many waitlist attempts", code: "WAITLIST_RATE_LIMITED" },
+      {
+        error: "Too many waitlist attempts",
+        code: "WAITLIST_RATE_LIMITED",
+      },
       { status: 429, headers: rateLimitHeaders(waitlistLimit) }
     );
   }
@@ -189,7 +164,10 @@ export async function POST(req: NextRequest) {
     });
     if (existing) {
       return NextResponse.json(
-        { error: "This phone number is already on the active waitlist", code: "DUPLICATE_WAITLIST_ENTRY" },
+        {
+          error: "This phone number is already on the active waitlist",
+          code: "DUPLICATE_WAITLIST_ENTRY",
+        },
         { status: 409 }
       );
     }
@@ -245,7 +223,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
       return NextResponse.json(
-        { error: "Waitlist access is not configured", code: "CUSTOMER_ACCESS_NOT_CONFIGURED" },
+        {
+          error: "Waitlist access is not configured",
+          code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
+        },
         { status: 503 }
       );
     }
