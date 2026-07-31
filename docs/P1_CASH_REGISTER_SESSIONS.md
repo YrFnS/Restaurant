@@ -11,6 +11,8 @@ The previous cash drawer was a restaurant-wide list of movements. A sale, payout
 
 ## Data model
 
+The SQL migration and `schema.prisma` both describe the register ledger. This prevents future Prisma migrations from treating the register tables or ledger-link columns as unmanaged drift. Exact register values are first-class Prisma `BigInt` fields and are globally omitted from unreviewed shared-client results, matching the existing exact-money JSON policy.
+
 ### CashRegister
 
 A register represents one configured cash terminal or device assignment.
@@ -99,7 +101,7 @@ X-Register-Id
 X-Register-Device-Id
 ```
 
-The register ID and configured device ID must match. A copied register ID is insufficient on a different device identity.
+The register ID and configured device ID must match. The device identifier is an operational terminal assignment, not a substitute for authenticated staff authorization.
 
 Opening and closing also require a valid `Idempotency-Key` header. Repeating an accepted key returns the original result instead of creating another session or close record.
 
@@ -107,11 +109,11 @@ Opening and closing also require a valid `Idempotency-Key` header. Repeating an 
 
 ### `GET /api/registers`
 
-Lists configured registers and their current open session for authorized cash staff.
+Lists configured operational registers and their current open session for authorized cash staff. The internal legacy-compatibility register is deliberately excluded.
 
 ### `POST /api/registers`
 
-Creates a register. Manager-level authorization is required.
+Creates a register. Manager-level authorization is required. The reserved legacy-compatibility code cannot be provisioned manually.
 
 ### `GET /api/registers/:id/session`
 
@@ -165,7 +167,7 @@ device: legacy-web-pos
 opening float: 0
 ```
 
-The compatibility session is created only when a legacy headerless checkout first needs it and emits a `cash.session.auto-open` audit event. Manual cash movements do **not** receive this fallback; they require an explicitly opened register.
+The compatibility register is reserved and hidden from the normal register catalog. Its session is created only when a legacy headerless checkout first needs it and emits a `cash.session.auto-open` audit event. Manual cash movements do **not** receive this fallback; they require an explicitly opened register.
 
 After deployed terminals have been assigned and any external callers have migrated to the register headers, the compatibility fallback should be removed in a separate reviewed change.
 
@@ -174,8 +176,10 @@ After deployed terminals have been assigned and any external callers have migrat
 This branch is complete only when all of the following are green:
 
 - Prisma schema validation and generation;
+- Prisma mappings for all register tables, exact fields, relations, and ledger-link indexes;
+- global omission of register `BigInt` values from unreviewed JSON results;
 - strict TypeScript;
-- source inventories for tables, triggers, row locks, authorization, ledger linkage, POS assignment, and checkout enforcement;
+- source inventories for tables, triggers, schema mapping, row locks, authorization, legacy-register isolation, ledger linkage, POS assignment, and checkout enforcement;
 - ESLint and production build;
 - migration deployment on an empty PostgreSQL database;
 - representative legacy-database adoption;
