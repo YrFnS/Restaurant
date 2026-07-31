@@ -8,7 +8,6 @@ import {
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 import {
   CashRegisterError,
-  exactMinorToNumber,
   linkCashEntryToSession,
   lockOpenRegisterSession,
   parseCurrencyInputToMinor,
@@ -20,6 +19,7 @@ import {
   serializeSession,
 } from "@/lib/cash/register-session";
 import {
+  exactMinorToNumber,
   readExactCashBalanceMinor,
   readExactCashEntryAmounts,
 } from "@/lib/money/exact-store";
