@@ -63,7 +63,13 @@ const orderInclude = {
   table: true,
 } as const;
 
-type OrderWithRelations = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
+async function findExistingIdempotentOrder(orderId: string) {
+  return db.order.findUnique({ where: { id: orderId }, include: orderInclude });
+}
+
+type OrderWithRelations = NonNullable<
+  Awaited<ReturnType<typeof findExistingIdempotentOrder>>
+>;
 
 function publicOrderResponse(order: OrderWithRelations, replayed = false) {
   return {
@@ -71,10 +77,6 @@ function publicOrderResponse(order: OrderWithRelations, replayed = false) {
     accessToken: createOrderAccessToken(order.id),
     replayed,
   };
-}
-
-async function findExistingIdempotentOrder(orderId: string) {
-  return db.order.findUnique({ where: { id: orderId }, include: orderInclude });
 }
 
 export async function GET(req: NextRequest) {
