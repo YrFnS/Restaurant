@@ -13,6 +13,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  patch-stock-lock:
+    name: Apply stock advisory-lock compatibility fix
+    if: ${{ github.event.pull_request.head.ref == 'agent/p1-stock-ledger-recipes' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out pull-request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Patch unsupported PostgreSQL void result
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/lib/inventory/stock-ledger.ts')
+          text = path.read_text()
+          old = '''  await client.$queryRaw(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`${namespace}:${key}`}, 0)\n    )\n  `);'''
+          new = '''  await client.$queryRaw<Array<{ locked: string }>>(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`${namespace}:${key}`}, 0)\n    )::text AS "locked"\n  `);'''
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+          PY
+
+          rm -f .github/workflows/agent-stock-lock-fix.yml
+          if git diff --quiet; then
+            echo "Stock advisory-lock fix is already applied."
+            exit 0
+          fi
+
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/inventory/stock-ledger.ts .github/workflows/agent-stock-lock-fix.yml || true
+          git commit -m "fix: deserialize stock advisory locks safely"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
   validate:
     name: Typecheck, tests, lint, and build
     runs-on: ubuntu-latest
