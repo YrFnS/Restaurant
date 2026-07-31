@@ -83,7 +83,7 @@ jobs:
           NODE_ENV: production
         run: bun run build
 
-      - name: Run database-backed P0 smoke tests
+      - name: Run database-backed P0 and P1 smoke tests
         shell: bash
         run: |
           set -euo pipefail
@@ -149,6 +149,7 @@ jobs:
           fi
 
           P0_BASE_URL=http://127.0.0.1:3000 bun run test:integration
+          bun tests/integration/p1-domain-integrity.ts
           bun run money:check
 
   existing-data-rehearsal:
@@ -231,4 +232,5 @@ jobs:
           bun run auth:check-pins
           bun tests/integration/p0-existing-data-rehearsal.ts \
             verify /tmp/p0-existing-data.json
+          bun tests/integration/p1-domain-integrity.ts
           bun run money:check
