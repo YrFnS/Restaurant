@@ -1,49 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const PROMO_PATTERN = /^[A-Z0-9][A-Z0-9_-]{1,39}$/;
 const PROMO_WINDOW_MS = 60_000;
 const MAX_PROMO_CHECKS_PER_WINDOW = 60;
-type PromoBucket = { count: number; resetAt: number };
-const globalForPromoLimit = globalThis as unknown as {
-  restaurantPromoRateLimits?: Map<string, PromoBucket>;
-};
-const promoRateLimits =
-  globalForPromoLimit.restaurantPromoRateLimits ?? new Map<string, PromoBucket>();
-if (!globalForPromoLimit.restaurantPromoRateLimits) {
-  globalForPromoLimit.restaurantPromoRateLimits = promoRateLimits;
-}
-
-function clientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = promoRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + PROMO_WINDOW_MS };
-  bucket.count += 1;
-  promoRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_PROMO_CHECKS_PER_WINDOW) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
 
 export async function GET(req: NextRequest) {
-  const retryAfter = consumeLimit(clientKey(req));
-  if (retryAfter) {
+  let promoLimit;
+  try {
+    promoLimit = await consumeRateLimit({
+      scope: "promo-check",
+      identifier: getRequestSource(req),
+      limit: MAX_PROMO_CHECKS_PER_WINDOW,
+      windowMs: PROMO_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[promo] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { valid: false, code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  if (!promoLimit.allowed) {
     return NextResponse.json(
       { valid: false, code: "PROMO_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(promoLimit) }
     );
   }
 
@@ -51,7 +38,7 @@ export async function GET(req: NextRequest) {
   if (!code || !PROMO_PATTERN.test(code)) {
     return NextResponse.json(
       { valid: false },
-      { headers: { "Cache-Control": "no-store" } }
+      { headers: rateLimitHeaders(promoLimit) }
     );
   }
 
@@ -84,13 +71,13 @@ export async function GET(req: NextRequest) {
             code: promo!.code,
           }
         : { valid: false },
-      { headers: { "Cache-Control": "no-store" } }
+      { headers: rateLimitHeaders(promoLimit) }
     );
   } catch (error) {
     console.error("[promo] Promo lookup failed", error);
     return NextResponse.json(
       { valid: false, code: "PROMO_LOOKUP_FAILED" },
-      { status: 500, headers: { "Cache-Control": "no-store" } }
+      { status: 500, headers: rateLimitHeaders(promoLimit) }
     );
   }
 }
