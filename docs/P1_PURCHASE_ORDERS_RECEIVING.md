@@ -138,7 +138,7 @@ The slice is complete only when all of the following pass:
 
 P1 Stacked Validation **#46** passed on functional head `432d02814528db9097eee3595658b6953d30f669`. It covered Prisma validation and generation, strict TypeScript, source-policy tests, ESLint, production build, clean PostgreSQL migration deployment, exact seeded data, the full database-backed regression chain, concurrent receiving and correction behavior, and representative legacy-data adoption.
 
-The final documentation and workflow-cleanup head must continue to pass the same three permanent validation jobs before this stacked pull request leaves draft status.
+The permanent branch no longer contains one-off patch workflows or validation-trigger files. Its clean final head must pass the same three permanent validation jobs before this stacked pull request leaves draft status.
 
 ## Explicitly deferred
 
