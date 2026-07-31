@@ -9,6 +9,9 @@ function source(path: string): string {
 const migration = source(
   "prisma/migrations/20260731235940_add_stock_ledger_recipes/migration.sql"
 );
+const negativePolicyMigration = source(
+  "prisma/migrations/20260731235941_allow_negative_stock_policy/migration.sql"
+);
 const service = source("src/lib/inventory/stock-ledger-impl.ts");
 const adapter = source("src/lib/inventory/stock-ledger.ts");
 const inventoryRoute = source("src/app/api/inventory/route.ts");
@@ -39,6 +42,18 @@ describe("stock ledger and recipe source inventory", () => {
       'StockMovement_ingredient_createdAt_idx',
     ]) {
       expect(migration).toContain(marker);
+    }
+  });
+
+  test("reconciles the legacy stock bound with explicit negative-stock policy", () => {
+    for (const marker of [
+      'DROP CONSTRAINT "Ingredient_stock_bounds"',
+      'ADD CONSTRAINT "Ingredient_stock_bounds"',
+      '"allowNegativeStock" OR "quantity" >= 0',
+      '"quantity" BETWEEN -1000000000000000 AND 1000000000000000',
+      'VALIDATE CONSTRAINT "Ingredient_stock_bounds"',
+    ]) {
+      expect(negativePolicyMigration).toContain(marker);
     }
   });
 
