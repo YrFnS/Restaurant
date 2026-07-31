@@ -1,0 +1,65 @@
+name: Repair timekeeping wiring anchors
+
+on:
+  pull_request:
+    branches:
+      - "agent/**"
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ github.event.pull_request.head.ref == 'agent/p1-employee-timekeeping' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Align enum-test anchors with the current stacked base
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/agent-timekeeping-wiring.yml')
+          if not path.exists():
+              raise SystemExit(0)
+          text = path.read_text()
+          replacements = [
+              (
+                  "'  PurchaseReceiptStatus: [\"posted\", \"reversed\"],\\n};',",
+                  "'  PaymentEventStatus: [\"pending\", \"succeeded\", \"failed\", \"voided\"],\\n};',",
+              ),
+              (
+                  "'''  PurchaseReceiptStatus: [\"posted\", \"reversed\"],\\n  TimeEventType:",
+                  "'''  PaymentEventStatus: [\"pending\", \"succeeded\", \"failed\", \"voided\"],\\n  TimeEventType:",
+              ),
+              (
+                  "'  assert.equal(PurchaseReceiptStatus.reversed, \"reversed\");\\n}',",
+                  "'  assert.equal(PaymentEventStatus.failed, \"failed\");\\n}',",
+              ),
+              (
+                  "'''  assert.equal(PurchaseReceiptStatus.reversed, \"reversed\");\\n  assert.equal(TimeEventType.break_start, \"break_start\");",
+                  "'''  assert.equal(PaymentEventStatus.failed, \"failed\");\\n  assert.equal(TimeEventType.break_start, \"break_start\");",
+              ),
+          ]
+          changed = False
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+                  changed = True
+          if not changed:
+              raise SystemExit('Expected timekeeping wiring anchors were not found')
+          path.write_text(text)
+          PY
+
+          rm -f .github/workflows/fix-timekeeping-wiring-script.yml
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: align timekeeping wiring anchors"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
