@@ -1,0 +1,100 @@
+name: Finalize timekeeping branch
+
+on:
+  push:
+    branches:
+      - agent/p1-employee-timekeeping
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out timekeeping branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/p1-employee-timekeeping
+          fetch-depth: 0
+
+      - name: Reconcile roadmap and remove one-time wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/REMEDIATION_PLAN.md")
+          text = path.read_text()
+
+          text = text.replace(
+              '> **Tracking branch:** `agent/p1-purchase-orders-receiving`  ',
+              '> **Tracking branch:** `agent/p1-employee-timekeeping`  ',
+              1,
+          )
+
+          purchase_doc = '- [`P1_PURCHASE_ORDERS_RECEIVING.md`](./P1_PURCHASE_ORDERS_RECEIVING.md)\n'
+          time_doc = '- [`P1_EMPLOYEE_TIMEKEEPING.md`](./P1_EMPLOYEE_TIMEKEEPING.md)\n'
+          if time_doc not in text:
+              if purchase_doc not in text:
+                  raise SystemExit("Purchase-order document marker is missing")
+              text = text.replace(purchase_doc, purchase_doc + time_doc, 1)
+
+          cash_row = '| P1-B01 | Cash-register sessions and reconciliation | Completed and validated |\n'
+          time_row = '| P1-B02 | Immutable employee timekeeping | In progress on `agent/p1-employee-timekeeping` |\n'
+          if time_row not in text:
+              if cash_row not in text:
+                  raise SystemExit("Cash-register milestone marker is missing")
+              text = text.replace(cash_row, cash_row + time_row, 1)
+
+          purchase_branch = '                    └── agent/p1-purchase-orders-receiving\n'
+          time_branch = '                        └── agent/p1-employee-timekeeping\n'
+          if time_branch not in text:
+              if purchase_branch not in text:
+                  raise SystemExit("Purchase-order branch marker is missing")
+              text = text.replace(
+                  purchase_branch,
+                  purchase_branch + time_branch,
+                  1,
+              )
+
+          old_section = '''## P1-B02 Employee timekeeping
+
+- [ ] Add immutable clock, break, and shift entries.
+- [ ] Support audited manager corrections instead of rewriting historical state.
+- [ ] Calculate hours from events.
+- [ ] Define overnight-shift and restaurant-timezone behavior.'''
+          new_section = '''## P1-B02 Employee timekeeping
+
+Current implementation target: `agent/p1-employee-timekeeping`
+
+- [ ] Validate immutable clock-in, clock-out, break-start, and break-end events.
+- [ ] Validate one open shift and one open break per employee under concurrent requests.
+- [ ] Validate immutable closed-shift summaries and exact wage/labor-cost snapshots.
+- [ ] Validate audited append-only manager corrections instead of rewriting history.
+- [ ] Validate gross, break, paid-time, and adjusted labor-cost calculations.
+- [ ] Validate restaurant timezone and operational-day assignment for overnight shifts.
+- [ ] Validate protected kiosk and manager APIs, bilingual timesheet workflow, migrations, and existing-data adoption.'''
+          if new_section not in text:
+              if old_section not in text:
+                  raise SystemExit("Timekeeping roadmap section marker is missing")
+              text = text.replace(old_section, new_section, 1)
+
+          path.write_text(text)
+          PY
+
+          rm -f .github/workflows/agent-timekeeping-wiring.yml
+          rm -f .github/workflows/fix-timekeeping-wiring-script.yml
+          rm -f .github/workflows/timekeeping-pr-wiring.yml
+          rm -f .github/workflows/fix-timekeeping-validation.yml
+          rm -f .github/workflows/finalize-timekeeping-roadmap.yml
+          rm -f docs/.timekeeping-application-wiring-trigger
+          rm -f docs/.timekeeping-stacked-trigger
+          rm -f docs/.timekeeping-wiring-trigger
+
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: finalize timekeeping validation branch"
+          git push origin HEAD:agent/p1-employee-timekeeping
