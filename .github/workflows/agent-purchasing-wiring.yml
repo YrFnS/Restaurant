@@ -1,0 +1,502 @@
+name: Agent purchasing wiring
+
+on:
+  push:
+    branches:
+      - agent/p1-purchase-orders-receiving
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.event.head_commit.message != 'feat: wire purchasing workflow' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-purchase-orders-receiving
+          fetch-depth: 0
+
+      - name: Apply reviewed purchasing integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if new in text:
+                  return text
+              if old not in text:
+                  raise SystemExit(f"Expected {label} marker was not found")
+              return text.replace(old, new, 1)
+
+          # Migration trigger safety and case-insensitive supplier adoption.
+          path = Path("prisma/migrations/20260731235960_add_purchase_orders_receiving/migration.sql")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''  btrim(legacy."supplier"),\n  'Created while adopting legacy purchase-order supplier text',\n  'active'::"SupplierStatus",\n  MIN(legacy."createdAt"),\n  MAX(legacy."updatedAt")\nFROM "PurchaseOrder" AS legacy\nWHERE char_length(btrim(legacy."supplier")) > 0\nGROUP BY lower(btrim(legacy."supplier")), btrim(legacy."supplier")''',
+              '''  MIN(btrim(legacy."supplier")),\n  'Created while adopting legacy purchase-order supplier text',\n  'active'::"SupplierStatus",\n  MIN(legacy."createdAt"),\n  MAX(legacy."updatedAt")\nFROM "PurchaseOrder" AS legacy\nWHERE char_length(btrim(legacy."supplier")) > 0\nGROUP BY lower(btrim(legacy."supplier"))''',
+              "legacy supplier aggregation",
+          )
+          text = replace_once(
+              text,
+              '''BEGIN\n  target_order_id := CASE WHEN TG_OP = 'DELETE' THEN OLD."purchaseOrderId" ELSE NEW."purchaseOrderId" END;\n\n  SELECT COALESCE(SUM("lineTotalMinor"), 0)::bigint''',
+              '''BEGIN\n  IF TG_OP = 'DELETE' THEN\n    target_order_id := OLD."purchaseOrderId";\n  ELSE\n    target_order_id := NEW."purchaseOrderId";\n  END IF;\n\n  SELECT COALESCE(SUM("lineTotalMinor"), 0)::bigint''',
+              "purchase total trigger target",
+          )
+          text = replace_once(
+              text,
+              '''  RETURN COALESCE(NEW, OLD);\nEND\n$$;\n\nCREATE TRIGGER "PurchaseOrderLine_recalculate_total_insert"''',
+              '''  IF TG_OP = 'DELETE' THEN\n    RETURN OLD;\n  END IF;\n  RETURN NEW;\nEND\n$$;\n\nCREATE TRIGGER "PurchaseOrderLine_recalculate_total_insert"''',
+              "purchase total trigger return",
+          )
+          text = replace_once(
+              text,
+              '''DECLARE\n  parent_status "PurchaseOrderStatus";\n  internal_receipt BOOLEAN;\nBEGIN\n  internal_receipt := current_setting('app.purchase_receipt_write', true) = 'on';\n\n  SELECT "status" INTO parent_status\n  FROM "PurchaseOrder"\n  WHERE "id" = COALESCE(NEW."purchaseOrderId", OLD."purchaseOrderId")\n  FOR UPDATE;''',
+              '''DECLARE\n  parent_status "PurchaseOrderStatus";\n  internal_receipt BOOLEAN;\n  target_order_id TEXT;\nBEGIN\n  internal_receipt := current_setting('app.purchase_receipt_write', true) = 'on';\n  IF TG_OP = 'DELETE' THEN\n    target_order_id := OLD."purchaseOrderId";\n  ELSE\n    target_order_id := NEW."purchaseOrderId";\n  END IF;\n\n  SELECT "status" INTO parent_status\n  FROM "PurchaseOrder"\n  WHERE "id" = target_order_id\n  FOR UPDATE;''',
+              "purchase line trigger target",
+          )
+          text = replace_once(
+              text,
+              '''  RETURN COALESCE(NEW, OLD);\nEND\n$$;\n\nCREATE TRIGGER "PurchaseOrderLine_protect_insert"''',
+              '''  IF TG_OP = 'DELETE' THEN\n    RETURN OLD;\n  END IF;\n  RETURN NEW;\nEND\n$$;\n\nCREATE TRIGGER "PurchaseOrderLine_protect_insert"''',
+              "purchase line trigger return",
+          )
+          path.write_text(text)
+
+          # Prisma schema: first-class purchasing models and relations.
+          path = Path("prisma/schema.prisma")
+          schema = path.read_text()
+          schema = replace_once(
+              schema,
+              '''enum InventoryConsumptionState {\n  pending\n  consumed\n  untracked\n}\n''',
+              '''enum InventoryConsumptionState {\n  pending\n  consumed\n  untracked\n}\n\nenum SupplierStatus {\n  active\n  inactive\n}\n\nenum PurchaseOrderStatus {\n  draft\n  submitted\n  partially_received\n  received\n  cancelled\n}\n\nenum PurchaseReceiptStatus {\n  posted\n  reversed\n}\n''',
+              "purchasing enums",
+          )
+          schema = replace_once(
+              schema,
+              '''  stockMovements    StockMovement[]\n  createdAt         DateTime @default(now())''',
+              '''  stockMovements    StockMovement[]\n  purchaseOrderLines PurchaseOrderLine[]\n  purchaseReceiptLines PurchaseReceiptLine[]\n  createdAt         DateTime @default(now())''',
+              "ingredient purchasing relations",
+          )
+          schema = replace_once(
+              schema,
+              '''  reversals           StockMovement[]   @relation("StockMovementReversal")\n  reasonCode          String            @default("")''',
+              '''  reversals           StockMovement[]   @relation("StockMovementReversal")\n  purchaseReceiptLines PurchaseReceiptLine[] @relation("PurchaseReceiptLineStockMovement")\n  purchaseReceiptReversalLines PurchaseReceiptLine[] @relation("PurchaseReceiptLineReversalMovement")\n  reasonCode          String            @default("")''',
+              "stock movement purchasing relations",
+          )
+          old_model = '''model PurchaseOrder {\n  id             String   @id @default(cuid())\n  supplier       String\n  notes          String?\n  status         String   @default("draft")\n  totalCost      Float    @default(0)\n  totalCostMinor BigInt   @default(0)\n  createdAt      DateTime @default(now())\n  updatedAt      DateTime @default(now()) @updatedAt\n}\n'''
+          new_models = r'''model Supplier {
+  id           String         @id
+  code         String         @unique(map: "Supplier_code_key")
+  name         String
+  contactName  String         @default("")
+  phone        String         @default("")
+  email        String         @default("")
+  address      String         @default("")
+  paymentTerms String         @default("")
+  notes        String?
+  status       SupplierStatus @default(active)
+  purchaseOrders PurchaseOrder[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([status, name], map: "Supplier_status_name_idx")
+}
+
+model PurchaseOrder {
+  id                 String              @id @default(cuid())
+  orderNumber        String              @unique(map: "PurchaseOrder_orderNumber_key")
+  creationKey        String              @unique(map: "PurchaseOrder_creationKey_key")
+  supplierId         String
+  supplierRecord     Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierCode       String              @default("")
+  supplier           String
+  currency           String              @default("USD")
+  notes              String?
+  status             PurchaseOrderStatus @default(draft)
+  totalCost          Float               @default(0)
+  totalCostMinor     BigInt              @default(0)
+  expectedAt         DateTime?
+  createdById        String?
+  createdByName      String              @default("")
+  submittedById      String?
+  submittedByName    String?
+  submittedAt        DateTime?
+  cancelledById      String?
+  cancelledByName    String?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  legacyImported     Boolean             @default(false)
+  lines              PurchaseOrderLine[]
+  receipts           PurchaseReceipt[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([supplierId, status, createdAt(sort: Desc)], map: "PurchaseOrder_supplier_status_createdAt_idx")
+  @@index([status, expectedAt], map: "PurchaseOrder_status_expectedAt_idx")
+}
+
+model PurchaseOrderLine {
+  id                              String        @id
+  purchaseOrderId                 String
+  purchaseOrder                   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  lineNumber                      Int
+  ingredientId                    String
+  ingredient                      Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  ingredientName                  String
+  baseUnit                        String
+  purchaseUnit                    String
+  conversionToBaseMicros          BigInt
+  orderedPurchaseQuantityMicros   BigInt
+  orderedBaseQuantityMicros       BigInt
+  receivedBaseQuantityMicros      BigInt        @default(0)
+  purchaseUnitCostMicros          BigInt
+  baseUnitCostMicros              BigInt
+  lineTotalMinor                  BigInt
+  notes                           String?
+  receiptLines                    PurchaseReceiptLine[]
+  createdAt                       DateTime      @default(now())
+  updatedAt                       DateTime      @updatedAt
+
+  @@unique([purchaseOrderId, lineNumber], map: "PurchaseOrderLine_order_lineNumber_key")
+  @@index([ingredientId, createdAt(sort: Desc)], map: "PurchaseOrderLine_ingredient_createdAt_idx")
+  @@index([purchaseOrderId, receivedBaseQuantityMicros], map: "PurchaseOrderLine_order_received_idx")
+}
+
+model PurchaseReceipt {
+  id             String                @id
+  receiptNumber  String                @unique(map: "PurchaseReceipt_receiptNumber_key")
+  idempotencyKey String                @unique(map: "PurchaseReceipt_idempotencyKey_key")
+  reversalKey    String?
+  purchaseOrderId String
+  purchaseOrder  PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  status         PurchaseReceiptStatus @default(posted)
+  totalCostMinor BigInt                @default(0)
+  notes          String?
+  receivedById   String
+  receivedByName String
+  occurredAt     DateTime              @default(now())
+  reversedById   String?
+  reversedByName String?
+  reversedAt     DateTime?
+  reversalReason String?
+  lines          PurchaseReceiptLine[]
+  createdAt      DateTime              @default(now())
+
+  @@index([purchaseOrderId, createdAt(sort: Desc)], map: "PurchaseReceipt_order_createdAt_idx")
+  @@index([status, createdAt(sort: Desc)], map: "PurchaseReceipt_status_createdAt_idx")
+}
+
+model PurchaseReceiptLine {
+  id                         String            @id
+  receiptId                  String
+  receipt                    PurchaseReceipt   @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  purchaseOrderLineId        String
+  purchaseOrderLine          PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+  ingredientId               String
+  ingredient                 Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  ingredientName             String
+  submittedUnit              String
+  submittedQuantityMicros    BigInt
+  conversionToBaseMicros     BigInt
+  baseQuantityMicros         BigInt
+  purchaseUnitCostMicros     BigInt
+  baseUnitCostMicros         BigInt
+  totalCostMinor             BigInt
+  stockMovementId            String            @unique(map: "PurchaseReceiptLine_stockMovement_key")
+  stockMovement              StockMovement     @relation("PurchaseReceiptLineStockMovement", fields: [stockMovementId], references: [id], onDelete: Restrict)
+  reversalMovementId         String?
+  reversalMovement           StockMovement?    @relation("PurchaseReceiptLineReversalMovement", fields: [reversalMovementId], references: [id], onDelete: Restrict)
+  createdAt                  DateTime           @default(now())
+
+  @@unique([receiptId, purchaseOrderLineId], map: "PurchaseReceiptLine_receipt_orderLine_key")
+  @@index([purchaseOrderLineId, createdAt(sort: Desc)], map: "PurchaseReceiptLine_orderLine_createdAt_idx")
+  @@index([ingredientId, createdAt(sort: Desc)], map: "PurchaseReceiptLine_ingredient_createdAt_idx")
+}
+'''
+          schema = replace_once(schema, old_model, new_models, "legacy purchase-order model")
+          path.write_text(schema)
+
+          # BigInt omission policy for JSON-safe default Prisma reads.
+          path = Path("src/lib/db.ts")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''  purchaseOrder: { totalCostMinor: true },''',
+              '''  purchaseOrder: { totalCostMinor: true },\n  purchaseOrderLine: {\n    conversionToBaseMicros: true,\n    orderedPurchaseQuantityMicros: true,\n    orderedBaseQuantityMicros: true,\n    receivedBaseQuantityMicros: true,\n    purchaseUnitCostMicros: true,\n    baseUnitCostMicros: true,\n    lineTotalMinor: true,\n  },\n  purchaseReceipt: { totalCostMinor: true },\n  purchaseReceiptLine: {\n    submittedQuantityMicros: true,\n    conversionToBaseMicros: true,\n    baseQuantityMicros: true,\n    purchaseUnitCostMicros: true,\n    baseUnitCostMicros: true,\n    totalCostMinor: true,\n  },''',
+              "purchasing BigInt omit policy",
+          )
+          path.write_text(text)
+
+          # Generic stock reversals must not bypass purchase receipt accounting.
+          path = Path("src/lib/inventory/stock-ledger-impl.ts")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''  if (original.movementType === "reversal") {\n    throw new InventoryLedgerError(\n      "A reversal cannot reverse another reversal",\n      "STOCK_REVERSAL_CHAIN_DISABLED",\n      409\n    );\n  }\n\n  return createStockMovement(client, {''',
+              '''  if (original.movementType === "reversal") {\n    throw new InventoryLedgerError(\n      "A reversal cannot reverse another reversal",\n      "STOCK_REVERSAL_CHAIN_DISABLED",\n      409\n    );\n  }\n  if (original.sourceType === "PurchaseReceipt") {\n    throw new InventoryLedgerError(\n      "Purchase receipt movements must be corrected from Purchasing",\n      "PURCHASE_RECEIPT_REVERSAL_REQUIRED",\n      409\n    );\n  }\n\n  return createStockMovement(client, {''',
+              "purchase receipt reversal boundary",
+          )
+          path.write_text(text)
+
+          # Role-aware purchasing tab.
+          path = Path("src/components/admin/AdminShell.tsx")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''  Grid3x3,\n  ShieldAlert,''',
+              '''  Grid3x3,\n  ShoppingCart,\n  ShieldAlert,''',
+              "purchasing icon import",
+          )
+          text = replace_once(
+              text,
+              '''import { InventoryTab } from "./tabs/InventoryTab";\nimport { ReportsTab }''',
+              '''import { InventoryTab } from "./tabs/InventoryTab";\nimport { PurchasingTab } from "./tabs/PurchasingTab";\nimport { ReportsTab }''',
+              "purchasing tab import",
+          )
+          text = replace_once(
+              text,
+              '''  | "inventory"\n  | "reports"''',
+              '''  | "inventory"\n  | "purchasing"\n  | "reports"''',
+              "purchasing tab type",
+          )
+          text = replace_once(
+              text,
+              '''  inventory: InventoryTab,\n  reports: ReportsTab,''',
+              '''  inventory: InventoryTab,\n  purchasing: PurchasingTab,\n  reports: ReportsTab,''',
+              "purchasing component map",
+          )
+          text = replace_once(
+              text,
+              '''      {\n        id: "inventory",\n        label: t.admin.inventory,\n        icon: <Boxes className="size-[18px]" />,\n        roles: INVENTORY_MANAGEMENT_ROLES,\n      },\n      {\n        id: "reports",''',
+              '''      {\n        id: "inventory",\n        label: t.admin.inventory,\n        icon: <Boxes className="size-[18px]" />,\n        roles: INVENTORY_MANAGEMENT_ROLES,\n      },\n      {\n        id: "purchasing",\n        label: isRTL ? "المشتريات" : "Purchasing",\n        icon: <ShoppingCart className="size-[18px]" />,\n        roles: INVENTORY_MANAGEMENT_ROLES,\n      },\n      {\n        id: "reports",''',
+              "purchasing navigation item",
+          )
+          text = replace_once(
+              text,
+              '''  }, [t, user.role]);''',
+              '''  }, [isRTL, t, user.role]);''',
+              "navigation dependency",
+          )
+          path.write_text(text)
+
+          # Permanent integration suite.
+          path = Path("package.json")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''bun tests/integration/p1-stock-ledger-recipes.ts",''',
+              '''bun tests/integration/p1-stock-ledger-recipes.ts && bun tests/integration/p1-purchase-orders-receiving.ts",''',
+              "purchasing integration command",
+          )
+          path.write_text(text)
+
+          # Representative current-data seed.
+          path = Path("prisma/seed.ts")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''  PaymentStatus,\n  PrismaClient,''',
+              '''  PaymentStatus,\n  PurchaseOrderStatus,\n  PrismaClient,''',
+              "purchase order status import",
+          )
+          text = replace_once(
+              text,
+              '''  StaffRole,\n  TableShape,''',
+              '''  StaffRole,\n  SupplierStatus,\n  TableShape,''',
+              "supplier status import",
+          )
+          text = replace_once(
+              text,
+              '''function pastDate(days: number) { return new Date(Date.now() - days * 86400000); }\n''',
+              '''function pastDate(days: number) { return new Date(Date.now() - days * 86400000); }\nfunction micros(value: number) { return BigInt(Math.round(value * 1_000_000)); }\nfunction minor(value: number) { return BigInt(Math.round(value * 100)); }\n''',
+              "seed exact helpers",
+          )
+          old_tables = '''  const tables = [\n    "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",\n    "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",\n    "ModifierOption", "ModifierGroup", "MenuItem", "MenuCategory",\n    "RestaurantTable", "KitchenScreen", "KitchenStation",\n    "Employee", "Schedule", "Ingredient", "WasteLog", "PurchaseOrder",\n    "CashDrawerEntry", "Notification", "SpecialOffer", "PromoCode",\n    "RewardTier", "GiftCard", "Feedback", "Testimonial",\n    "NewsletterSubscription", "DynamicPricing", "ComboMeal",\n  ];'''
+          new_tables = '''  const tables = [\n    "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",\n    "PurchaseReceiptLine", "PurchaseReceipt", "PurchaseOrderLine",\n    "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",\n    "RecipeComponent", "Recipe", "IngredientUnitConversion", "StockMovement",\n    "ModifierOption", "ModifierGroup", "MenuItem", "MenuCategory",\n    "RestaurantTable", "KitchenScreen", "KitchenStation",\n    "Employee", "Schedule", "WasteLog", "PurchaseOrder", "Supplier", "Ingredient",\n    "CashDrawerEntry", "Notification", "SpecialOffer", "PromoCode",\n    "RewardTier", "GiftCard", "Feedback", "Testimonial",\n    "NewsletterSubscription", "DynamicPricing", "ComboMeal",\n  ];'''
+          text = replace_once(text, old_tables, new_tables, "seed cleanup order")
+          text = replace_once(
+              text,
+              '''  for (const i of ingredients) { await db.ingredient.create({ data: { name: i.name, unit: i.unit, quantity: i.qty, lowThreshold: i.low, costPerUnit: i.cost, supplier: i.supplier, category: i.cat } }); }\n  console.log(`  ✓ ${ingredients.length} ingredients`);''',
+              '''  const ingredientByName = new Map<string, { id: string; name: string; unit: string }>();\n  for (const i of ingredients) {\n    const created = await db.ingredient.create({\n      data: { name: i.name, unit: i.unit, quantity: i.qty, lowThreshold: i.low, costPerUnit: i.cost, supplier: i.supplier, category: i.cat },\n      select: { id: true, name: true, unit: true },\n    });\n    ingredientByName.set(created.name, created);\n  }\n  console.log(`  ✓ ${ingredients.length} ingredients`);''',
+              "seed ingredient references",
+          )
+          old_po = '''  // ── 21. PURCHASE ORDERS ──\n  const poData = [\n    { supplier: "Baghdad Poultry", notes: "Weekly chicken order", status: "ordered", totalCost: 325 },\n    { supplier: "Gulf Seafood", notes: "Salmon and shrimp restock", status: "draft", totalCost: 480 },\n    { supplier: "Vegetable Market", notes: "Fresh produce delivery", status: "received", totalCost: 120 },\n  ];\n  for (const p of poData) { await db.purchaseOrder.create({ data: p }); }\n  console.log(`  ✓ ${poData.length} purchase orders`);'''
+          new_po = r'''  // ── 21. SUPPLIERS + PURCHASE ORDERS ──
+  const supplierData = [
+    { code: "BAGHDAD-POULTRY", name: "Baghdad Poultry", contactName: "Hassan Ali", phone: "+9647501000001", paymentTerms: "Net 14" },
+    { code: "GULF-SEAFOOD", name: "Gulf Seafood", contactName: "Mariam Saleh", phone: "+9647501000002", paymentTerms: "Net 30" },
+    { code: "VEGETABLE-MARKET", name: "Vegetable Market", contactName: "Ahmed Karim", phone: "+9647501000003", paymentTerms: "Due on delivery" },
+  ];
+  const supplierByCode = new Map<string, { id: string; code: string; name: string }>();
+  for (const supplier of supplierData) {
+    const created = await db.supplier.create({
+      data: { ...supplier, status: SupplierStatus.active, address: "Baghdad", email: "", notes: "Seed supplier" },
+      select: { id: true, code: true, name: true },
+    });
+    supplierByCode.set(created.code, created);
+  }
+  console.log(`  ✓ ${supplierData.length} suppliers`);
+
+  const createSeedPurchaseOrder = async ({
+    supplierCode,
+    notes,
+    submitted,
+    lines,
+  }: {
+    supplierCode: string;
+    notes: string;
+    submitted: boolean;
+    lines: Array<{ ingredientName: string; quantity: number; unitCost: number }>;
+  }) => {
+    const supplier = supplierByCode.get(supplierCode);
+    if (!supplier) throw new Error(`Missing seed supplier ${supplierCode}`);
+    const orderId = `seed_po_${uid()}`;
+    const order = await db.purchaseOrder.create({
+      data: {
+        id: orderId,
+        orderNumber: `PO-SEED-${uid().toUpperCase()}`,
+        creationKey: `seed-purchase-order:${orderId}`,
+        supplierId: supplier.id,
+        supplierCode: supplier.code,
+        supplier: supplier.name,
+        currency: "USD",
+        notes,
+        status: PurchaseOrderStatus.draft,
+        totalCost: 0,
+        totalCostMinor: 0n,
+        expectedAt: futureDate(7),
+        createdByName: "Seed",
+        legacyImported: false,
+        lines: {
+          create: lines.map((line, index) => {
+            const ingredient = ingredientByName.get(line.ingredientName);
+            if (!ingredient) throw new Error(`Missing seed ingredient ${line.ingredientName}`);
+            return {
+              id: `seed_po_line_${uid()}`,
+              lineNumber: index + 1,
+              ingredientId: ingredient.id,
+              ingredientName: ingredient.name,
+              baseUnit: ingredient.unit,
+              purchaseUnit: ingredient.unit,
+              conversionToBaseMicros: micros(1),
+              orderedPurchaseQuantityMicros: micros(line.quantity),
+              orderedBaseQuantityMicros: micros(line.quantity),
+              receivedBaseQuantityMicros: 0n,
+              purchaseUnitCostMicros: micros(line.unitCost),
+              baseUnitCostMicros: micros(line.unitCost),
+              lineTotalMinor: minor(line.quantity * line.unitCost),
+              notes: null,
+            };
+          }),
+        },
+      },
+    });
+    if (submitted) {
+      await db.purchaseOrder.update({
+        where: { id: order.id },
+        data: {
+          status: PurchaseOrderStatus.submitted,
+          submittedByName: "Seed",
+          submittedAt: new Date(),
+        },
+      });
+    }
+    return order;
+  };
+
+  await createSeedPurchaseOrder({
+    supplierCode: "BAGHDAD-POULTRY",
+    notes: "Weekly chicken order",
+    submitted: true,
+    lines: [{ ingredientName: "Chicken Breast", quantity: 50, unitCost: 6.5 }],
+  });
+  await createSeedPurchaseOrder({
+    supplierCode: "GULF-SEAFOOD",
+    notes: "Salmon and shrimp restock",
+    submitted: false,
+    lines: [
+      { ingredientName: "Salmon Fillet", quantity: 10, unitCost: 22 },
+      { ingredientName: "Shrimp", quantity: 15, unitCost: 18 },
+    ],
+  });
+  await createSeedPurchaseOrder({
+    supplierCode: "VEGETABLE-MARKET",
+    notes: "Fresh produce delivery",
+    submitted: true,
+    lines: [
+      { ingredientName: "Tomatoes", quantity: 50, unitCost: 1.5 },
+      { ingredientName: "Lemons", quantity: 100, unitCost: 0.2 },
+    ],
+  });
+  console.log("  ✓ 3 purchase orders with exact lines");'''
+          text = replace_once(text, old_po, new_po, "seed purchase orders")
+          text = replace_once(
+              text,
+              '''  console.log(`   ${await db.wasteLog.count()} waste logs`);\n  console.log(`   ${await db.purchaseOrder.count()} purchase orders`);''',
+              '''  console.log(`   ${await db.wasteLog.count()} waste logs`);\n  console.log(`   ${await db.supplier.count()} suppliers`);\n  console.log(`   ${await db.purchaseOrder.count()} purchase orders`);\n  console.log(`   ${await db.purchaseOrderLine.count()} purchase order lines`);\n  console.log(`   ${await db.purchaseReceipt.count()} purchase receipts`);''',
+              "seed purchasing summary",
+          )
+          path.write_text(text)
+
+          # Receipt route naming correction.
+          path = Path("src/app/api/purchase-orders/[id]/receipts/route.ts")
+          text = path.read_text().replace("posted.purchaseOrder.id", "posted.order.id")
+          text = text.replace("posted.purchaseOrder.orderNumber", "posted.order.orderNumber")
+          text = text.replace("posted.purchaseOrder.status", "posted.order.status")
+          path.write_text(text)
+
+          # Master roadmap tracks the active stacked slice.
+          path = Path("docs/REMEDIATION_PLAN.md")
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''> **Tracking branch:** `agent/p1-stock-ledger-recipes`''',
+              '''> **Tracking branch:** `agent/p1-purchase-orders-receiving`''',
+              "roadmap tracking branch",
+          )
+          text = replace_once(
+              text,
+              '''- [`P1_STOCK_LEDGER_RECIPES.md`](./P1_STOCK_LEDGER_RECIPES.md)''',
+              '''- [`P1_STOCK_LEDGER_RECIPES.md`](./P1_STOCK_LEDGER_RECIPES.md)\n- [`P1_PURCHASE_ORDERS_RECEIVING.md`](./P1_PURCHASE_ORDERS_RECEIVING.md)''',
+              "purchasing design link",
+          )
+          text = replace_once(
+              text,
+              '''| P1-B03 | Recipes and immutable stock ledger | Completed and validated |''',
+              '''| P1-B03 | Recipes and immutable stock ledger | Completed and validated |\n| P1-B04 | Suppliers, purchase orders, and partial receiving | In progress on `agent/p1-purchase-orders-receiving` |''',
+              "purchasing milestone row",
+          )
+          text = replace_once(
+              text,
+              '''                └── agent/p1-stock-ledger-recipes\n```''',
+              '''                └── agent/p1-stock-ledger-recipes\n                    └── agent/p1-purchase-orders-receiving\n```''',
+              "purchasing branch stack",
+          )
+          text = replace_once(
+              text,
+              '''## P1-B04 Purchase orders\n\n- [ ] Add lines, supplier records, terms, and exact cost snapshots.''',
+              '''## P1-B04 Purchase orders\n\nCurrent implementation target: `agent/p1-purchase-orders-receiving`\n\n- [ ] Add lines, supplier records, terms, and exact cost snapshots.''',
+              "purchasing active target",
+          )
+          text = replace_once(
+              text,
+              '''| 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |''',
+              '''| 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |\n| 2026-07-31 | Started first-class suppliers, exact purchase-order lines, partial receiving, and receipt-correction workflow. | `agent/p1-purchase-orders-receiving`. |''',
+              "purchasing change log",
+          )
+          path.write_text(text)
+          PY
+
+      - name: Commit integration and remove one-off workflow
+        run: |
+          git rm .github/workflows/agent-purchasing-wiring.yml
+          git add -A
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: wire purchasing workflow"
+          git push origin HEAD:agent/p1-purchase-orders-receiving
