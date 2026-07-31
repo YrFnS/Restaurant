@@ -3,7 +3,11 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession, STAFF_ADMIN_ROLES } from "@/lib/auth/guard";
-import { broadcastKds } from "@/lib/kds/broadcast";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+} from "@/lib/kds/outbox";
 
 const stationUpdateSchema = z
   .object({
@@ -20,8 +24,22 @@ const stationUpdateSchema = z
     message: "At least one editable field is required",
   });
 
+class StationInUseError extends Error {
+  constructor(
+    readonly screenReferences: number,
+    readonly categoryReferences: number
+  ) {
+    super("STATION_IN_USE");
+    this.name = "StationInUseError";
+  }
+}
+
 function includesExactSlug(csv: string, slug: string): boolean {
-  return csv.split(",").map((value) => value.trim()).filter(Boolean).includes(slug);
+  return csv
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .includes(slug);
 }
 
 export async function PATCH(
@@ -45,10 +63,7 @@ export async function PATCH(
       );
     }
 
-    const existing = await db.kitchenStation.findUnique({
-      where: { id },
-      select: { id: true, slug: true },
-    });
+    const existing = await db.kitchenStation.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json(
         { error: "Kitchen station not found", code: "STATION_NOT_FOUND" },
@@ -56,6 +71,7 @@ export async function PATCH(
       );
     }
 
+    const context = auditContextFromRequest(req);
     const station = await db.$transaction(async (tx) => {
       const updated = await tx.kitchenStation.update({
         where: { id },
@@ -103,13 +119,49 @@ export async function PATCH(
         }
       }
 
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "kds.station.update",
+        entityType: "KitchenStation",
+        entityId: id,
+        context,
+        metadata: {
+          changedFields: Object.keys(parsed.data),
+          before: {
+            name: existing.name,
+            slug: existing.slug,
+            icon: existing.icon,
+            color: existing.color,
+            targetPrepMin: existing.targetPrepMin,
+            sortOrder: existing.sortOrder,
+            isActive: existing.isActive,
+          },
+          after: {
+            name: updated.name,
+            slug: updated.slug,
+            icon: updated.icon,
+            color: updated.color,
+            targetPrepMin: updated.targetPrepMin,
+            sortOrder: updated.sortOrder,
+            isActive: updated.isActive,
+          },
+        },
+      });
+
+      await queueKdsEvent(tx, {
+        type: "screen:update",
+        screenSlugs: [],
+        payload: {
+          stationId: updated.id,
+          previousSlug: existing.slug,
+          slug: updated.slug,
+        },
+      });
+
       return updated;
     });
 
-    await broadcastKds({
-      type: "screen:update",
-      payload: { stationId: station.id },
-    });
+    await flushKdsOutboxBestEffort(10);
     return NextResponse.json({ station });
   } catch (error) {
     if (
@@ -131,7 +183,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
@@ -139,55 +191,77 @@ export async function DELETE(
 
   try {
     const { id } = await params;
-    const station = await db.kitchenStation.findUnique({
-      where: { id },
-      select: { id: true, slug: true },
+    const context = auditContextFromRequest(req);
+    await db.$transaction(async (tx) => {
+      const station = await tx.kitchenStation.findUnique({ where: { id } });
+      if (!station) throw new Error("STATION_NOT_FOUND");
+
+      const [screens, categories] = await Promise.all([
+        tx.kitchenScreen.findMany({
+          where: { stationFilter: { contains: station.slug } },
+          select: { stationFilter: true },
+        }),
+        tx.menuCategory.findMany({
+          where: { stationSlugs: { contains: station.slug } },
+          select: { stationSlugs: true },
+        }),
+      ]);
+      const screenReferences = screens.filter((screen) =>
+        includesExactSlug(screen.stationFilter, station.slug)
+      ).length;
+      const categoryReferences = categories.filter((category) =>
+        includesExactSlug(category.stationSlugs, station.slug)
+      ).length;
+
+      if (screenReferences > 0 || categoryReferences > 0) {
+        throw new StationInUseError(screenReferences, categoryReferences);
+      }
+
+      await tx.kitchenStation.delete({ where: { id } });
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "kds.station.delete",
+        entityType: "KitchenStation",
+        entityId: id,
+        context,
+        metadata: {
+          name: station.name,
+          slug: station.slug,
+          targetPrepMin: station.targetPrepMin,
+          sortOrder: station.sortOrder,
+          isActive: station.isActive,
+        },
+      });
+      await queueKdsEvent(tx, {
+        type: "screen:update",
+        screenSlugs: [],
+        payload: { stationId: id, slug: station.slug, deleted: true },
+      });
     });
-    if (!station) {
+
+    await flushKdsOutboxBestEffort(10);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (error instanceof Error && error.message === "STATION_NOT_FOUND") {
       return NextResponse.json(
         { error: "Kitchen station not found", code: "STATION_NOT_FOUND" },
         { status: 404 }
       );
     }
-
-    const [screens, categories] = await Promise.all([
-      db.kitchenScreen.findMany({
-        where: { stationFilter: { contains: station.slug } },
-        select: { stationFilter: true },
-      }),
-      db.menuCategory.findMany({
-        where: { stationSlugs: { contains: station.slug } },
-        select: { stationSlugs: true },
-      }),
-    ]);
-    const screenReferences = screens.filter((screen) =>
-      includesExactSlug(screen.stationFilter, station.slug)
-    ).length;
-    const categoryReferences = categories.filter((category) =>
-      includesExactSlug(category.stationSlugs, station.slug)
-    ).length;
-
-    if (screenReferences > 0 || categoryReferences > 0) {
+    if (error instanceof StationInUseError) {
       return NextResponse.json(
         {
           error: "Reassign this station from screens and menu categories before deleting it",
           code: "STATION_IN_USE",
           references: {
-            screens: screenReferences,
-            categories: categoryReferences,
+            screens: error.screenReferences,
+            categories: error.categoryReferences,
           },
         },
         { status: 409 }
       );
     }
 
-    await db.kitchenStation.delete({ where: { id } });
-    await broadcastKds({
-      type: "screen:update",
-      payload: { stationId: id, deleted: true },
-    });
-    return NextResponse.json({ ok: true });
-  } catch (error) {
     console.error("[stations] Failed to delete station", error);
     return NextResponse.json(
       { error: "Unable to delete kitchen station", code: "STATION_DELETE_FAILED" },
