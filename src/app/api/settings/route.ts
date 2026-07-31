@@ -50,6 +50,8 @@ const settingsSchema = z
     tipPresets: z.string().trim().max(120),
     openTime: timeSchema,
     closeTime: timeSchema,
+    timezone: z.string().trim().min(1).max(80),
+    operationalDayStartMinutes: z.number().int().min(0).max(1_439),
     logoUrl: optionalLinkSchema,
     heroImageUrl: optionalLinkSchema,
     facebookUrl: optionalLinkSchema,
@@ -102,6 +104,15 @@ function pricingExactValues(input: {
   };
 }
 
+async function validTimezone(value: string): Promise<boolean> {
+  const rows = await db.$queryRaw<Array<{ valid: boolean }>>`
+    SELECT EXISTS(
+      SELECT 1 FROM pg_timezone_names WHERE name = ${value}
+    ) AS "valid"
+  `;
+  return rows[0]?.valid === true;
+}
+
 export async function GET() {
   const settings = await db.restaurantSettings.findFirst({ where: { id: "1" } });
   return NextResponse.json({ settings });
@@ -119,6 +130,16 @@ export async function PUT(req: NextRequest) {
           error: "Invalid restaurant settings",
           code: "VALIDATION_ERROR",
           details: parsed.error.flatten().fieldErrors,
+        },
+        { status: 400 }
+      );
+    }
+    if (!(await validTimezone(parsed.data.timezone))) {
+      return NextResponse.json(
+        {
+          error: "Unknown restaurant timezone",
+          code: "INVALID_RESTAURANT_TIMEZONE",
+          details: { timezone: ["Use a valid IANA/PostgreSQL timezone name"] },
         },
         { status: 400 }
       );
@@ -156,6 +177,8 @@ export async function PUT(req: NextRequest) {
           minDeliveryOrderMinor: exactValues.minDeliveryOrderMinor.toString(),
           openTime: saved.openTime,
           closeTime: saved.closeTime,
+          timezone: saved.timezone,
+          operationalDayStartMinutes: saved.operationalDayStartMinutes,
           kdsThresholds: {
             green: saved.kdsGreenMin,
             yellow: saved.kdsYellowMin,
