@@ -60,9 +60,23 @@ const expectedEnums: Record<string, readonly string[]> = {
     "analyst",
     "staff",
   ],
-  TableStatus: ["open", "seated", "ordered", "served", "paid", "cleaning", "reserved"],
+  TableStatus: [
+    "open",
+    "seated",
+    "ordered",
+    "served",
+    "paid",
+    "cleaning",
+    "reserved",
+  ],
   TableShape: ["square", "round"],
-  ReservationStatus: ["confirmed", "seated", "completed", "cancelled", "no_show"],
+  ReservationStatus: [
+    "confirmed",
+    "seated",
+    "completed",
+    "cancelled",
+    "no_show",
+  ],
   WaitlistStatus: ["waiting", "notified", "seated", "cancelled", "no_show"],
   CashMovementType: [
     "payin",
@@ -120,7 +134,6 @@ async function assertInvalidEnumValuesFail() {
   for (const enumName of Object.keys(expectedEnums)) {
     await assert.rejects(
       db.$executeRawUnsafe(`SELECT 'p1_invalid_value'::"${enumName}"`),
-      undefined,
       `PostgreSQL enum ${enumName} accepted an unknown value`
     );
   }
