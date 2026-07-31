@@ -13,6 +13,7 @@ const migration = source(
 const service = source("src/lib/payments/reversals.ts");
 const route = source("src/app/api/orders/[id]/payments/route.ts");
 const checkout = source("src/app/api/pos/checkout/route.ts");
+const adminApp = source("src/components/admin/AdminApp.tsx");
 const adminPage = source("src/app/admin/payment-reversals/page.tsx");
 const adminConsole = source("src/components/admin/PaymentReversalConsole.tsx");
 const integrationCommand = source("package.json");
@@ -92,7 +93,11 @@ describe("payment reversal source inventory", () => {
     expect(checkout).not.toContain("linkPaymentEventToSession");
   });
 
-  test("ships the reviewed manager console and permanent integration suite", () => {
+  test("ships a discoverable manager console and permanent integration suite", () => {
+    expect(adminApp).toContain('href="/admin/payment-reversals"');
+    expect(adminApp).toContain(
+      'const PAYMENT_REVERSAL_ROLES = new Set(["owner", "admin", "manager"])'
+    );
     expect(adminPage).toContain("PaymentReversalConsole");
     for (const marker of [
       'fetch("/api/orders?limit=200"',
