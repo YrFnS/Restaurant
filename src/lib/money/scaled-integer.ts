@@ -3,6 +3,10 @@ export const RATE_MICRO_DIGITS = 6;
 export const BASIS_POINT_DIGITS = 2;
 export const UNIT_COST_MICRO_DIGITS = 6;
 
+const BIGINT_ZERO = BigInt(0);
+const BIGINT_ONE = BigInt(1);
+const BIGINT_TEN = BigInt(10);
+
 export class ExactValueError extends Error {
   constructor(message: string) {
     super(message);
@@ -14,7 +18,7 @@ function scaleForDigits(scaleDigits: number): bigint {
   if (!Number.isInteger(scaleDigits) || scaleDigits < 0 || scaleDigits > 12) {
     throw new ExactValueError("Scale digits must be an integer between 0 and 12");
   }
-  return 10n ** BigInt(scaleDigits);
+  return BIGINT_TEN ** BigInt(scaleDigits);
 }
 
 /**
@@ -40,7 +44,7 @@ export function parseNonNegativeDecimalToScaledInteger(
 
   const firstDiscardedDigit = fraction[scaleDigits];
   if (firstDiscardedDigit && firstDiscardedDigit >= "5") {
-    result += 1n;
+    result += BIGINT_ONE;
   }
 
   if (maximum !== undefined && result > maximum) {
@@ -54,7 +58,7 @@ export function formatScaledInteger(
   value: bigint,
   scaleDigits: number
 ): string {
-  if (value < 0n) {
+  if (value < BIGINT_ZERO) {
     throw new ExactValueError("Value must be non-negative");
   }
 
@@ -70,7 +74,10 @@ export function scaledIntegerToSafeNumber(
   value: bigint,
   scaleDigits: number
 ): number {
-  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (
+    value < BIGINT_ZERO ||
+    value > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
     throw new ExactValueError("Scaled value cannot be represented safely as a number");
   }
 
