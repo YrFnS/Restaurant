@@ -152,6 +152,21 @@ This slice is complete only when all of the following pass:
 - audit-event coverage;
 - complete P0 and earlier P1 regression chain.
 
+## Validated checkpoint
+
+P1 Stacked Validation **#83** passed on exact implementation head:
+
+```text
+054b096a600782897ef1b6eaf6591326b50fbe58
+```
+
+The permanent validation jobs confirmed:
+
+- locked installation, Prisma validation/generation, strict TypeScript, source-policy tests, ESLint, and production build;
+- clean PostgreSQL migration deployment, exact seeded values, and the complete P0 and prior P1 regression chain;
+- immutable clock, break, shift, and adjustment behavior, authorization, shared kiosk throttling, idempotency, concurrency, exact labor calculations, timezone/operational-day assignment, audit events, and lifecycle guards;
+- representative legacy-data adoption with existing employee records and secure credentials preserved.
+
 ## Explicitly deferred
 
 - schedule-versus-actual variance and attendance exceptions;
