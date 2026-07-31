@@ -4,7 +4,7 @@
 > **Tracking branch:** `agent/p1-employee-timekeeping`  
 > **Created:** 2026-07-30  
 > **Last reconciled:** 2026-08-01  
-> **Current milestone:** P1 restaurant workflow correctness — timekeeping validation, reservations, waitlist, and loyalty  
+> **Current milestone:** P1 restaurant workflow correctness — reservation availability, waitlist, and loyalty  
 > **Automated/source P0:** **Complete**  
 > **Production release:** **Blocked by real-environment rehearsal, configuration, independent review, and deployment smoke gates.**
 
@@ -22,7 +22,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 ## Status notation
 
 - `[x]` completed and validated
-- `[ ]` open or awaiting final validation
+- `[ ]` open
 - `Blocked` requires deployment/operator action
 - `Deferred` intentionally moved to a later slice
 
@@ -39,7 +39,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 | P0-E | Automated validation and production release gate | Automated gate complete; production gates open |
 | P1-A | Database, exact money, constraints, payment ledger | Exact-money foundation and cash reversals complete; contract migration deferred |
 | P1-B01 | Cash-register sessions and reconciliation | Completed and validated |
-| P1-B02 | Immutable employee timekeeping | Implemented; final validation in progress on `agent/p1-employee-timekeeping` |
+| P1-B02 | Immutable employee timekeeping | Completed and validated |
 | P1-B03 | Recipes and immutable stock ledger | Completed and validated |
 | P1-B04 | Suppliers, purchase orders, and partial receiving | Completed and validated |
 | P1-C | KDS, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
@@ -72,6 +72,7 @@ Validated completed checkpoints:
 | P1 payment reversals | `87d787b1b39b6ed93caf5493b7fec2911a2c211c` | P1 Stacked Validation #6 |
 | P1 recipes and immutable stock ledger | `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d` | P1 Stacked Validation #32 |
 | P1 suppliers, purchase orders, and partial receiving | `0e0eab253ed43a42e2d0beb88da97ba8e9a3b633` | P1 Stacked Validation #53 |
+| P1 immutable employee timekeeping | `054b096a600782897ef1b6eaf6591326b50fbe58` | P1 Stacked Validation #83 |
 
 ---
 
@@ -175,15 +176,16 @@ Validated completed checkpoints:
 
 ## P1-B02 Employee timekeeping
 
-Current implementation target: `agent/p1-employee-timekeeping`
+Completed and validated scope:
 
-- [ ] Validate immutable clock-in, clock-out, break-start, and break-end events.
-- [ ] Validate one open shift and one open break per employee under concurrent requests.
-- [ ] Validate immutable closed-shift summaries and exact wage/labor-cost snapshots.
-- [ ] Validate audited append-only manager corrections instead of rewriting history.
-- [ ] Validate gross, break, paid-time, and adjusted labor-cost calculations.
-- [ ] Validate restaurant timezone and operational-day assignment for overnight shifts.
-- [ ] Validate protected kiosk and manager APIs, bilingual timesheet workflow, migrations, and existing-data adoption.
+- [x] Add immutable clock-in, clock-out, break-start, and break-end events.
+- [x] Enforce one open shift and one open break per employee under concurrent requests.
+- [x] Add immutable closed-shift summaries and exact wage/labor-cost snapshots.
+- [x] Add audited append-only manager corrections instead of rewriting history.
+- [x] Calculate gross, break, paid-time, and adjusted labor-cost totals from the ledger.
+- [x] Add restaurant timezone and operational-day assignment for overnight shifts.
+- [x] Add protected kiosk and manager APIs, bilingual timesheet workflow, migrations, source inventories, and database-backed tests.
+- [x] Preserve historical employees instead of deleting records referenced by immutable time history.
 
 Policy decisions for this slice:
 
@@ -384,4 +386,4 @@ Deferred from this slice:
 | 2026-07-31 | Added immutable cash refunds and voids, manager console, ledger reconciliation, and concurrency/database protections. | P1 Stacked Validation #6 green at `87d787b`. |
 | 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |
 | 2026-07-31 | Added first-class suppliers, exact purchase-order lines, immutable submitted terms, partial/full receiving, reviewed receipt correction, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #53 green at `0e0eab2`. |
-| 2026-08-01 | Added immutable employee shifts, breaks, event history, exact labor snapshots, append-only manager adjustments, operational-day policy, kiosk/manager workflows, and regression coverage. | Final stacked validation pending on `agent/p1-employee-timekeeping`. |
+| 2026-08-01 | Added immutable employee shifts, breaks, event history, exact labor snapshots, append-only manager adjustments, operational-day policy, kiosk/manager workflows, and full regression coverage. | P1 Stacked Validation #83 green at `054b096`. |
