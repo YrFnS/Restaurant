@@ -52,7 +52,7 @@ const policies: ExactWritePolicy[] = [
   {
     file: "src/app/api/cash/route.ts",
     compatibilityFields: ["amount"],
-    exactMarkers: ["amountMinor", "parseCurrencyInputToMinor"],
+    exactMarkers: ["amountMinor", "inputToMinor"],
   },
   {
     file: "src/app/api/pos/checkout/route.ts",
@@ -118,7 +118,9 @@ describe("exact financial API write inventory", () => {
     );
 
     for (const [model, fields] of Object.entries(deferredCompatibilityModels)) {
-      expect(status).toContain(model.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase());
+      expect(status).toContain(
+        model.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()
+      );
       for (const field of fields) {
         expect(field.length).toBeGreaterThan(0);
       }
