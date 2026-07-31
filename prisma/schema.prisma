@@ -136,6 +136,11 @@ enum PaymentEventStatus {
   voided
 }
 
+enum CashRegisterSessionStatus {
+  open
+  closed
+}
+
 // ─── Restaurant-wide settings (singleton) ───
 model RestaurantSettings {
   id                    String   @id @default("1")
@@ -562,16 +567,79 @@ model PurchaseOrder {
   updatedAt      DateTime @default(now()) @updatedAt
 }
 
-// ─── Cash Drawer ───
+// ─── Cash registers, sessions, and drawer ledger ───
+model CashRegister {
+  id                                  String                @id
+  code                                String                @unique(map: "CashRegister_code_key")
+  name                                String
+  deviceId                            String                @unique(map: "CashRegister_deviceId_key")
+  location                            String                @default("")
+  discrepancyApprovalThresholdMinor   BigInt                @default(0)
+  isActive                            Boolean               @default(true)
+  sessions                            CashRegisterSession[]
+  createdAt                           DateTime              @default(now())
+  updatedAt                           DateTime              @updatedAt
+
+  @@index([isActive, name], map: "CashRegister_active_name_idx")
+}
+
+model CashRegisterSession {
+  id                String                    @id
+  registerId        String
+  register          CashRegister              @relation(fields: [registerId], references: [id], onDelete: Restrict)
+  openKey           String
+  status            CashRegisterSessionStatus @default(open)
+  openingFloatMinor BigInt
+  openedById        String
+  openedByName      String                    @default("")
+  openedAt          DateTime                  @default(now())
+  closedAt          DateTime?
+  close             CashRegisterClose?
+  cashEntries       CashDrawerEntry[]
+  paymentEvents     PaymentEvent[]
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@unique([registerId, openKey], map: "CashRegisterSession_register_openKey_key")
+  @@index([registerId, openedAt(sort: Desc)], map: "CashRegisterSession_register_openedAt_idx")
+  @@index([openedById, status], map: "CashRegisterSession_openedBy_status_idx")
+}
+
+model CashRegisterClose {
+  id                String              @id
+  sessionId         String              @unique(map: "CashRegisterClose_sessionId_key")
+  session           CashRegisterSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  closeKey          String              @unique(map: "CashRegisterClose_closeKey_key")
+  expectedCashMinor BigInt
+  countedCashMinor  BigInt
+  discrepancyMinor  BigInt
+  thresholdMinor    BigInt
+  approvalRequired  Boolean             @default(false)
+  approvedById      String?
+  approvedByName    String?
+  approvalReason    String?
+  closedById        String
+  closedByName      String              @default("")
+  note              String?
+  createdAt         DateTime            @default(now())
+
+  @@index([createdAt(sort: Desc)], map: "CashRegisterClose_createdAt_idx")
+  @@index([approvedById, createdAt(sort: Desc)], map: "CashRegisterClose_approvedBy_createdAt_idx")
+}
+
 model CashDrawerEntry {
-  id          String           @id @default(cuid())
-  type        CashMovementType @default(payin)
-  amount      Float            @default(0)
-  amountMinor BigInt           @default(0)
-  note        String?
-  createdBy   String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @default(now()) @updatedAt
+  id                String               @id @default(cuid())
+  type              CashMovementType     @default(payin)
+  amount            Float                @default(0)
+  amountMinor       BigInt               @default(0)
+  note              String?
+  createdBy         String?
+  registerSessionId String?
+  registerSession   CashRegisterSession? @relation(fields: [registerSessionId], references: [id], onDelete: Restrict)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @default(now()) @updatedAt
+
+  @@index([registerSessionId, createdAt(sort: Desc)], map: "CashDrawerEntry_registerSession_createdAt_idx")
 }
 
 // ─── Notifications ───
@@ -723,23 +791,26 @@ model KdsOutboxEvent {
 
 // ─── Immutable payment event ledger ───
 model PaymentEvent {
-  id             String             @id @default(cuid())
-  idempotencyKey String             @unique
-  orderId        String
-  order          Order              @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  eventType      PaymentEventType
-  method         PaymentMethod
-  status         PaymentEventStatus @default(succeeded)
-  amountCents    Int
-  tenderedCents  Int?
-  changeCents    Int?
-  currency       String             @default("USD")
-  actorId        String?
-  actorName      String             @default("")
-  metadata       Json?
-  createdAt      DateTime           @default(now())
+  id                String               @id @default(cuid())
+  idempotencyKey    String               @unique
+  orderId           String
+  order             Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  eventType         PaymentEventType
+  method            PaymentMethod
+  status            PaymentEventStatus   @default(succeeded)
+  amountCents       Int
+  tenderedCents     Int?
+  changeCents       Int?
+  currency          String               @default("USD")
+  actorId           String?
+  actorName         String               @default("")
+  metadata          Json?
+  registerSessionId String?
+  registerSession   CashRegisterSession? @relation(fields: [registerSessionId], references: [id], onDelete: Restrict)
+  createdAt         DateTime             @default(now())
 
   @@index([orderId, createdAt])
   @@index([eventType, createdAt])
   @@index([createdAt])
+  @@index([registerSessionId, createdAt(sort: Desc)], map: "PaymentEvent_registerSession_createdAt_idx")
 }
