@@ -5,6 +5,7 @@ import {
   MENU_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const pricingRuleSchema = z
@@ -113,13 +114,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const rule = await db.dynamicPricing.create({
-      data: {
-        ...parsed.data,
-        nameAr: parsed.data.nameAr || parsed.data.nameEn,
-        startTime: parsed.data.startTime || null,
-        endTime: parsed.data.endTime || null,
-      },
+    const context = auditContextFromRequest(req);
+    const rule = await db.$transaction(async (tx) => {
+      const created = await tx.dynamicPricing.create({
+        data: {
+          ...parsed.data,
+          nameAr: parsed.data.nameAr || parsed.data.nameEn,
+          startTime: parsed.data.startTime || null,
+          endTime: parsed.data.endTime || null,
+        },
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "dynamic-pricing.create",
+        entityType: "DynamicPricing",
+        entityId: created.id,
+        context,
+        metadata: {
+          nameEn: created.nameEn,
+          type: created.type,
+          multiplier: created.multiplier,
+          dayOfWeek: created.dayOfWeek,
+          startTime: created.startTime,
+          endTime: created.endTime,
+          isActive: created.isActive,
+        },
+      });
+
+      return created;
     });
     return NextResponse.json({ rule }, { status: 201 });
   } catch (error) {
