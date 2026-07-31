@@ -155,7 +155,7 @@ function mutationHandlers(): MutationHandler[] {
     const source = readFileSync(file, "utf8");
     const matches = Array.from(
       source.matchAll(
-        /export\s+async\s+function\s+(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)\s*\(/g
+        /export\s+(?:async\s+)?function\s+(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE)\s*\(/g
       )
     );
     const route = routeFromFile(file);
