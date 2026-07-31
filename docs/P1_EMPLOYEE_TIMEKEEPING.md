@@ -16,9 +16,9 @@ This slice makes timekeeping append-only. Clock and break events are immutable, 
 The singleton restaurant settings now define:
 
 - an IANA/PostgreSQL timezone, defaulting to `UTC` for migration safety;
-- an operational-day start expressed as minutes after local midnight.
+- an operational-day boundary expressed as minutes after local midnight.
 
-The operational date for each event is calculated in PostgreSQL from the configured timezone and boundary. A restaurant whose operational day starts at 04:00 can therefore keep a shift spanning midnight on the intended business date.
+The operational date for each event is calculated in PostgreSQL from the configured timezone and operational-day boundary. A restaurant whose operational day starts at 04:00 can therefore keep a shift spanning midnight on the intended business date.
 
 Unknown timezone names and invalid day boundaries are rejected.
 
