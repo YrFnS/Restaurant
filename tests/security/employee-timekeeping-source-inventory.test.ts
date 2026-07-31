@@ -86,7 +86,7 @@ describe("employee timekeeping source inventory", () => {
       "ACTIVE_BREAK_MUST_END",
       "CLOCK_EVENT_OUT_OF_ORDER",
       "laborCostForSeconds",
-      "set_config('app.timekeeping_write'",
+      'set_config(\'app.timekeeping_write\'',
       'INSERT INTO "EmployeeTimeEvent"',
       'INSERT INTO "EmployeeShift"',
       'INSERT INTO "EmployeeBreak"',
@@ -94,7 +94,7 @@ describe("employee timekeeping source inventory", () => {
       "addTimeAdjustment",
       "replay.source !== input.source",
       "replay.paidSecondsDelta !== paidSecondsDelta",
-      `AND shift."status" = 'closed'`,
+      "AND shift.\"status\" = 'closed'",
       "totalPaidSeconds",
       "totalLaborCostMinor",
       'INSERT INTO "EmployeeTimeAdjustment"',
@@ -152,7 +152,7 @@ describe("employee timekeeping source inventory", () => {
     expect(design).toContain("append-only");
     expect(design).toContain("operational-day boundary");
     expect(design).toContain("signed time adjustments");
-    expect(design).toContain("full normalized request payload");
+    expect(design).toContain("original normalized event or adjustment payload");
     expect(design).toContain("raw seconds plus exact minor-unit labor costs");
   });
 });
