@@ -93,13 +93,12 @@ export async function PATCH(
 
     const context = auditContextFromRequest(req);
     const result = await db.$transaction(async (tx) => {
-      const inventory =
-        nextStatus === "completed"
-          ? await consumeOrderInventory(tx, {
-              orderId: id,
-              actor: auth.session,
-            })
-          : null;
+      const inventory = ["preparing", "ready", "completed"].includes(nextStatus)
+        ? await consumeOrderInventory(tx, {
+            orderId: id,
+            actor: auth.session,
+          })
+        : null;
 
       await tx.order.update({
         where: { id },
