@@ -9,7 +9,8 @@ function source(path: string): string {
 const migration = source(
   "prisma/migrations/20260731235940_add_stock_ledger_recipes/migration.sql"
 );
-const service = source("src/lib/inventory/stock-ledger.ts");
+const service = source("src/lib/inventory/stock-ledger-impl.ts");
+const adapter = source("src/lib/inventory/stock-ledger.ts");
 const inventoryRoute = source("src/app/api/inventory/route.ts");
 const movementsRoute = source("src/app/api/inventory/movements/route.ts");
 const conversionsRoute = source("src/app/api/inventory/conversions/route.ts");
@@ -78,6 +79,9 @@ describe("stock ledger and recipe source inventory", () => {
     ]) {
       expect(service).toContain(marker);
     }
+    expect(adapter).toContain("prismaSafeInventoryClient");
+    expect(adapter).toContain('SELECT 1::integer AS "locked"');
+    expect(adapter).toContain("FROM inventory_lock");
   });
 
   test("replaces direct quantity mutation with reviewed ledger APIs", () => {
