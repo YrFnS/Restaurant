@@ -228,10 +228,15 @@ async function main() {
     });
 
     if (targetId) {
+      const cleanupTargetId = targetId;
       await db.$transaction(async (tx) => {
-        await tx.staffSession.deleteMany({ where: { employeeId: targetId } });
-        await tx.schedule.deleteMany({ where: { employeeId: targetId } });
-        await tx.employee.deleteMany({ where: { id: targetId } });
+        await tx.staffSession.deleteMany({
+          where: { employeeId: cleanupTargetId },
+        });
+        await tx.schedule.deleteMany({
+          where: { employeeId: cleanupTargetId },
+        });
+        await tx.employee.deleteMany({ where: { id: cleanupTargetId } });
       });
     }
   }
