@@ -42,6 +42,8 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
   "POST /api/customers/lookup": {
     markers: [
       "loyaltyCredentialsSchema",
+      "loyalty-lookup",
+      "consumeRateLimit",
       "verifyOrderAccessToken",
       "redemptionEnabled: false",
     ],
