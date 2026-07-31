@@ -4,7 +4,7 @@
 > **Tracking branch:** `agent/p1-stock-ledger-recipes`  
 > **Created:** 2026-07-30  
 > **Last reconciled:** 2026-07-31  
-> **Current milestone:** P1 restaurant workflow correctness  
+> **Current milestone:** P1 restaurant workflow correctness — timekeeping, purchasing, reservations, and loyalty  
 > **Automated/source P0:** **Complete**  
 > **Production release:** **Blocked by real-environment rehearsal, configuration, independent review, and deployment smoke gates.**
 
@@ -15,6 +15,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 - [`P1_IMPLEMENTATION_STATUS.md`](./P1_IMPLEMENTATION_STATUS.md)
 - [`P1_CASH_REGISTER_SESSIONS.md`](./P1_CASH_REGISTER_SESSIONS.md)
 - [`P1_PAYMENT_REVERSALS.md`](./P1_PAYMENT_REVERSALS.md)
+- [`P1_STOCK_LEDGER_RECIPES.md`](./P1_STOCK_LEDGER_RECIPES.md)
 
 ## Status notation
 
@@ -36,7 +37,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 | P0-E | Automated validation and production release gate | Automated gate complete; production gates open |
 | P1-A | Database, exact money, constraints, payment ledger | Exact-money foundation and cash reversals complete; contract migration deferred |
 | P1-B01 | Cash-register sessions and reconciliation | Completed and validated |
-| P1-B03 | Recipes and immutable stock ledger | In progress on `agent/p1-stock-ledger-recipes` |
+| P1-B03 | Recipes and immutable stock ledger | Completed and validated |
 | P1-C | KDS, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
 | P2 | UX, accessibility, SEO, observability, performance | Not started as a coordinated phase |
 
@@ -63,6 +64,7 @@ Validated completed checkpoints:
 | P1 exact money and domain integrity | `55ac63f8ffbc94b0f4daec3936dab78c55bc7685` | Validation #511, Integration #341 |
 | P1 cash-register sessions | `c44030bcb222fa78f8c50152dbab81187877e59d` | Validation #558, Integration #388 |
 | P1 payment reversals | `87d787b1b39b6ed93caf5493b7fec2911a2c211c` | P1 Stacked Validation #6 |
+| P1 recipes and immutable stock ledger | `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d` | P1 Stacked Validation #32 |
 
 ---
 
@@ -119,7 +121,8 @@ Validated completed checkpoints:
 - [x] Add cross-field bounds and concurrency-safe partial uniqueness.
 - [x] Correct mutable `updatedAt` behavior and preserve immutable event timestamps.
 - [x] Add indexes for common order, reservation, kitchen, cash, employee, payment, session, and outbox paths.
-- [ ] Add inventory movement, recipe, purchase-order, and loyalty domain constraints as those workflows are introduced.
+- [x] Add inventory movement, unit conversion, recipe, production-consumption, and stock-ledger constraints and indexes.
+- [ ] Add purchase-order and loyalty domain constraints with their complete workflows.
 - [ ] Define restaurant timezone and operational-day semantics.
 - [ ] Define retention/anonymization policy for customer, session, rate-limit, outbox, payment, inventory, and audit data.
 
@@ -170,28 +173,38 @@ Validated completed checkpoints:
 
 ## P1-B03 Recipes and immutable stock ledger
 
-Current implementation target:
+Completed and validated scope:
 
-- [ ] Add exact ingredient balances in base-unit micros.
-- [ ] Add per-ingredient unit conversions.
-- [ ] Add versioned recipes/BOMs for menu items.
-- [ ] Add modifier-specific recipe components.
-- [ ] Add immutable stock movements with source references and idempotency.
-- [ ] Add opening-balance movements for migrated inventory.
-- [ ] Add receiving, waste, positive/negative adjustment, production-consumption, and correction/reversal movements.
-- [ ] Consume recipe stock exactly once when an item enters production, including direct KDS jumps.
-- [ ] Block configured production when stock is insufficient unless the ingredient explicitly permits negative stock.
-- [ ] Prevent direct quantity edits after ledger cutover.
-- [ ] Preserve movement cost snapshots and calculate cost impact.
-- [ ] Add database immutability, balance, conversion, recipe-ownership, and concurrency constraints.
-- [ ] Add manager/inventory APIs and database-backed integration tests.
+- [x] Add exact ingredient balances in base-unit micros.
+- [x] Add per-ingredient unit conversions.
+- [x] Add versioned recipes/BOMs for menu items.
+- [x] Add modifier-specific recipe components.
+- [x] Add immutable stock movements with source references and idempotency.
+- [x] Add opening-balance movements for migrated inventory.
+- [x] Add receiving, waste, positive/negative adjustment, production-consumption, and correction/reversal movements.
+- [x] Consume recipe stock exactly once when an item enters production, including direct KDS jumps.
+- [x] Store an immutable recipe ID/version or permanent untracked decision on each order item at first production.
+- [x] Block configured production when stock is insufficient unless the ingredient explicitly permits negative stock.
+- [x] Prevent direct quantity edits after ledger cutover.
+- [x] Preserve movement cost snapshots and calculate cost impact.
+- [x] Add database immutability, balance, conversion, recipe-ownership, snapshot, and concurrency constraints.
+- [x] Add bilingual manager/inventory APIs, operator workflow, source inventories, and database-backed integration tests.
 
 Policy decisions for this slice:
 
 - Consumption occurs when an order item first enters production (`preparing`, or a later state reached directly).
+- The first decision is permanent for that order item: a newer recipe cannot consume it again, and a recipe published after an untracked production start cannot deduct it retroactively.
 - Cancelling after production does not silently return ingredients; a reviewed correction movement is required.
 - Refunds do not automatically return physical stock.
-- Missing recipes remain visible as untracked items during rollout rather than blocking every legacy menu item.
+- Missing recipes remain visible as permanently untracked items for that production lifecycle rather than blocking every legacy menu item.
+
+Deferred from this slice:
+
+- [ ] Lots, batches, expiry dates, serial tracking, and multi-location bins.
+- [ ] Weighted-average, FIFO, or another formal valuation method.
+- [ ] Purchase-order lines, partial receiving, vendor returns, and stock transfers.
+- [ ] Automatic physical-stock return on refunds or cancellations.
+- [ ] Destructive removal of the legacy `Ingredient.quantity` compatibility field.
 
 ## P1-B04 Purchase orders
 
@@ -202,8 +215,9 @@ Policy decisions for this slice:
 
 ## P1-B05 Waste
 
-- [ ] Route all new waste through immutable stock movements.
-- [ ] Add unit conversion, cost impact, approval policy, and correction support.
+- [x] Route all new waste through immutable stock movements.
+- [x] Add unit conversion, exact cost impact, idempotency, and reviewed correction support.
+- [ ] Add configurable approval thresholds and role policy.
 - [ ] Report by ingredient, reason, employee, and operational day.
 
 ## P1-B06 Reservation availability
@@ -297,6 +311,7 @@ Policy decisions for this slice:
 - [x] KDS reliability: transactional outbox, authenticated retries, realtime delivery, and polling fallback.
 - [x] Current deployment scope: one restaurant.
 - [x] Stock consumption timing: first entry into production; no silent return on cancellation/refund.
+- [x] Stock recipe snapshot: first production stores an immutable recipe version or a permanent untracked decision.
 - [ ] Restaurant timezone and operational-day boundary.
 - [ ] Revenue recognition policy.
 - [ ] Loyalty earning/reversal policy.
@@ -315,4 +330,4 @@ Policy decisions for this slice:
 | 2026-07-31 | Added exact financial storage, domain enums, timestamps, constraints, indexes, exact runtime cutover, and migration rehearsals. | Validation #511 and Integration #341 green at `55ac63f`. |
 | 2026-07-31 | Added POS register assignment, opening/closing, cash reconciliation, immutable close records, and register-linked payment/cash ledgers. | Validation #558 and Integration #388 green at `c44030b`. |
 | 2026-07-31 | Added immutable cash refunds and voids, manager console, ledger reconciliation, and concurrency/database protections. | P1 Stacked Validation #6 green at `87d787b`. |
-| 2026-07-31 | Reconciled the master roadmap and started the versioned recipe and immutable stock-ledger slice. | `agent/p1-stock-ledger-recipes`. |
+| 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |
