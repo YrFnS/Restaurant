@@ -21,6 +21,25 @@ import {
   Instagram, Twitter, MessageCircle,
 } from "lucide-react";
 
+function minutesToClock(value: unknown): string {
+  const parsed = Number(value);
+  const minutes = Number.isInteger(parsed)
+    ? Math.min(1_439, Math.max(0, parsed))
+    : 0;
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(
+    minutes % 60
+  ).padStart(2, "0")}`;
+}
+
+function clockToMinutes(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return 0;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return 0;
+  return hours * 60 + minutes;
+}
+
 export function SettingsTab() {
   const { t } = useI18n();
   const { data, isLoading } = useQuery({
@@ -35,7 +54,11 @@ export function SettingsTab() {
 function SettingsForm({ initial }: { initial: any }) {
   const { t, isRTL } = useI18n();
   const qc = useQueryClient();
-  const [form, setForm] = useState<any>(initial);
+  const [form, setForm] = useState<any>({
+    ...initial,
+    timezone: initial.timezone || "UTC",
+    operationalDayStartMinutes: initial.operationalDayStartMinutes ?? 0,
+  });
   const [saving, setSaving] = useState(false);
 
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -110,11 +133,31 @@ function SettingsForm({ initial }: { initial: any }) {
         {/* HOURS */}
         <TabsContent value="hours" className="mt-4">
           <Card className="border-border/60">
-            <CardHeader><CardTitle className="text-base flex items-center gap-2"><Clock className="size-4 text-primary" />{isRTL ? "ساعات العمل" : "Working Hours"}</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base flex items-center gap-2"><Clock className="size-4 text-primary" />{isRTL ? "ساعات العمل والوقت" : "Working Hours & Timekeeping"}</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <Field label={isRTL ? "وقت الفتح" : "Open Time"} value={form.openTime} onChange={(v) => set("openTime", v)} dir="ltr" type="time" />
                 <Field label={isRTL ? "وقت الإغلاق" : "Close Time"} value={form.closeTime} onChange={(v) => set("closeTime", v)} dir="ltr" type="time" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border bg-muted/20 p-3">
+                <Field
+                  label={isRTL ? "المنطقة الزمنية للمطعم" : "Restaurant timezone"}
+                  value={form.timezone || "UTC"}
+                  onChange={(v) => set("timezone", v)}
+                  dir="ltr"
+                />
+                <Field
+                  label={isRTL ? "بداية يوم التشغيل" : "Operational day starts"}
+                  value={minutesToClock(form.operationalDayStartMinutes)}
+                  onChange={(v) => set("operationalDayStartMinutes", clockToMinutes(v))}
+                  dir="ltr"
+                  type="time"
+                />
+                <p className="md:col-span-2 text-xs text-muted-foreground">
+                  {isRTL
+                    ? "استخدم اسماً زمنياً معتمداً مثل Asia/Baghdad. المناوبات بعد منتصف الليل تُنسب إلى يوم التشغيل وفق وقت البداية المحدد."
+                    : "Use a valid timezone such as Asia/Baghdad. Overnight shifts are assigned to the operational day using the selected boundary."}
+                </p>
               </div>
               <Field label={isRTL ? "متوسط وقت التحضير (دقيقة)" : "Avg Prep Time (min)"} value={String(form.avgPrepTimeMin)} onChange={(v) => set("avgPrepTimeMin", parseInt(v) || 0)} dir="ltr" type="number" />
               <Field label={isRTL ? "نسب الإكرامية (مفصولة بفواصل)" : "Tip Presets (comma-separated)"} value={form.tipPresets} onChange={(v) => set("tipPresets", v)} dir="ltr" />
@@ -257,7 +300,11 @@ function SettingsForm({ initial }: { initial: any }) {
             <div className="flex gap-2 ms-auto">
               <Button
                 variant="outline"
-                onClick={() => setForm(initial)}
+                onClick={() => setForm({
+                  ...initial,
+                  timezone: initial.timezone || "UTC",
+                  operationalDayStartMinutes: initial.operationalDayStartMinutes ?? 0,
+                })}
                 disabled={saving}
               >
                 {isRTL ? "إلغاء" : "Reset"}
