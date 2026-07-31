@@ -151,10 +151,29 @@ async function main() {
   );
 
   console.log("[p0-rbac] validating operational role grants and denials");
+  const serverOrders = await request("/api/orders?limit=5", {
+    headers: { cookie: serverCookie },
+  });
+  expectStatus(serverOrders, 200, "Server order read");
+  const trackableOrder = serverOrders.data?.orders?.[0];
+  assert.ok(trackableOrder?.orderNumber, "Seed data must provide a trackable order");
+  const trackPath = `/api/orders/track/${encodeURIComponent(
+    String(trackableOrder.orderNumber).replace(/^#/, "")
+  )}`;
   expectStatus(
-    await request("/api/orders?limit=5", { headers: { cookie: serverCookie } }),
+    await request(trackPath, { headers: { cookie: serverCookie } }),
     200,
-    "Server order read"
+    "Server staff tracking fallback"
+  );
+  expectStatus(
+    await request(trackPath, { headers: { cookie: cookCookie } }),
+    403,
+    "Cook staff tracking fallback"
+  );
+  expectStatus(
+    await request(trackPath, { headers: { cookie: hostCookie } }),
+    403,
+    "Host staff tracking fallback"
   );
 
   const kitchenResult = await request("/api/kitchen?screen=grill", {
@@ -185,9 +204,10 @@ async function main() {
     serverTables.data,
     /^(customerPhone|deliveryAddress|total|paymentMethod|paymentStatus)$/i
   );
-  const table = (serverTables.data?.tables || []).find(
-    (candidate: any) => candidate.status === "open"
-  ) || serverTables.data?.tables?.[0];
+  const table =
+    (serverTables.data?.tables || []).find(
+      (candidate: any) => candidate.status === "open"
+    ) || serverTables.data?.tables?.[0];
   assert.ok(table, "Seed data must provide at least one restaurant table");
 
   expectStatus(
