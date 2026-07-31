@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 
 const db = new PrismaClient();
@@ -62,6 +63,14 @@ function expectStatus(
   );
 }
 
+function expectedOrderId(idempotencyKey: string): string {
+  const digest = createHash("sha256")
+    .update(`restaurant:order-idempotency:${idempotencyKey}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `ord_${digest}`;
+}
+
 async function removeFailureTrigger() {
   await db.$executeRawUnsafe(
     `DROP TRIGGER IF EXISTS "${TRIGGER_NAME}" ON "KdsOutboxEvent"`
@@ -114,6 +123,7 @@ async function main() {
 
   const customerPhone = `+964705${String(Date.now()).slice(-7)}`;
   const idempotencyKey = `p0-rollback-order-${crypto.randomUUID()}`;
+  const orderId = expectedOrderId(idempotencyKey);
   const body = {
     type: "dine_in",
     tableNumber: table.number,
@@ -132,7 +142,6 @@ async function main() {
     ],
   };
 
-  const testStartedAt = new Date(Date.now() - 1_000);
   let successfulOrderId: string | null = null;
 
   try {
@@ -147,9 +156,9 @@ async function main() {
     expectStatus(failed, 500, "Forced order transaction failure");
     assert.equal(failed.data?.code, "ORDER_CREATE_FAILED");
 
-    const [failedOrders, failedCustomer, tableAfterFailure, failedAudits, failedOutbox] =
+    const [failedOrder, failedCustomer, tableAfterFailure, failedAudits, failedOutbox] =
       await Promise.all([
-        db.order.count({ where: { customerPhone } }),
+        db.order.findUnique({ where: { id: orderId } }),
         db.customer.findUnique({ where: { phone: customerPhone } }),
         db.restaurantTable.findUnique({
           where: { id: table.id },
@@ -159,15 +168,20 @@ async function main() {
           where: {
             action: "order.create",
             entityType: "Order",
-            createdAt: { gte: testStartedAt },
+            entityId: orderId,
           },
         }),
         db.kdsOutboxEvent.count({
-          where: { createdAt: { gte: testStartedAt } },
+          where: {
+            payload: {
+              path: ["orderId"],
+              equals: orderId,
+            },
+          },
         }),
       ]);
 
-    assert.equal(failedOrders, 0, "Failed transaction must not persist the order");
+    assert.equal(failedOrder, null, "Failed transaction must not persist the order");
     assert.equal(failedCustomer, null, "Failed transaction must not persist the customer");
     assert.equal(
       tableAfterFailure?.status,
@@ -196,11 +210,15 @@ async function main() {
     expectStatus(retried, 201, "Retry after rolled-back transaction");
     assert.equal(retried.data?.replayed, false);
     successfulOrderId = String(retried.data?.order?.id || "");
-    assert.ok(successfulOrderId, "Successful retry must return an order ID");
+    assert.equal(
+      successfulOrderId,
+      orderId,
+      "The retry must use the deterministic idempotent order identity"
+    );
 
-    const [persistedOrders, persistedCustomer, tableAfterRetry, auditCount, outboxCount] =
+    const [persistedOrder, persistedCustomer, tableAfterRetry, auditCount, outboxCount] =
       await Promise.all([
-        db.order.count({ where: { customerPhone } }),
+        db.order.findUnique({ where: { id: orderId } }),
         db.customer.findUnique({ where: { phone: customerPhone } }),
         db.restaurantTable.findUnique({
           where: { id: table.id },
@@ -210,20 +228,20 @@ async function main() {
           where: {
             action: "order.create",
             entityType: "Order",
-            entityId: successfulOrderId,
+            entityId: orderId,
           },
         }),
         db.kdsOutboxEvent.count({
           where: {
             payload: {
               path: ["orderId"],
-              equals: successfulOrderId,
+              equals: orderId,
             },
           },
         }),
       ]);
 
-    assert.equal(persistedOrders, 1, "Safe retry must create exactly one order");
+    assert.ok(persistedOrder, "Safe retry must create the deterministic order");
     assert.ok(persistedCustomer, "Safe retry must persist its customer");
     assert.equal(tableAfterRetry?.status, "ordered");
     assert.equal(auditCount, 1, "Successful retry must persist one audit event");
