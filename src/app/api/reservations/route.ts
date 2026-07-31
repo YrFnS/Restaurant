@@ -49,38 +49,6 @@ const reservationCreateSchema = z
 
 const RESERVATION_WINDOW_MS = 60_000;
 const MAX_RESERVATIONS_PER_WINDOW = 10;
-type ReservationBucket = { count: number; resetAt: number };
-const globalForReservationLimit = globalThis as unknown as {
-  restaurantReservationRateLimits?: Map<string, ReservationBucket>;
-};
-const reservationRateLimits =
-  globalForReservationLimit.restaurantReservationRateLimits ??
-  new Map<string, ReservationBucket>();
-if (!globalForReservationLimit.restaurantReservationRateLimits) {
-  globalForReservationLimit.restaurantReservationRateLimits =
-    reservationRateLimits;
-}
-
-function clientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeReservationLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = reservationRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + RESERVATION_WINDOW_MS };
-  bucket.count += 1;
-  reservationRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_RESERVATIONS_PER_WINDOW) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
 
 function minutesSinceMidnight(value: string): number {
   const [hours, minutes] = value.split(":").map(Number);
@@ -148,7 +116,10 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("[reservations] Failed to load reservations", error);
     return NextResponse.json(
-      { error: "Unable to load reservations", code: "RESERVATIONS_LOAD_FAILED" },
+      {
+        error: "Unable to load reservations",
+        code: "RESERVATIONS_LOAD_FAILED",
+      },
       { status: 500 }
     );
   }
@@ -166,13 +137,19 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[reservations] Shared rate limiter failed", error);
     return NextResponse.json(
-      { error: "Reservations are temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      {
+        error: "Reservations are temporarily unavailable",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
   if (!reservationLimit.allowed) {
     return NextResponse.json(
-      { error: "Too many reservation attempts", code: "RESERVATION_RATE_LIMITED" },
+      {
+        error: "Too many reservation attempts",
+        code: "RESERVATION_RATE_LIMITED",
+      },
       { status: 429, headers: rateLimitHeaders(reservationLimit) }
     );
   }
@@ -192,16 +169,24 @@ export async function POST(req: NextRequest) {
 
     const reservationDate = new Date(parsed.data.dateTime);
     const now = new Date();
-    const latestAllowed = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1_000);
+    const latestAllowed = new Date(
+      now.getTime() + 365 * 24 * 60 * 60 * 1_000
+    );
     if (reservationDate.getTime() < now.getTime() + 15 * 60 * 1_000) {
       return NextResponse.json(
-        { error: "Reservation time must be in the future", code: "PAST_RESERVATION" },
+        {
+          error: "Reservation time must be in the future",
+          code: "PAST_RESERVATION",
+        },
         { status: 400 }
       );
     }
     if (reservationDate > latestAllowed) {
       return NextResponse.json(
-        { error: "Reservations can be made up to one year ahead", code: "RESERVATION_TOO_FAR" },
+        {
+          error: "Reservations can be made up to one year ahead",
+          code: "RESERVATION_TOO_FAR",
+        },
         { status: 400 }
       );
     }
@@ -219,13 +204,20 @@ export async function POST(req: NextRequest) {
       )
     ) {
       return NextResponse.json(
-        { error: "The selected time is outside restaurant hours", code: "OUTSIDE_SERVICE_HOURS" },
+        {
+          error: "The selected time is outside restaurant hours",
+          code: "OUTSIDE_SERVICE_HOURS",
+        },
         { status: 400 }
       );
     }
 
-    const overlapStart = new Date(reservationDate.getTime() - 90 * 60 * 1_000);
-    const overlapEnd = new Date(reservationDate.getTime() + 90 * 60 * 1_000);
+    const overlapStart = new Date(
+      reservationDate.getTime() - 90 * 60 * 1_000
+    );
+    const overlapEnd = new Date(
+      reservationDate.getTime() + 90 * 60 * 1_000
+    );
     const duplicate = await db.reservation.findFirst({
       where: {
         customerPhone: parsed.data.customerPhone,
@@ -236,7 +228,10 @@ export async function POST(req: NextRequest) {
     });
     if (duplicate) {
       return NextResponse.json(
-        { error: "An active reservation already exists near this time", code: "DUPLICATE_RESERVATION" },
+        {
+          error: "An active reservation already exists near this time",
+          code: "DUPLICATE_RESERVATION",
+        },
         { status: 409 }
       );
     }
@@ -261,9 +256,7 @@ export async function POST(req: NextRequest) {
       const availableTable = candidateTables.find(
         (table) => !occupiedIds.has(table.id)
       );
-      if (!availableTable) {
-        throw new Error("NO_TABLE_AVAILABLE");
-      }
+      if (!availableTable) throw new Error("NO_TABLE_AVAILABLE");
 
       const customer = await tx.customer.upsert({
         where: { phone: parsed.data.customerPhone },
@@ -302,27 +295,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         reservation,
-        accessToken: createCustomerAccessToken("reservation", reservation.id),
+        accessToken: createCustomerAccessToken(
+          "reservation",
+          reservation.id
+        ),
       },
       { status: 201, headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
       return NextResponse.json(
-        { error: "Reservation access is not configured", code: "CUSTOMER_ACCESS_NOT_CONFIGURED" },
+        {
+          error: "Reservation access is not configured",
+          code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
+        },
         { status: 503 }
       );
     }
     if (error instanceof Error && error.message === "NO_TABLE_AVAILABLE") {
       return NextResponse.json(
-        { error: "No suitable table is available at that time", code: "NO_TABLE_AVAILABLE" },
+        {
+          error: "No suitable table is available at that time",
+          code: "NO_TABLE_AVAILABLE",
+        },
         { status: 409 }
       );
     }
 
     console.error("[reservations] Failed to create reservation", error);
     return NextResponse.json(
-      { error: "Unable to create reservation", code: "RESERVATION_CREATE_FAILED" },
+      {
+        error: "Unable to create reservation",
+        code: "RESERVATION_CREATE_FAILED",
+      },
       { status: 500 }
     );
   }
