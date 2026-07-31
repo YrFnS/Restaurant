@@ -569,16 +569,16 @@ model PurchaseOrder {
 
 // ─── Cash registers, sessions, and drawer ledger ───
 model CashRegister {
-  id                                  String                @id
-  code                                String                @unique(map: "CashRegister_code_key")
-  name                                String
-  deviceId                            String                @unique(map: "CashRegister_deviceId_key")
-  location                            String                @default("")
-  discrepancyApprovalThresholdMinor   BigInt                @default(0)
-  isActive                            Boolean               @default(true)
-  sessions                            CashRegisterSession[]
-  createdAt                           DateTime              @default(now())
-  updatedAt                           DateTime              @updatedAt
+  id                                String                @id
+  code                              String                @unique(map: "CashRegister_code_key")
+  name                              String
+  deviceId                          String                @unique(map: "CashRegister_deviceId_key")
+  location                          String                @default("")
+  discrepancyApprovalThresholdMinor BigInt                @default(0)
+  isActive                          Boolean               @default(true)
+  sessions                          CashRegisterSession[]
+  createdAt                         DateTime              @default(now())
+  updatedAt                         DateTime              @updatedAt
 
   @@index([isActive, name], map: "CashRegister_active_name_idx")
 }
@@ -807,10 +807,17 @@ model PaymentEvent {
   metadata          Json?
   registerSessionId String?
   registerSession   CashRegisterSession? @relation(fields: [registerSessionId], references: [id], onDelete: Restrict)
+  parentEventId     String?
+  parentEvent       PaymentEvent?        @relation("PaymentEventReversals", fields: [parentEventId], references: [id], onDelete: Restrict)
+  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+  reasonCode        String               @default("")
+  reason            String?
   createdAt         DateTime             @default(now())
 
   @@index([orderId, createdAt])
   @@index([eventType, createdAt])
   @@index([createdAt])
   @@index([registerSessionId, createdAt(sort: Desc)], map: "PaymentEvent_registerSession_createdAt_idx")
+  @@index([parentEventId, createdAt(sort: Desc)], map: "PaymentEvent_parent_createdAt_idx")
+  @@index([orderId, status, createdAt(sort: Desc)], map: "PaymentEvent_order_status_createdAt_idx")
 }
