@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -15,6 +16,7 @@ import {
   InventoryLedgerError,
   inventoryLedgerErrorFromDatabase,
   readIngredientStock,
+  readStockMovement,
   readStockMovements,
   resolveQuantityToBaseMicros,
   reverseStockMovement,
@@ -221,6 +223,42 @@ export async function POST(req: NextRequest) {
           replayed: reversed.replayed,
           waste: null,
         };
+      }
+
+      if (parsed.data.action === "waste") {
+        const replayRows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT "id"
+          FROM "StockMovement"
+          WHERE "idempotencyKey" = ${key}
+          LIMIT 1
+        `);
+        if (replayRows[0]) {
+          const movement = await readStockMovement(tx, replayRows[0].id);
+          if (!movement) {
+            throw new InventoryLedgerError(
+              "Unable to load the existing waste movement",
+              "STOCK_MOVEMENT_RESULT_MISSING",
+              500
+            );
+          }
+          if (
+            movement.movementType !== "waste" ||
+            movement.ingredientId !== parsed.data.ingredientId
+          ) {
+            throw new InventoryLedgerError(
+              "The stock idempotency key was already used for another movement",
+              "STOCK_IDEMPOTENCY_CONFLICT",
+              409
+            );
+          }
+          const [ingredient, waste] = await Promise.all([
+            readIngredientStock(tx, movement.ingredientId),
+            movement.sourceType === "WasteLog" && movement.sourceId
+              ? tx.wasteLog.findUnique({ where: { id: movement.sourceId } })
+              : Promise.resolve(null),
+          ]);
+          return { movement, ingredient, replayed: true, waste };
+        }
       }
 
       const resolved = await resolveQuantityToBaseMicros(
