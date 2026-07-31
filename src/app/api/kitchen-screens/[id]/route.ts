@@ -3,7 +3,11 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireStaffSession, STAFF_ADMIN_ROLES } from "@/lib/auth/guard";
-import { broadcastKds } from "@/lib/kds/broadcast";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+} from "@/lib/kds/outbox";
 
 const slugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 const stationFilterSchema = z
@@ -79,16 +83,66 @@ export async function PATCH(
       );
     }
 
-    const screen = await db.kitchenScreen.update({
-      where: { id },
-      data: parsed.data,
-    });
-    await broadcastKds({
-      type: "screen:update",
-      screenSlugs: [screen.slug],
-      payload: { screenId: screen.id },
+    const existing = await db.kitchenScreen.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Kitchen screen not found", code: "KDS_SCREEN_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+
+    const context = auditContextFromRequest(req);
+    const screen = await db.$transaction(async (tx) => {
+      const updated = await tx.kitchenScreen.update({
+        where: { id },
+        data: parsed.data,
+      });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "kds.screen.update",
+        entityType: "KitchenScreen",
+        entityId: id,
+        context,
+        metadata: {
+          changedFields: Object.keys(parsed.data),
+          before: {
+            name: existing.name,
+            slug: existing.slug,
+            stationFilter: existing.stationFilter,
+            screenType: existing.screenType,
+            layoutType: existing.layoutType,
+            autoRefreshSec: existing.autoRefreshSec,
+            showCompleted: existing.showCompleted,
+            maxOrders: existing.maxOrders,
+            sortOrder: existing.sortOrder,
+            isActive: existing.isActive,
+          },
+          after: {
+            name: updated.name,
+            slug: updated.slug,
+            stationFilter: updated.stationFilter,
+            screenType: updated.screenType,
+            layoutType: updated.layoutType,
+            autoRefreshSec: updated.autoRefreshSec,
+            showCompleted: updated.showCompleted,
+            maxOrders: updated.maxOrders,
+            sortOrder: updated.sortOrder,
+            isActive: updated.isActive,
+          },
+        },
+      });
+
+      await queueKdsEvent(tx, {
+        type: "screen:update",
+        screenSlugs: [existing.slug, updated.slug],
+        payload: { screenId: updated.id },
+      });
+
+      return updated;
     });
 
+    await flushKdsOutboxBestEffort(10);
     return NextResponse.json({ screen });
   } catch (error) {
     if (
@@ -110,7 +164,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
@@ -118,17 +172,43 @@ export async function DELETE(
 
   try {
     const { id } = await params;
-    const screen = await db.kitchenScreen.delete({
-      where: { id },
-      select: { id: true, slug: true },
+    const context = auditContextFromRequest(req);
+    await db.$transaction(async (tx) => {
+      const existing = await tx.kitchenScreen.findUnique({ where: { id } });
+      if (!existing) throw new Error("KDS_SCREEN_NOT_FOUND");
+
+      await tx.kitchenScreen.delete({ where: { id } });
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "kds.screen.delete",
+        entityType: "KitchenScreen",
+        entityId: id,
+        context,
+        metadata: {
+          name: existing.name,
+          slug: existing.slug,
+          stationFilter: existing.stationFilter,
+          screenType: existing.screenType,
+          isActive: existing.isActive,
+        },
+      });
+      await queueKdsEvent(tx, {
+        type: "screen:update",
+        screenSlugs: [existing.slug],
+        payload: { screenId: id, deleted: true },
+      });
     });
-    await broadcastKds({
-      type: "screen:update",
-      screenSlugs: [screen.slug],
-      payload: { screenId: screen.id, deleted: true },
-    });
+
+    await flushKdsOutboxBestEffort(10);
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (error instanceof Error && error.message === "KDS_SCREEN_NOT_FOUND") {
+      return NextResponse.json(
+        { error: "Kitchen screen not found", code: "KDS_SCREEN_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+
     console.error("[kitchen-screens] Failed to delete screen", error);
     return NextResponse.json(
       { error: "Unable to delete kitchen screen", code: "KDS_SCREEN_DELETE_FAILED" },
