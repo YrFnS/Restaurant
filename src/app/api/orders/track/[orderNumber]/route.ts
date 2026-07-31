@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { ORDER_MANAGEMENT_ROLES } from "@/lib/auth/guard";
 import {
-  ORDER_MANAGEMENT_ROLES,
-  requireStaffSession,
-} from "@/lib/auth/guard";
+  AuthConfigurationError,
+  getStaffSession,
+} from "@/lib/auth/session";
 import {
   OrderAccessConfigurationError,
   verifyOrderAccessToken,
@@ -77,8 +78,19 @@ export async function GET(
     const token =
       new URL(req.url).searchParams.get("token") || bearerToken(req);
     if (!token) {
-      const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
-      if ("response" in auth) return auth.response;
+      const session = await getStaffSession();
+      if (!session) {
+        return NextResponse.json(
+          { order: null },
+          { status: 404, headers: rateLimitHeaders(trackingLimit) }
+        );
+      }
+      if (!(ORDER_MANAGEMENT_ROLES as readonly string[]).includes(session.role)) {
+        return NextResponse.json(
+          { error: "Permission denied", code: "PERMISSION_DENIED" },
+          { status: 403, headers: rateLimitHeaders(trackingLimit) }
+        );
+      }
     }
 
     const order = await db.order.findUnique({
@@ -220,6 +232,15 @@ export async function GET(
       { headers: rateLimitHeaders(trackingLimit) }
     );
   } catch (error) {
+    if (error instanceof AuthConfigurationError) {
+      return NextResponse.json(
+        {
+          error: "Authentication is not configured",
+          code: "AUTH_NOT_CONFIGURED",
+        },
+        { status: 503, headers: rateLimitHeaders(trackingLimit) }
+      );
+    }
     if (error instanceof OrderAccessConfigurationError) {
       return NextResponse.json(
         {
