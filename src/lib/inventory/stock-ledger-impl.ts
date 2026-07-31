@@ -551,6 +551,7 @@ export async function readStockMovements(
     ingredientId?: string;
     sourceType?: string;
     sourceId?: string;
+    sourceLineId?: string;
     limit?: number;
   } = {}
 ): Promise<StockMovementRow[]> {
@@ -564,6 +565,11 @@ export async function readStockMovements(
   }
   if (options.sourceId) {
     filters.push(Prisma.sql`movement."sourceId" = ${options.sourceId}`);
+  }
+  if (options.sourceLineId) {
+    filters.push(
+      Prisma.sql`movement."sourceLineId" = ${options.sourceLineId}`
+    );
   }
   const where =
     filters.length > 0
@@ -963,15 +969,24 @@ export async function publishRecipeVersion(
   return { recipe, replayed: false };
 }
 
+type InventoryConsumptionState = "pending" | "consumed" | "untracked";
+
 type OrderItemInventoryRow = {
   id: string;
   orderId: string;
   menuItemId: string;
   quantity: number;
   modifiers: string;
-  recipeId: string | null;
-  recipeVersion: number | null;
-  yieldMicros: bigint | null;
+  inventoryConsumptionState: InventoryConsumptionState;
+  inventoryRecipeId: string | null;
+  inventoryRecipeVersion: number | null;
+  inventoryConsumedAt: Date | null;
+};
+
+type ActiveRecipeRow = {
+  id: string;
+  version: number;
+  yieldMicros: bigint;
 };
 
 type ConsumptionComponentRow = {
@@ -990,9 +1005,9 @@ function selectedModifierIds(snapshot: string): Set<string> {
     return new Set(
       parsed
         .map((entry) =>
-          entry && typeof entry === "object" && typeof entry.id === "string"
-            ? entry.id
-            : null
+entry && typeof entry === "object" && typeof entry.id === "string"
+  ? entry.id
+  : null
         )
         .filter((id): id is string => Boolean(id))
     );
@@ -1021,16 +1036,11 @@ export async function consumeOrderItemInventory(
       item."menuItemId",
       item."quantity",
       item."modifiers",
-      recipe."id" AS "recipeId",
-      recipe."version" AS "recipeVersion",
-      recipe."yieldMicros"
+      item."inventoryConsumptionState"::text AS "inventoryConsumptionState",
+      item."inventoryRecipeId",
+      item."inventoryRecipeVersion",
+      item."inventoryConsumedAt"
     FROM "OrderItem" AS item
-    LEFT JOIN LATERAL (
-      SELECT "id", "version", "yieldMicros"
-      FROM "Recipe"
-      WHERE "menuItemId" = item."menuItemId" AND "isActive" = true
-      LIMIT 1
-    ) AS recipe ON true
     WHERE item."id" = ${input.orderItemId}
     FOR UPDATE OF item
   `);
@@ -1042,7 +1052,56 @@ export async function consumeOrderItemInventory(
       404
     );
   }
-  if (!item.recipeId || item.recipeVersion === null || item.yieldMicros === null) {
+
+  if (item.inventoryConsumptionState === "consumed") {
+    const movements = await readStockMovements(client, {
+      sourceType: "OrderItem",
+      sourceId: item.orderId,
+      sourceLineId: item.id,
+      limit: 500,
+    });
+    return {
+      tracked: true,
+      recipeId: item.inventoryRecipeId,
+      recipeVersion: item.inventoryRecipeVersion,
+      movements,
+      replayedMovementCount: movements.length,
+    };
+  }
+
+  if (item.inventoryConsumptionState === "untracked") {
+    return {
+      tracked: false,
+      recipeId: null,
+      recipeVersion: null,
+      movements: [],
+      replayedMovementCount: 0,
+    };
+  }
+
+  const recipeRows = await client.$queryRaw<ActiveRecipeRow[]>(Prisma.sql`
+    SELECT "id", "version", "yieldMicros"
+    FROM "Recipe"
+    WHERE "menuItemId" = ${item.menuItemId} AND "isActive" = true
+    ORDER BY "version" DESC
+    LIMIT 1
+  `);
+  const recipe = recipeRows[0];
+  if (!recipe) {
+    const changed = await client.$executeRaw(Prisma.sql`
+      UPDATE "OrderItem"
+      SET
+        "inventoryConsumptionState" = 'untracked',
+        "inventoryConsumedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${item.id} AND "inventoryConsumptionState" = 'pending'
+    `);
+    if (changed !== 1) {
+      throw new InventoryLedgerError(
+        "Unable to persist the untracked inventory decision",
+        "INVENTORY_SNAPSHOT_WRITE_FAILED",
+        500
+      );
+    }
     return {
       tracked: false,
       recipeId: null,
@@ -1063,7 +1122,7 @@ export async function consumeOrderItemInventory(
     FROM "RecipeComponent" AS component
     JOIN "Ingredient" AS ingredient
       ON ingredient."id" = component."ingredientId"
-    WHERE component."recipeId" = ${item.recipeId}
+    WHERE component."recipeId" = ${recipe.id}
     ORDER BY component."ingredientId" ASC, component."id" ASC
   `);
   const selected = selectedModifierIds(item.modifiers);
@@ -1079,7 +1138,7 @@ export async function consumeOrderItemInventory(
       component.quantityMicros *
         BigInt(item.quantity) *
         INVENTORY_QUANTITY_SCALE,
-      item.yieldMicros
+      recipe.yieldMicros
     );
     if (requiredMicros <= 0) continue;
 
@@ -1093,11 +1152,11 @@ export async function consumeOrderItemInventory(
       sourceId: item.orderId,
       sourceLineId: item.id,
       reasonCode: "recipe_consumption",
-      reason: `Recipe ${item.recipeId} v${item.recipeVersion} production consumption`,
+      reason: `Recipe ${recipe.id} v${recipe.version} production consumption`,
       actor: input.actor,
       metadata: {
-        recipeId: item.recipeId,
-        recipeVersion: item.recipeVersion,
+        recipeId: recipe.id,
+        recipeVersion: recipe.version,
         recipeComponentId: component.id,
         menuItemId: item.menuItemId,
         orderItemQuantity: item.quantity,
@@ -1108,10 +1167,27 @@ export async function consumeOrderItemInventory(
     if (result.replayed) replayedMovementCount += 1;
   }
 
+  const changed = await client.$executeRaw(Prisma.sql`
+    UPDATE "OrderItem"
+    SET
+      "inventoryConsumptionState" = 'consumed',
+      "inventoryRecipeId" = ${recipe.id},
+      "inventoryRecipeVersion" = ${recipe.version},
+      "inventoryConsumedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = ${item.id} AND "inventoryConsumptionState" = 'pending'
+  `);
+  if (changed !== 1) {
+    throw new InventoryLedgerError(
+      "Unable to persist the recipe consumption snapshot",
+      "INVENTORY_SNAPSHOT_WRITE_FAILED",
+      500
+    );
+  }
+
   return {
     tracked: true,
-    recipeId: item.recipeId,
-    recipeVersion: item.recipeVersion,
+    recipeId: recipe.id,
+    recipeVersion: recipe.version,
     movements,
     replayedMovementCount,
   };

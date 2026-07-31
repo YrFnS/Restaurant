@@ -12,6 +12,11 @@ const migration = source(
 const negativePolicyMigration = source(
   "prisma/migrations/20260731235941_allow_negative_stock_policy/migration.sql"
 );
+const snapshotMigration = source(
+  "prisma/migrations/20260731235950_add_inventory_consumption_snapshot/migration.sql"
+);
+const schema = source("prisma/schema.prisma");
+const dbClient = source("src/lib/db.ts");
 const service = source("src/lib/inventory/stock-ledger-impl.ts");
 const adapter = source("src/lib/inventory/stock-ledger.ts");
 const inventoryRoute = source("src/app/api/inventory/route.ts");
@@ -54,6 +59,62 @@ describe("stock ledger and recipe source inventory", () => {
       'VALIDATE CONSTRAINT "Ingredient_stock_bounds"',
     ]) {
       expect(negativePolicyMigration).toContain(marker);
+    }
+  });
+
+
+  test("maps exact stock models and one-way consumption snapshots in Prisma", () => {
+    for (const marker of [
+      "enum StockMovementType",
+      "enum InventoryConsumptionState",
+      "model IngredientUnitConversion",
+      "model Recipe {",
+      "model RecipeComponent",
+      "model StockMovement",
+      "quantityMicros",
+      "inventoryConsumptionState",
+      "inventoryRecipeId",
+      "inventoryRecipeVersion",
+      "inventoryConsumedAt",
+      'map: "StockMovement_idempotencyKey_key"',
+      'map: "OrderItem_inventory_state_idx"',
+    ]) {
+      expect(schema).toContain(marker);
+    }
+    for (const marker of [
+      "ingredientUnitConversion",
+      "recipeComponent",
+      "stockMovement",
+      "quantityDeltaMicros",
+      "balanceAfterMicros",
+    ]) {
+      expect(dbClient).toContain(marker);
+    }
+  });
+
+  test("persists exactly one recipe or untracked decision per order item", () => {
+    for (const marker of [
+      'CREATE TYPE "InventoryConsumptionState"',
+      'ADD COLUMN "inventoryConsumptionState"',
+      'ADD COLUMN "inventoryRecipeId"',
+      'ADD COLUMN "inventoryRecipeVersion"',
+      'ADD COLUMN "inventoryConsumedAt"',
+      'OrderItem_inventory_consumption_shape',
+      'OrderItem_inventory_snapshot_validate_update',
+      'Order-item inventory consumption snapshots are immutable',
+      "WHERE \"status\" IN ('preparing', 'ready', 'served')",
+    ]) {
+      expect(snapshotMigration).toContain(marker);
+    }
+    for (const marker of [
+      'inventoryConsumptionState === "consumed"',
+      'inventoryConsumptionState === "untracked"',
+      '"inventoryConsumptionState" = \'untracked\'',
+      '"inventoryConsumptionState" = \'consumed\'',
+      'sourceLineId: item.id',
+      "INVENTORY_SNAPSHOT_WRITE_FAILED",
+    ]) {
+      expect(service).toContain(marker);
     }
   });
 

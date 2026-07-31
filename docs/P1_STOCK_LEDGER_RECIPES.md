@@ -106,6 +106,8 @@ Movement rows cannot be updated or deleted. Corrections are new reversal movemen
 11. One active recipe is permitted per menu item.
 12. Recipe versions and components are immutable after creation.
 13. Recipe modifier components must belong to the same menu item.
+14. Each order item moves one way from pending inventory evaluation to either consumed or untracked.
+15. Consumed recipe ID/version snapshots cannot be edited after production begins.
 
 ## Production-consumption policy
 
@@ -114,8 +116,10 @@ Inventory is consumed when an order item first enters production:
 - `pending → preparing` consumes the active recipe;
 - a direct KDS jump from `pending → ready` also consumes the active recipe;
 - order completion consumes any still-unconsumed active items before marking them served;
+- the first production transition stores an immutable recipe ID/version snapshot on the order item;
 - deterministic movement keys make retries and repeated status calls safe;
-- an item without an active recipe remains operational but is reported as untracked during rollout;
+- publishing a newer recipe cannot consume the same order item again;
+- an item without an active recipe is permanently marked untracked for that production lifecycle, so publishing a recipe later cannot retroactively deduct it;
 - insufficient configured stock blocks the status transition and leaves the order/item unchanged.
 
 Cancelling after production does not silently return ingredients. The ingredients may already have been prepared or discarded, so a manager or inventory manager must create a reviewed reversal when physical stock was actually recovered.

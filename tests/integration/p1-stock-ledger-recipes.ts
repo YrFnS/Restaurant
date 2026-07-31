@@ -36,6 +36,13 @@ interface CountRow {
   count: number;
 }
 
+interface OrderItemInventorySnapshotRow {
+  inventoryConsumptionState: "pending" | "consumed" | "untracked";
+  inventoryRecipeId: string | null;
+  inventoryRecipeVersion: number | null;
+  inventoryConsumedAt: Date | null;
+}
+
 async function api<T>(
   path: string,
   init: RequestInit = {}
@@ -239,6 +246,22 @@ async function ingredientExact(id: string): Promise<IngredientExactRow> {
     id
   );
   assert.ok(rows[0], `Ingredient ${id} must exist`);
+  return rows[0];
+}
+
+async function itemInventorySnapshot(
+  orderItemId: string
+): Promise<OrderItemInventorySnapshotRow> {
+  const rows = await db.$queryRawUnsafe<OrderItemInventorySnapshotRow[]>(
+    `SELECT
+       "inventoryConsumptionState"::text AS "inventoryConsumptionState",
+       "inventoryRecipeId",
+       "inventoryRecipeVersion",
+       "inventoryConsumedAt"
+     FROM "OrderItem" WHERE "id" = $1`,
+    orderItemId
+  );
+  assert.ok(rows[0], `Order item ${orderItemId} must exist`);
   return rows[0];
 }
 
@@ -499,8 +522,9 @@ async function main() {
   assert.equal(readyReplay.data.inventory.replayedMovementCount, 2);
   assert.equal((await ingredientExact(flour.id)).quantityMicros, 1_700_000n);
 
-  console.log("\n[p1-stock] order-level production and completion remain replay-safe");
+  console.log("\n[p1-stock] recipe consumption snapshots survive recipe changes");
   const orderLevel = await createOrder(trackedItem.id, [], 1);
+  const orderLevelItem = orderLevel.items[0];
   const preparing = await api<any>(
     `/api/orders/${encodeURIComponent(orderLevel.id)}`,
     {
@@ -514,6 +538,27 @@ async function main() {
   assert.equal(preparing.data.inventory.replayedMovementCount, 0);
   assert.equal((await ingredientExact(flour.id)).quantityMicros, 1_580_000n);
 
+  const firstSnapshot = await itemInventorySnapshot(orderLevelItem.id);
+  assert.equal(firstSnapshot.inventoryConsumptionState, "consumed");
+  assert.equal(firstSnapshot.inventoryRecipeId, recipeV2.data.recipe.id);
+  assert.equal(firstSnapshot.inventoryRecipeVersion, 2);
+  assert.ok(firstSnapshot.inventoryConsumedAt);
+
+  const recipeV3 = await publishRecipe(adminCookie, {
+    menuItemId: trackedItem.id,
+    yieldQuantity: 1,
+    components: [
+      {
+        ingredientId: flour.id,
+        quantity: 400,
+        unit: "g",
+        modifierOptionId: null,
+      },
+    ],
+  });
+  assertStatus(recipeV3.response, 201, "Publish recipe after production started");
+  assert.equal(recipeV3.data.recipe.version, 3);
+
   const orderReady = await api<any>(
     `/api/orders/${encodeURIComponent(orderLevel.id)}`,
     {
@@ -522,9 +567,13 @@ async function main() {
       body: JSON.stringify({ status: "ready" }),
     }
   );
-  assertStatus(orderReady.response, 200, "Order ready after production");
+  assertStatus(orderReady.response, 200, "Order ready after recipe replacement");
   assert.equal(orderReady.data.inventory.replayedMovementCount, 1);
   assert.equal((await ingredientExact(flour.id)).quantityMicros, 1_580_000n);
+  assert.equal((await movementRows(flour.id, orderLevelItem.id)).length, 1);
+  const replaySnapshot = await itemInventorySnapshot(orderLevelItem.id);
+  assert.equal(replaySnapshot.inventoryRecipeId, recipeV2.data.recipe.id);
+  assert.equal(replaySnapshot.inventoryRecipeVersion, 2);
 
   const completed = await api<any>(
     `/api/orders/${encodeURIComponent(orderLevel.id)}`,
@@ -537,6 +586,60 @@ async function main() {
   assertStatus(completed.response, 200, "Order completion after production");
   assert.equal(completed.data.inventory.replayedMovementCount, 1);
   assert.equal((await ingredientExact(flour.id)).quantityMicros, 1_580_000n);
+
+  console.log("\n[p1-stock] a no-recipe decision remains permanently untracked");
+  const lateRecipeItem = await createMenuItem(
+    adminCookie,
+    category.id,
+    `P1 Late Recipe ${suffix}`
+  );
+  const lateRecipeOrder = await createOrder(lateRecipeItem.id);
+  const lateRecipeOrderItem = lateRecipeOrder.items[0];
+  const latePreparing = await api<any>(
+    `/api/orders/${encodeURIComponent(lateRecipeOrder.id)}`,
+    {
+      method: "PATCH",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ status: "preparing" }),
+    }
+  );
+  assertStatus(latePreparing.response, 200, "Untracked order enters production");
+  assert.equal(latePreparing.data.inventory.untrackedItemCount, 1);
+  const untrackedSnapshot = await itemInventorySnapshot(lateRecipeOrderItem.id);
+  assert.equal(untrackedSnapshot.inventoryConsumptionState, "untracked");
+  assert.equal(untrackedSnapshot.inventoryRecipeId, null);
+  assert.ok(untrackedSnapshot.inventoryConsumedAt);
+
+  const lateRecipe = await publishRecipe(adminCookie, {
+    menuItemId: lateRecipeItem.id,
+    yieldQuantity: 1,
+    components: [
+      {
+        ingredientId: flour.id,
+        quantity: 250,
+        unit: "g",
+        modifierOptionId: null,
+      },
+    ],
+  });
+  assertStatus(lateRecipe.response, 201, "Publish recipe after untracked decision");
+
+  const lateReady = await api<any>(
+    `/api/orders/${encodeURIComponent(lateRecipeOrder.id)}`,
+    {
+      method: "PATCH",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ status: "ready" }),
+    }
+  );
+  assertStatus(lateReady.response, 200, "Untracked order becomes ready");
+  assert.equal(lateReady.data.inventory.untrackedItemCount, 1);
+  assert.equal((await movementRows(flour.id, lateRecipeOrderItem.id)).length, 0);
+  assert.equal((await ingredientExact(flour.id)).quantityMicros, 1_580_000n);
+  assert.equal(
+    (await itemInventorySnapshot(lateRecipeOrderItem.id)).inventoryConsumptionState,
+    "untracked"
+  );
 
   console.log("\n[p1-stock] insufficient stock rolls the status transition back");
   const scarce = await createIngredient(adminCookie, {
