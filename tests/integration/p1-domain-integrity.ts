@@ -164,7 +164,7 @@ async function assertMutableTimestampsAdvance() {
     data: {
       name: `P1 Timestamp Ingredient ${suffix}`,
       unit: "kg",
-      quantity: 1,
+      quantity: 0,
       lowThreshold: 0,
       costPerUnit: 1.25,
       category: "P1 integration",
@@ -189,8 +189,8 @@ async function assertMutableTimestampsAdvance() {
     const [updatedIngredient, updatedScreen] = await Promise.all([
       db.ingredient.update({
         where: { id: ingredient.id },
-        data: { quantity: { increment: 1 } },
-        select: { createdAt: true, updatedAt: true },
+        data: { supplier: `P1 Timestamp Supplier ${suffix}` },
+        select: { createdAt: true, updatedAt: true, supplier: true },
       }),
       db.kitchenScreen.update({
         where: { id: screen.id },
@@ -206,7 +206,11 @@ async function assertMutableTimestampsAdvance() {
     );
     assert.ok(
       updatedIngredient.updatedAt.getTime() > ingredient.updatedAt.getTime(),
-      "Ingredient updatedAt must advance on mutation"
+      "Ingredient updatedAt must advance on metadata mutation"
+    );
+    assert.equal(
+      updatedIngredient.supplier,
+      `P1 Timestamp Supplier ${suffix}`
     );
 
     assert.equal(
