@@ -71,7 +71,7 @@ Receipt idempotency keys make retries safe. Concurrent attempts to receive the s
 
 ## Receipt corrections
 
-Purchase-receipt stock movements cannot be reversed through the generic stock-ledger endpoint. A manager or inventory manager must use the purchasing correction workflow so the system can atomically:
+Generic stock reversal is deliberately rejected for purchase-receipt movements. A manager or inventory manager must use the purchasing correction workflow so the system can atomically:
 
 - append exact reversal stock movements;
 - link each reversal to its receipt line;

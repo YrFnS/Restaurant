@@ -36,10 +36,7 @@ import { AdminLoading, EmptyState, apiFetch } from "../shared";
 import { toast } from "sonner";
 import {
   Ban,
-  Boxes,
   Building2,
-  CalendarClock,
-  CheckCircle2,
   ClipboardCheck,
   Eye,
   Loader2,
@@ -483,7 +480,6 @@ export function PurchasingTab() {
           orders={filteredOrders}
           isRTL={isRTL}
           fmtCurrency={fmtCurrency}
-          fmtNumber={fmtNumber}
           busyId={busyId}
           onEdit={(order) => setOrderEditor(order)}
           onSubmit={submitOrder}
@@ -614,7 +610,6 @@ function OrdersTable({
   orders,
   isRTL,
   fmtCurrency,
-  fmtNumber,
   busyId,
   onEdit,
   onSubmit,
@@ -625,7 +620,6 @@ function OrdersTable({
   orders: PurchaseOrder[];
   isRTL: boolean;
   fmtCurrency: (value: number) => string;
-  fmtNumber: (value: number) => string;
   busyId: string | null;
   onEdit: (order: PurchaseOrder) => void;
   onSubmit: (order: PurchaseOrder) => void | Promise<void>;
