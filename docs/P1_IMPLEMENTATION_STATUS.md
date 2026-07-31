@@ -61,7 +61,7 @@ The rollout remains staged:
 - [x] Preserve existing numeric public API contracts through omission and reviewed conversion helpers.
 - [x] Remove persisted binary-float dependence from authoritative order pricing, checkout, and cash-balance calculations.
 - [x] Add exact-field round-trip, overflow, currency-scale, trigger, constraint, and serialization tests.
-- [ ] Cut gift-card, purchase-order, combo-meal, customer-spend, and remaining report/analytics reads and writes over to exact values when those workflows are implemented or reviewed.
+- [ ] Cut gift-card, purchase-order, combo-meal, customer-spend, special-offer, promo-code, and remaining report/analytics reads and writes over to exact values when those workflows are implemented or reviewed.
 - [ ] Add a permanent source inventory proving every financial write either dual-writes exact values or is explicitly classified as compatibility-only/deferred.
 
 ### Phase 3: contract
