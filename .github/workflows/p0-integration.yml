@@ -51,7 +51,7 @@ jobs:
       APP_ALLOWED_ORIGINS: "http://127.0.0.1:3000"
       NEXTAUTH_SECRET: "integration-nextauth-secret-0123456789abcdef0123456789abcdef"
       NEXTAUTH_URL: "http://127.0.0.1:3000"
-      KDS_REALTIME_URL: "http://127.0.0.1:3000"
+      KDS_REALTIME_URL: "http://127.0.0.1:3003/broadcast"
       NEXT_PUBLIC_KDS_PORT: "3003"
 
     steps:
