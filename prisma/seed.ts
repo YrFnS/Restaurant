@@ -1,4 +1,19 @@
-import { PrismaClient } from "@prisma/client";
+import {
+  CashMovementType,
+  DynamicPricingType,
+  KdsLayoutType,
+  KdsScreenType,
+  OrderItemStatus,
+  OrderStatus,
+  OrderType,
+  PaymentStatus,
+  PrismaClient,
+  ReservationStatus,
+  StaffRole,
+  TableShape,
+  TableStatus,
+  WaitlistStatus,
+} from "@prisma/client";
 import { randomUUID } from "crypto";
 
 const db = new PrismaClient();
@@ -66,7 +81,19 @@ async function main() {
     { name: "Dessert Station", slug: "dessert", description: "Desserts & sweets", stationFilter: "dessert", screenType: "prep", sortOrder: 3 },
     { name: "Expo View", slug: "expo", description: "All stations consolidated", stationFilter: "", screenType: "expo", sortOrder: 4 },
   ];
-  for (const sc of screens) { await db.kitchenScreen.create({ data: { ...sc, layoutType: "grid", autoRefreshSec: 10, showCompleted: false, maxOrders: 0, isActive: true } }); }
+  for (const sc of screens) {
+    await db.kitchenScreen.create({
+      data: {
+        ...sc,
+        screenType: sc.screenType as KdsScreenType,
+        layoutType: "grid" as KdsLayoutType,
+        autoRefreshSec: 10,
+        showCompleted: false,
+        maxOrders: 0,
+        isActive: true,
+      },
+    });
+  }
   console.log(`  ✓ ${screens.length} KDS screens`);
 
   // ── 4. MENU CATEGORIES ──
@@ -163,7 +190,21 @@ async function main() {
   ];
   const tableRecords: any[] = [];
   for (const t of tbls) {
-    const r = await db.restaurantTable.create({ data: { number: t.n, capacity: t.c, section: t.s, shape: t.sh, status: t.n <= 5 ? "seated" : "open", x: t.x, y: t.y, width: t.w, height: t.h, serverName: t.n <= 5 ? "Sarah" : "", seatedAt: t.n <= 5 ? pastDate(0) : null } });
+    const r = await db.restaurantTable.create({
+      data: {
+        number: t.n,
+        capacity: t.c,
+        section: t.s,
+        shape: t.sh as TableShape,
+        status: (t.n <= 5 ? "seated" : "open") as TableStatus,
+        x: t.x,
+        y: t.y,
+        width: t.w,
+        height: t.h,
+        serverName: t.n <= 5 ? "Sarah" : "",
+        seatedAt: t.n <= 5 ? pastDate(0) : null,
+      },
+    });
     tableRecords.push(r);
   }
   console.log(`  ✓ ${tbls.length} tables`);
@@ -179,7 +220,17 @@ async function main() {
     { name: "Hassan", pin: "6666", role: "host", wage: 11, email: "hassan@restaurant.com", phone: "+9647500000007" },
   ];
   for (const e of emps) {
-    const emp = await db.employee.create({ data: { name: e.name, pin: e.pin, role: e.role, hourlyWage: e.wage, isActive: true, email: e.email, phone: e.phone } });
+    const emp = await db.employee.create({
+      data: {
+        name: e.name,
+        pin: e.pin,
+        role: e.role as StaffRole,
+        hourlyWage: e.wage,
+        isActive: true,
+        email: e.email,
+        phone: e.phone,
+      },
+    });
     for (let day = 1; day <= 6; day++) {
       await db.schedule.create({ data: { employeeId: emp.id, dayOfWeek: day, startTime: "09:00", endTime: "17:00", role: e.role === "cook" ? "Cook" : e.role === "bartender" ? "Bartender" : e.role === "host" ? "Host" : "Server" } });
     }
@@ -208,7 +259,21 @@ async function main() {
   ];
   for (const r of resData) {
     const tbl = tableRecords.find((t: any) => t.number === r.tableNum);
-    await db.reservation.create({ data: { customerName: r.name, customerPhone: r.phone, customerEmail: r.email, partySize: r.party, tableId: tbl?.id, customerId: custMap[r.phone], dateTime: r.date, status: r.status, occasion: r.occasion, preference: r.pref, notes: r.notes } });
+    await db.reservation.create({
+      data: {
+        customerName: r.name,
+        customerPhone: r.phone,
+        customerEmail: r.email,
+        partySize: r.party,
+        tableId: tbl?.id,
+        customerId: custMap[r.phone],
+        dateTime: r.date,
+        status: r.status as ReservationStatus,
+        occasion: r.occasion,
+        preference: r.pref,
+        notes: r.notes,
+      },
+    });
   }
   console.log(`  ✓ ${resData.length} reservations`);
 
@@ -218,7 +283,11 @@ async function main() {
     { customerName: "Sara Nabil", customerPhone: "+9647507777777", partySize: 2, status: "notified", estimatedWait: 5, notes: "Waiting at bar" },
     { customerName: "Karim Fadel", customerPhone: "+9647508888888", partySize: 6, status: "waiting", estimatedWait: 35, notes: "Large group" },
   ];
-  for (const w of wlData) { await db.waitlistEntry.create({ data: w }); }
+  for (const w of wlData) {
+    await db.waitlistEntry.create({
+      data: { ...w, status: w.status as WaitlistStatus },
+    });
+  }
   console.log(`  ✓ ${wlData.length} waitlist entries`);
 
   // ── 11. ORDERS + ORDER ITEMS ──
@@ -240,11 +309,41 @@ async function main() {
     const sub = oi.reduce((s: number, i: any) => s + i.price, 0);
     const tax = sub * 0.1;
     const tbl = od.tN ? tableRecords.find((t: any) => t.number === od.tN) : null;
-    const ord = await db.order.create({ data: { orderNumber: `#${oCnt++}`, type: od.type, status: od.status, customerName: od.type === "dine_in" ? `Table ${od.tN}` : "Walk-in", customerPhone: "", subtotal: sub, taxAmount: tax, deliveryFee: od.type === "delivery" ? 4.99 : 0, total: sub + tax + (od.type === "delivery" ? 4.99 : 0), paymentStatus: od.status === "ready" ? "paid" : "unpaid", serverName: "Sarah", tableId: tbl?.id, estimatedReady: futureDate(0) } });
+    const ord = await db.order.create({
+      data: {
+        orderNumber: `#${oCnt++}`,
+        type: od.type as OrderType,
+        status: od.status as OrderStatus,
+        customerName: od.type === "dine_in" ? `Table ${od.tN}` : "Walk-in",
+        customerPhone: "",
+        subtotal: sub,
+        taxAmount: tax,
+        deliveryFee: od.type === "delivery" ? 4.99 : 0,
+        total: sub + tax + (od.type === "delivery" ? 4.99 : 0),
+        paymentStatus: (od.status === "ready" ? "paid" : "unpaid") as PaymentStatus,
+        serverName: "Sarah",
+        tableId: tbl?.id,
+        estimatedReady: futureDate(0),
+      },
+    });
     for (let k = 0; k < oi.length; k++) {
       const it = oi[k];
       if (!it) continue;
-      await db.orderItem.create({ data: { orderId: ord.id, menuItemId: it.id, quantity: 1, unitPrice: it.price, totalPrice: it.price, modifiers: "[]", status: k === 0 ? "preparing" : "pending", stationSlug: stByCat[it.id] || "prep", course: k < 2 ? 1 : 2, hold: false, firedAt: k === 0 ? pastDate(0) : null } });
+      await db.orderItem.create({
+        data: {
+          orderId: ord.id,
+          menuItemId: it.id,
+          quantity: 1,
+          unitPrice: it.price,
+          totalPrice: it.price,
+          modifiers: "[]",
+          status: (k === 0 ? "preparing" : "pending") as OrderItemStatus,
+          stationSlug: stByCat[it.id] || "prep",
+          course: k < 2 ? 1 : 2,
+          hold: false,
+          firedAt: k === 0 ? pastDate(0) : null,
+        },
+      });
     }
   }
   console.log(`  ✓ ${orderDefs.length} orders`);
@@ -353,7 +452,11 @@ async function main() {
     { type: "payout", amount: 50, note: "Supplier payment", createdBy: "Omar Manager" },
     { type: "drop", amount: 100, note: "Cash drop to safe", createdBy: "Admin" },
   ];
-  for (const c of cashData) { await db.cashDrawerEntry.create({ data: c }); }
+  for (const c of cashData) {
+    await db.cashDrawerEntry.create({
+      data: { ...c, type: c.type as CashMovementType },
+    });
+  }
   console.log(`  ✓ ${cashData.length} cash drawer entries`);
 
   // ── 23. NOTIFICATIONS ──
@@ -372,7 +475,11 @@ async function main() {
     { nameEn: "Weekend Surge", nameAr: "زيادة عطلة نهاية الأسبوع", type: "surge", multiplier: 1.15, dayOfWeek: 5, startTime: "18:00", endTime: "22:00", isActive: true },
     { nameEn: "Tuesday Lunch", nameAr: "غداء الثلاثاء", type: "lunch_special", multiplier: 0.85, dayOfWeek: 2, startTime: "12:00", endTime: "15:00", isActive: true },
   ];
-  for (const d of dpData) { await db.dynamicPricing.create({ data: d }); }
+  for (const d of dpData) {
+    await db.dynamicPricing.create({
+      data: { ...d, type: d.type as DynamicPricingType },
+    });
+  }
   console.log(`  ✓ ${dpData.length} dynamic pricing rules`);
 
   // ── 25. COMBO MEALS ──
