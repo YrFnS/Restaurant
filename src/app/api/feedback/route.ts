@@ -22,37 +22,6 @@ const feedbackSchema = z
 
 const FEEDBACK_WINDOW_MS = 60_000;
 const MAX_FEEDBACK_PER_WINDOW = 10;
-type FeedbackBucket = { count: number; resetAt: number };
-const globalForFeedbackLimit = globalThis as unknown as {
-  restaurantFeedbackRateLimits?: Map<string, FeedbackBucket>;
-};
-const feedbackRateLimits =
-  globalForFeedbackLimit.restaurantFeedbackRateLimits ??
-  new Map<string, FeedbackBucket>();
-if (!globalForFeedbackLimit.restaurantFeedbackRateLimits) {
-  globalForFeedbackLimit.restaurantFeedbackRateLimits = feedbackRateLimits;
-}
-
-function clientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = feedbackRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + FEEDBACK_WINDOW_MS };
-  bucket.count += 1;
-  feedbackRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_FEEDBACK_PER_WINDOW) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
 
 export async function GET() {
   const auth = await requireStaffSession(REPORTING_ROLES);
@@ -88,13 +57,19 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[feedback] Shared rate limiter failed", error);
     return NextResponse.json(
-      { error: "Feedback is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      {
+        error: "Feedback is temporarily unavailable",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
   if (!feedbackLimit.allowed) {
     return NextResponse.json(
-      { error: "Too many feedback submissions", code: "FEEDBACK_RATE_LIMITED" },
+      {
+        error: "Too many feedback submissions",
+        code: "FEEDBACK_RATE_LIMITED",
+      },
       { status: 429, headers: rateLimitHeaders(feedbackLimit) }
     );
   }
@@ -115,9 +90,7 @@ export async function POST(req: NextRequest) {
     const feedback = await db.feedback.create({
       data: {
         ...parsed.data,
-        email: parsed.data.email
-          ? parsed.data.email.toLowerCase()
-          : null,
+        email: parsed.data.email ? parsed.data.email.toLowerCase() : null,
       },
       select: { id: true, rating: true, createdAt: true },
     });
