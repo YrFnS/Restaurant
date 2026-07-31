@@ -188,6 +188,7 @@ export async function POST(req: NextRequest) {
         data: {
           type: "sale",
           amount: exactTotal,
+          amountMinor: exactTotalMinor,
           note: `Sale ${existing.orderNumber}${existing.table ? ` / Table ${existing.table.number}` : ""}`,
           createdBy: auth.session.name,
         },
