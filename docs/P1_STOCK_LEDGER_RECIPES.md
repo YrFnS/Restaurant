@@ -3,7 +3,9 @@
 > **Repository:** `YrFnS/Restaurant`  
 > **Branch:** `agent/p1-stock-ledger-recipes`  
 > **Stacked base:** `agent/p1-payment-reversals`  
-> **Scope:** exact ingredient balances, unit conversions, versioned recipes, immutable stock movements, production consumption, waste, receiving, and corrections
+> **Validated head:** `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d`  
+> **Scope:** exact ingredient balances, unit conversions, versioned recipes, immutable stock movements, production consumption, waste, receiving, and corrections  
+> **Release status:** source-level implementation is green; the PR remains a draft stacked branch until the preceding P1 pull requests are merged.
 
 ## Purpose
 
@@ -79,6 +81,16 @@ Every movement records:
 
 Movement rows cannot be updated or deleted. Corrections are new reversal movements.
 
+### Order-item consumption snapshot
+
+Every order item now makes a permanent, one-way inventory decision when it first enters production:
+
+- `pending` means inventory has not yet been evaluated;
+- `consumed` stores the exact recipe ID and version used, plus the consumption timestamp;
+- `untracked` records that no recipe existed at production time.
+
+Once the item is consumed or marked untracked, that snapshot cannot be edited. Publishing a new recipe later therefore cannot consume the same item again or retroactively deduct a previously untracked item.
+
 ## Movement types
 
 | Type | Direction | Typical source |
@@ -108,6 +120,7 @@ Movement rows cannot be updated or deleted. Corrections are new reversal movemen
 13. Recipe modifier components must belong to the same menu item.
 14. Each order item moves one way from pending inventory evaluation to either consumed or untracked.
 15. Consumed recipe ID/version snapshots cannot be edited after production begins.
+16. Legacy items already in or beyond production are migrated as untracked rather than retroactively consuming current stock.
 
 ## Production-consumption policy
 
@@ -148,30 +161,37 @@ List redacted stock history or create receipts, waste, adjustments, and reviewed
 - direct quantity replacement is disabled;
 - deletion is blocked once an ingredient has ledger or recipe history.
 
+## Operator workflow
+
+The bilingual inventory administration interface now includes:
+
+- exact current balances and low-stock state;
+- opening balance through ingredient creation;
+- receipts, waste, positive adjustments, and negative adjustments;
+- movement history with quantity, balance, and cost snapshots;
+- reviewed movement reversal;
+- ingredient-specific unit conversions;
+- active recipe visibility;
+- immutable recipe-version publishing with modifier-specific components;
+- visibility into menu items that remain without an active recipe.
+
 ## Cost policy
 
 Each movement snapshots the ingredient's exact unit cost. Total cost is calculated in PostgreSQL with deterministic rounding.
 
 This slice provides movement-level and order-item-level cost of goods. Weighted-average receiving and advanced valuation methods remain a separate decision; a receipt may update the current ingredient cost through the reviewed ingredient-cost workflow, while historical movement snapshots remain unchanged.
 
-## Validation gate
+## Validated checkpoint
 
-This slice is complete only when all of the following pass:
+**Head:** `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d`
 
-- migration deployment on an empty PostgreSQL database;
-- representative existing-data adoption and opening-balance backfill;
-- strict TypeScript, source inventories, ESLint, and production build;
-- unit conversion precision and validation;
-- recipe versioning and modifier ownership;
-- idempotent opening, receipt, waste, adjustment, consumption, and reversal;
-- direct quantity-edit rejection;
-- one-time production consumption through every supported order/KDS path;
-- insufficient-stock rollback;
-- concurrent movement serialization;
-- negative-stock policy;
-- movement immutability and one-reversal rule;
-- cost snapshot and balance reconciliation;
-- complete P0 and earlier P1 regression suite.
+**P1 Stacked Validation #32** passed all three jobs:
+
+- **Typecheck, tests, lint, and build:** locked installation, Prisma schema validation/generation, strict TypeScript, all security and stock source inventories, ESLint, and production build.
+- **Database-backed restaurant suite:** clean PostgreSQL migration deployment, seeding, exact-money verification, every P0 and earlier P1 regression, and the full stock-ledger/recipe lifecycle.
+- **Existing-data adoption rehearsal:** legacy-schema reconstruction, baseline adoption, additive migration deployment, opening-balance backfill, credential migration, record preservation, enum/timestamp verification, and exact-money verification.
+
+The stock suite covers authorization, migration opening balances, exact quantities, conversions, immutable recipe versions, modifier ownership, direct and order-level production consumption, recipe-change replay safety, permanent no-recipe decisions, insufficient-stock rollback, receipts, waste, adjustments, movement replay, reviewed reversal, concurrent stock writes, explicit negative-stock policy, cost snapshots, balance reconciliation, database immutability, and audit events.
 
 ## Explicitly deferred
 
