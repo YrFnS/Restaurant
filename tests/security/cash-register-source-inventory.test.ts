@@ -14,6 +14,10 @@ const registersRoute = source("src/app/api/registers/route.ts");
 const sessionRoute = source("src/app/api/registers/[id]/session/route.ts");
 const cashRoute = source("src/app/api/cash/route.ts");
 const checkoutRoute = source("src/app/api/pos/checkout/route.ts");
+const posPage = source("src/app/pos/page.tsx");
+const registerClient = source("src/lib/cash/register-client.ts");
+const registerControl = source("src/components/pos/RegisterSessionControl.tsx");
+const paymentDialog = source("src/components/pos/PaymentDialog.tsx");
 
 describe("cash-register session source inventory", () => {
   test("commits the register, session, close, and ledger-link schema", () => {
@@ -82,5 +86,34 @@ describe("cash-register session source inventory", () => {
     expect(checkoutRoute).toContain("linkPaymentEventToSession");
     expect(checkoutRoute).toContain("allowLegacyFallback: true");
     expect(cashRoute).not.toContain("allowLegacyFallback: true");
+  });
+
+  test("ships a usable POS assignment, opening, closing, and checkout boundary", () => {
+    expect(posPage).toContain("RegisterSessionControl");
+
+    for (const marker of [
+      "readStoredPosRegister",
+      "saveStoredPosRegister",
+      "registerRequestHeaders",
+      "POS_REGISTER_UPDATED_EVENT",
+    ]) {
+      expect(registerClient).toContain(marker);
+    }
+
+    for (const marker of [
+      'fetch("/api/registers"',
+      "openingFloat",
+      "countedCash",
+      "approvalReason",
+      "pos-register-session",
+      "pos-register-ledger",
+      "createRegisterIdempotencyKey",
+    ]) {
+      expect(registerControl).toContain(marker);
+    }
+
+    expect(paymentDialog).toContain("requireOpenPosRegister");
+    expect(paymentDialog).toContain("registerRequestHeaders(register");
+    expect(paymentDialog).toContain('fetch("/api/pos/checkout"');
   });
 });
