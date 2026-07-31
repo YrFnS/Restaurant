@@ -3,18 +3,20 @@
 > **Repository:** `YrFnS/Restaurant`  
 > **Branch:** `agent/p0-hardening`  
 > **Draft PR:** `#1`  
-> **Validated commit:** `706d55deec612a51afd9c4371b47e47d29caf9dd`  
+> **Validated implementation commit:** `706d55deec612a51afd9c4371b47e47d29caf9dd`  
 > **Last validated:** 2026-07-31  
-> **Release decision:** **Code gate passed; production deployment remains blocked pending the operational rehearsal and security review below.**
+> **Release decision:** **Blocked — the implemented suite is green, but the remaining P0 acceptance cases and production-only gates must still be completed.**
 
-This document is the implementation companion to [`REMEDIATION_PLAN.md`](./REMEDIATION_PLAN.md). It records what has been implemented and proved by automated checks, and separates those results from production-only work that CI cannot complete.
+This document is the implementation companion to [`REMEDIATION_PLAN.md`](./REMEDIATION_PLAN.md). It records what has been implemented and proved by automated checks, and keeps untested acceptance cases distinct from production-only operator work.
 
 ## Exact green validation baseline
 
-The following GitHub Actions runs passed on the exact validated commit:
+The following GitHub Actions runs passed on the exact validated implementation commit:
 
 - **P0 Validation #279**
 - **P0 Integration #114**
+
+Documentation-only commits after that checkpoint do not change runtime behavior, but their workflows must also remain green before merge.
 
 ### P0 Validation #279
 
@@ -39,12 +41,12 @@ The clean-database job passed:
 - employee PIN migration and verifier check
 - production build and standalone-server startup
 - login, persistent session, logout, and revoked-session behavior
-- anonymous and role-based authorization boundaries
+- representative anonymous and role-based authorization boundaries
 - safe employee and KDS DTO redaction
 - server-authoritative order pricing and rejection of financial-field tampering
 - concurrent idempotency and unique order-reference behavior
 - durable KDS event creation, authenticated worker execution, and realtime delivery
-- signed customer tracking and response redaction
+- signed order tracking and response redaction
 - atomic cash checkout, replay protection, payment-event creation, cash-drawer linkage, and audit linkage
 
 The existing-data job also passed:
@@ -105,7 +107,7 @@ The existing-data job also passed:
 
 - Customer and POS clients submit selections rather than authoritative totals.
 - Current item and modifier prices are loaded server-side.
-- Modifier ownership and selection bounds are validated.
+- Modifier ownership and selection bounds are enforced by the pricing service.
 - Active dynamic-pricing and promo rules are evaluated server-side.
 - Tax, delivery, discounts, tips, and totals are calculated through integer-cent utilities.
 - Unknown fields, unavailable items, invalid quantities, malformed selections, and client financial fields are rejected.
@@ -119,7 +121,7 @@ The existing-data job also passed:
 
 ### Durable KDS delivery
 
-- Order creation and KDS/order status mutations write outbox events inside the same database transaction as the business change.
+- Order creation and KDS/order status mutations write outbox events inside the same transaction as the business change.
 - Immediate delivery is attempted only after commit.
 - Failed events remain queued with retry time, attempt count, lease state, and bounded error details.
 - Workers claim rows safely with database locking and support concurrent instances.
@@ -143,7 +145,7 @@ The existing-data job also passed:
 - Order tracking requires the exact order reference plus a resource-scoped signed credential.
 - Tracking responses are allowlisted and exclude private customer, payment, database, and token fields.
 - Reservation and waitlist ownership use resource-specific opaque credentials.
-- Public callers cannot enumerate reservation, waitlist, employee, or phone-number order data.
+- Public callers cannot list reservation, waitlist, employee, or phone-number order data.
 - Business analytics and reports require reporting roles.
 - Public endpoints and tracking operations use shared rate limits where appropriate.
 
@@ -179,11 +181,24 @@ The existing-data job also passed:
 - CI proves clean-database deployment and representative existing-data baseline adoption.
 - Backup, first-adoption, rollback, KDS worker, and privileged-recovery procedures are documented in [`P0_DEPLOYMENT_RUNBOOK.md`](./P0_DEPLOYMENT_RUNBOOK.md).
 
-## Remaining production release blockers
+## Remaining P0 blockers
 
-These are not unresolved compile/test failures. They require the target production environment or an independent review.
+### 1. Complete the original automated acceptance matrix
 
-### 1. Rehearse against a protected copy of the real deployment database
+The current suite is green, but these planned cases are still open:
+
+- focused pricing calculations and monetary rounding boundaries
+- required/optional modifier ownership, minimum, and maximum selection tests
+- promo eligibility and date-boundary tests
+- database-backed login lockout threshold/recovery behavior
+- an explicit forced order-transaction rollback test
+- cross-customer reservation-token HTTP isolation
+- cross-customer waitlist-token HTTP isolation
+- an authorized menu mutation smoke test with audit verification
+- a customer order containing configured modifiers rather than the current simple no-required-modifier item
+- broader allowed/denied assertions for every protected mutation, beyond the current representative authorization matrix
+
+### 2. Rehearse against a protected copy of the real deployment database
 
 The representative existing-data CI rehearsal is green, but the operator must still:
 
@@ -194,32 +209,32 @@ The representative existing-data CI rehearsal is green, but the operator must st
 - run `db:deploy`, PIN migration/check, production build, and operational smoke tests
 - rehearse rollback from the verified backup
 
-### 2. Provision and verify production secrets
+### 3. Provision and verify production secrets
 
 Independent production values must be configured for session signing, PIN peppering, customer/order access, rate-limit hashing, and the KDS worker. Trusted origins and service URLs must match the final topology.
 
-### 3. Configure the KDS retry schedule and monitoring
+### 4. Configure the KDS retry schedule and monitoring
 
-The authenticated worker endpoint is implemented and tested. Production still needs a trusted scheduler, queue-growth monitoring, and an incident response for repeated delivery failures.
+The authenticated worker endpoint is implemented and tested. Production still needs a trusted scheduler, queue-growth monitoring, and incident handling for repeated delivery failures.
 
-### 4. Complete an independent security-focused review
+### 5. Complete an independent security-focused review
 
 A reviewer should inspect the final diff, role matrix, migration adoption procedure, production settings, and operational rollback plan before the PR is marked ready or deployed.
 
-### 5. Perform the controlled post-deployment smoke test
+### 6. Perform the controlled post-deployment smoke test
 
 After deployment, verify login/logout/revocation, authorized administration, public order placement, KDS progression, signed tracking, cash capture/payment ledger, reservation/waitlist access, audit records, and worker execution against the live topology.
 
 ## Explicitly deferred beyond P0
 
-These items remain important but are tracked as P1/P2 rather than reasons to reopen already-contained P0 paths:
+These items remain important but are tracked as P1/P2 while currently unsupported paths fail closed:
 
 - Decimal/smallest-unit storage migration for all persisted monetary columns
 - full refund, void, card, and split-payment workflows
 - register opening/closing sessions and reconciliation
 - immutable stock movement/recipe ledger
 - multi-branch tenancy decision and isolation
-- production realtime topology beyond the durable outbox and polling fallback
+- final production realtime topology beyond the durable outbox and polling fallback
 - broader accessibility, routing, observability, performance, and UX work
 
 ## Current release gate
@@ -230,19 +245,20 @@ These items remain important but are tracked as P1/P2 rather than reasons to reo
 | Prisma schema validation | Passed |
 | Prisma client generation | Passed |
 | TypeScript | Passed |
-| Focused unit tests | Passed |
+| Current focused unit tests | Passed |
 | ESLint | Passed |
 | Production build | Passed |
 | Clean-database migration deployment | Passed in CI |
 | Representative existing-data adoption rehearsal | Passed in CI |
 | PIN migration and verifier check | Passed in both CI paths |
 | Database-backed authentication/order smoke suite | Passed |
-| Authorization matrix | Passed |
+| Representative authorization matrix | Passed |
 | KDS outbox worker and realtime delivery | Passed |
 | Payment-ledger replay checks | Passed |
+| Remaining original P0 test cases | Open |
 | Protected real-data backup/restore rehearsal | Open — operator action |
 | Production KDS scheduler and monitoring | Open — operator action |
 | Independent security review | Open |
 | Controlled production deployment smoke test | Open |
 
-P0 implementation is now green in code and CI. The draft PR remains blocked until the production-only gates above are completed and documented.
+The branch is substantially hardened and the committed suite is green. P0 remains open until the missing acceptance cases and production gates above are completed and documented.
