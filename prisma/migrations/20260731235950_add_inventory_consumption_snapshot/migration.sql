@@ -1,20 +1,6 @@
--- P1 inventory consumption snapshots and negative-stock policy alignment.
--- Production consumption becomes a one-way per-order-item decision so a later
--- recipe publication cannot charge the same item against a different recipe.
-
-ALTER TABLE "Ingredient"
-  DROP CONSTRAINT IF EXISTS "Ingredient_stock_bounds";
-
-ALTER TABLE "Ingredient"
-  ADD CONSTRAINT "Ingredient_stock_bounds" CHECK (
-    "quantity" BETWEEN -1000000000000000 AND 1000000000000000 AND
-    ("allowNegativeStock" OR "quantity" >= 0) AND
-    "lowThreshold" >= 0 AND
-    "lowThreshold" <= 1000000000000000
-  ) NOT VALID;
-
-ALTER TABLE "Ingredient"
-  VALIDATE CONSTRAINT "Ingredient_stock_bounds";
+-- P1 per-order-item inventory consumption snapshots.
+-- Production consumption becomes a one-way decision so a later recipe
+-- publication cannot charge the same item against a different recipe.
 
 CREATE TYPE "InventoryConsumptionState" AS ENUM (
   'pending',
