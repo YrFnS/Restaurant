@@ -70,9 +70,12 @@ export function scaledIntegerToSafeNumber(
   value: bigint,
   scaleDigits: number
 ): number {
-  const text = formatScaledInteger(value, scaleDigits);
-  const numeric = Number(text);
-  if (!Number.isSafeInteger(value) || !Number.isFinite(numeric)) {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ExactValueError("Scaled value cannot be represented safely as a number");
+  }
+
+  const numeric = Number(formatScaledInteger(value, scaleDigits));
+  if (!Number.isFinite(numeric)) {
     throw new ExactValueError("Scaled value cannot be represented safely as a number");
   }
   return numeric;
