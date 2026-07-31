@@ -62,7 +62,7 @@ async function main() {
     where: { id: event.id },
   });
   assert.ok(delivered?.deliveredAt, "Worker must mark the event as delivered");
-  assert.equal(delivered?.lastError, null, "Delivered event must clear its error");
+  assert.equal(delivered?.lastError, "", "Delivered event must clear its error");
 
   console.log("[p0-kds-worker] Authentication and delivery assertions passed.");
 }
