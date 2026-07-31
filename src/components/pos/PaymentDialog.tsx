@@ -2,14 +2,28 @@
 
 import { useI18n } from "@/lib/i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Banknote, CreditCard, Delete, Check, Loader2, Receipt, HandCoins,
+  Banknote,
+  CreditCard,
+  Delete,
+  Check,
+  Loader2,
+  Receipt,
+  HandCoins,
 } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogTitle, DialogDescription,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import {
+  registerRequestHeaders,
+  requireOpenPosRegister,
+} from "@/lib/cash/register-client";
 import {
   type PaymentMethod,
   type PosOrderItem,
@@ -51,12 +65,24 @@ interface PaymentDialogProps {
 
 export function PaymentDialog(props: PaymentDialogProps) {
   const {
-    open, onOpenChange, items, orderType, table,
-    serverName, customerName, customerPhone, deliveryAddress, notes,
-    taxRate, deliveryFee, tip, onComplete,
+    open,
+    onOpenChange,
+    items,
+    orderType,
+    table,
+    serverName,
+    customerName,
+    customerPhone,
+    deliveryAddress,
+    notes,
+    taxRate,
+    deliveryFee,
+    tip,
+    onComplete,
   } = props;
 
   const { t, isRTL, fmtCurrency } = useI18n();
+  const queryClient = useQueryClient();
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [tenderedStr, setTenderedStr] = useState<string>("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -75,11 +101,19 @@ export function PaymentDialog(props: PaymentDialogProps) {
   const subtotal = useMemo(() => posSubtotal(items), [items]);
   const tax = useMemo(() => posTax(subtotal, taxRate), [subtotal, taxRate]);
   const total = useMemo(
-    () => posTotal(subtotal, tax, orderType === "delivery" ? deliveryFee : 0, 0, tip),
+    () =>
+      posTotal(
+        subtotal,
+        tax,
+        orderType === "delivery" ? deliveryFee : 0,
+        0,
+        tip
+      ),
     [subtotal, tax, orderType, deliveryFee, tip]
   );
 
-  const tendered = method === "cash" ? parseFloat(tenderedStr || "0") || 0 : total;
+  const tendered =
+    method === "cash" ? parseFloat(tenderedStr || "0") || 0 : total;
   const change = method === "cash" ? Math.max(0, tendered - total) : 0;
   const canComplete = method === "card" || tendered >= total;
 
@@ -90,9 +124,24 @@ export function PaymentDialog(props: PaymentDialogProps) {
     Math.ceil(total / 20) * 20,
     Math.ceil(total / 50) * 50,
     Math.ceil(total / 100) * 100,
-  ].filter((v, i, arr) => arr.indexOf(v) === i && v > 0).slice(0, 5);
+  ]
+    .filter((v, i, arr) => arr.indexOf(v) === i && v > 0)
+    .slice(0, 5);
 
-  const keypad = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "del"];
+  const keypad = [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    ".",
+    "0",
+    "del",
+  ];
 
   const pressKey = (k: string) => {
     if (k === "del") {
@@ -122,15 +171,20 @@ export function PaymentDialog(props: PaymentDialogProps) {
       toast.error(t.pos.noTableSelected);
       return;
     }
-    if (orderType === "delivery" && (!deliveryAddress.trim() || !customerPhone.trim())) {
+    if (
+      orderType === "delivery" &&
+      (!deliveryAddress.trim() || !customerPhone.trim())
+    ) {
       toast.error(t.cart.deliveryAddress);
       return;
     }
 
     setIsProcessing(true);
-    idempotencyKeyRef.current ??= createIdempotencyKey();
 
     try {
+      const { register } = await requireOpenPosRegister();
+      idempotencyKeyRef.current ??= createIdempotencyKey();
+
       const orderPayload = {
         type: orderType,
         customerName:
@@ -169,7 +223,9 @@ export function PaymentDialog(props: PaymentDialogProps) {
 
       const checkoutResponse = await fetch("/api/pos/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: registerRequestHeaders(register, {
+          "Content-Type": "application/json",
+        }),
         body: JSON.stringify({
           orderId: createData.order.id,
           paymentMethod: "cash",
@@ -177,11 +233,20 @@ export function PaymentDialog(props: PaymentDialogProps) {
         }),
       });
       const checkoutData = await checkoutResponse.json().catch(() => null);
-      if (!checkoutResponse.ok || !checkoutData?.order || !checkoutData?.payment) {
+      if (
+        !checkoutResponse.ok ||
+        !checkoutData?.order ||
+        !checkoutData?.payment
+      ) {
         throw new Error(checkoutData?.error || t.common.error);
       }
 
       idempotencyKeyRef.current = null;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["pos-registers"] }),
+        queryClient.invalidateQueries({ queryKey: ["pos-register-session"] }),
+        queryClient.invalidateQueries({ queryKey: ["pos-register-ledger"] }),
+      ]);
       toast.success(`${t.pos.saleCompleted} ${checkoutData.order.orderNumber}`, {
         description:
           checkoutData.payment.change > 0
@@ -203,7 +268,6 @@ export function PaymentDialog(props: PaymentDialogProps) {
     }
   }
 
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -220,7 +284,9 @@ export function PaymentDialog(props: PaymentDialogProps) {
           <p className="text-xs uppercase tracking-wide opacity-80 font-medium">
             {t.pos.amountDue}
           </p>
-          <p className="text-4xl font-bold tabular-nums mt-1">{fmtCurrency(total)}</p>
+          <p className="text-4xl font-bold tabular-nums mt-1">
+            {fmtCurrency(total)}
+          </p>
           {table && (
             <p className="text-xs mt-1 opacity-90">
               {t.pos.tables} #{table.number}
@@ -311,7 +377,11 @@ export function PaymentDialog(props: PaymentDialogProps) {
                   }`}
                   aria-label={k === "del" ? "Delete" : k}
                 >
-                  {k === "del" ? <Delete className="size-5 mx-auto" /> : k}
+                  {k === "del" ? (
+                    <Delete className="size-5 mx-auto" />
+                  ) : (
+                    k
+                  )}
                 </button>
               ))}
             </div>
@@ -323,7 +393,9 @@ export function PaymentDialog(props: PaymentDialogProps) {
               <p className="text-sm text-muted-foreground">
                 {t.pos.card} · {t.pos.completeSale}
               </p>
-              <p className="text-xl font-bold mt-1 tabular-nums">{fmtCurrency(total)}</p>
+              <p className="text-xl font-bold mt-1 tabular-nums">
+                {fmtCurrency(total)}
+              </p>
             </div>
           </div>
         )}
@@ -369,7 +441,10 @@ export function PaymentDialog(props: PaymentDialogProps) {
 }
 
 function MethodButton({
-  active, onClick, icon, label,
+  active,
+  onClick,
+  icon,
+  label,
 }: {
   active: boolean;
   onClick: () => void;
@@ -394,7 +469,12 @@ function MethodButton({
 
 // Receipt-style confirmation dialog after sale completes
 export function ReceiptDialog({
-  open, onOpenChange, orderNumber, total, method, change,
+  open,
+  onOpenChange,
+  orderNumber,
+  total,
+  method,
+  change,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -406,7 +486,10 @@ export function ReceiptDialog({
   const { t, fmtCurrency } = useI18n();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm p-0 overflow-hidden text-center" showCloseButton>
+      <DialogContent
+        className="sm:max-w-sm p-0 overflow-hidden text-center"
+        showCloseButton
+      >
         <DialogTitle className="sr-only">{t.pos.saleCompleted}</DialogTitle>
         <div className="p-6">
           <div className="mx-auto mb-4 size-16 rounded-full bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center">
@@ -420,10 +503,14 @@ export function ReceiptDialog({
           <div className="mt-4 space-y-1.5 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">{t.cart.total}</span>
-              <span className="font-semibold tabular-nums">{fmtCurrency(total)}</span>
+              <span className="font-semibold tabular-nums">
+                {fmtCurrency(total)}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t.orders.paymentMethod}</span>
+              <span className="text-muted-foreground">
+                {t.orders.paymentMethod}
+              </span>
               <span className="font-semibold">
                 {method === "cash" ? t.pos.cash : t.pos.card}
               </span>
@@ -431,7 +518,9 @@ export function ReceiptDialog({
             {method === "cash" && change > 0 && (
               <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
                 <span>{t.pos.change}</span>
-                <span className="font-bold tabular-nums">{fmtCurrency(change)}</span>
+                <span className="font-bold tabular-nums">
+                  {fmtCurrency(change)}
+                </span>
               </div>
             )}
           </div>
