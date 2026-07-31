@@ -145,43 +145,43 @@ model RestaurantSettings {
   taglineAr             String   @default("")
   descriptionEn         String   @default("")
   descriptionAr         String   @default("")
-  phone                 String   @default("")
-  email                 String   @default("")
-  addressEn             String   @default("")
-  addressAr             String   @default("")
-  latitude              Float    @default(0)
-  longitude             Float    @default(0)
-  taxRate               Float    @default(0)
-  // P1 expand-phase exact value; scale 1_000_000. Ignored until application cutover.
-  taxRateMicros         BigInt   @default(0) @ignore
-  currency              String   @default("USD")
-  currencySymbol        String   @default("$")
-  deliveryFee           Float    @default(0)
-  deliveryFeeMinor      BigInt   @default(0) @ignore
-  minDeliveryOrder      Float    @default(0)
-  minDeliveryOrderMinor BigInt   @default(0) @ignore
-  deliveryRadiusKm      Float    @default(0)
-  avgPrepTimeMin        Int      @default(20)
-  tipPresets            String   @default("10,15,20")
-  openTime              String   @default("09:00")
-  closeTime             String   @default("23:00")
-  logoUrl               String   @default("")
-  heroImageUrl          String   @default("")
-  facebookUrl           String   @default("")
-  instagramUrl          String   @default("")
-  twitterUrl            String   @default("")
-  whatsappUrl           String   @default("")
-  giftCardAmounts       String   @default("25,50,75,100")
-  statsOrdersServed     Int      @default(0)
-  statsHappyCustomers   Int      @default(0)
-  statsYearsService     Int      @default(0)
+  phone                  String   @default("")
+  email                  String   @default("")
+  addressEn              String   @default("")
+  addressAr              String   @default("")
+  latitude               Float    @default(0)
+  longitude              Float    @default(0)
+  taxRate                Float    @default(0)
+  // P1 exact value; scale 1_000_000. Globally omitted unless explicitly selected.
+  taxRateMicros          BigInt   @default(0)
+  currency               String   @default("USD")
+  currencySymbol         String   @default("$")
+  deliveryFee            Float    @default(0)
+  deliveryFeeMinor       BigInt   @default(0)
+  minDeliveryOrder       Float    @default(0)
+  minDeliveryOrderMinor  BigInt   @default(0)
+  deliveryRadiusKm       Float    @default(0)
+  avgPrepTimeMin         Int      @default(20)
+  tipPresets             String   @default("10,15,20")
+  openTime               String   @default("09:00")
+  closeTime              String   @default("23:00")
+  logoUrl                 String   @default("")
+  heroImageUrl            String   @default("")
+  facebookUrl             String   @default("")
+  instagramUrl            String   @default("")
+  twitterUrl              String   @default("")
+  whatsappUrl             String   @default("")
+  giftCardAmounts         String   @default("25,50,75,100")
+  statsOrdersServed       Int      @default(0)
+  statsHappyCustomers     Int      @default(0)
+  statsYearsService       Int      @default(0)
   // KDS timing thresholds (minutes)
-  kdsGreenMin           Int      @default(10)
-  kdsYellowMin          Int      @default(18)
-  kdsRedMin             Int      @default(25)
-  soundOnNewTicket      Boolean  @default(true)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  kdsGreenMin             Int      @default(10)
+  kdsYellowMin            Int      @default(18)
+  kdsRedMin               Int      @default(25)
+  soundOnNewTicket        Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 // ─── Menu ───
@@ -207,7 +207,7 @@ model MenuItem {
   descriptionEn   String          @default("")
   descriptionAr   String          @default("")
   price           Float
-  priceMinor      BigInt          @default(0) @ignore
+  priceMinor      BigInt          @default(0)
   image           String          @default("")
   isAvailable     Boolean         @default(true)
   isPopular       Boolean         @default(false)
@@ -249,7 +249,7 @@ model ModifierOption {
   nameEn     String
   nameAr     String
   price      Float         @default(0)
-  priceMinor BigInt        @default(0) @ignore
+  priceMinor BigInt        @default(0)
   isDefault  Boolean       @default(false)
   // preset tag: none, no, extra, side, light — for kitchen readability
   preset     String        @default("none")
@@ -261,20 +261,20 @@ model ModifierOption {
 
 // ─── Customers ───
 model Customer {
-  id                String          @id @default(cuid())
-  name              String
-  phone             String          @unique
-  email             String?
-  loyaltyPoints     Int             @default(0)
-  totalSpent        Float           @default(0)
-  totalSpentMinor   BigInt          @default(0) @ignore
-  visits            Int             @default(0)
-  notes             String          @default("")
-  orders            Order[]
-  reservations      Reservation[]
-  waitlistEntries   WaitlistEntry[]
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  id               String          @id @default(cuid())
+  name             String
+  phone            String          @unique
+  email            String?
+  loyaltyPoints    Int             @default(0)
+  totalSpent       Float           @default(0)
+  totalSpentMinor  BigInt          @default(0)
+  visits           Int             @default(0)
+  notes            String          @default("")
+  orders           Order[]
+  reservations     Reservation[]
+  waitlistEntries  WaitlistEntry[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 }
 
 // ─── Orders ───
@@ -288,17 +288,17 @@ model Order {
   deliveryAddress     String?
   notes               String?
   subtotal            Float            @default(0)
-  subtotalMinor       BigInt           @default(0) @ignore
+  subtotalMinor       BigInt           @default(0)
   taxAmount           Float            @default(0)
-  taxAmountMinor      BigInt           @default(0) @ignore
+  taxAmountMinor      BigInt           @default(0)
   deliveryFee         Float            @default(0)
-  deliveryFeeMinor    BigInt           @default(0) @ignore
+  deliveryFeeMinor    BigInt           @default(0)
   discountAmount      Float            @default(0)
-  discountAmountMinor BigInt           @default(0) @ignore
+  discountAmountMinor BigInt           @default(0)
   tipAmount           Float            @default(0)
-  tipAmountMinor      BigInt           @default(0) @ignore
+  tipAmountMinor      BigInt           @default(0)
   total               Float            @default(0)
-  totalMinor          BigInt           @default(0) @ignore
+  totalMinor          BigInt           @default(0)
   paymentMethod       PaymentMethod    @default(cash)
   paymentStatus       PaymentStatus    @default(unpaid)
   // who took the order
@@ -323,12 +323,12 @@ model OrderItem {
   menuItem        MenuItem        @relation(fields: [menuItemId], references: [id])
   quantity        Int             @default(1)
   unitPrice       Float
-  unitPriceMinor  BigInt          @default(0) @ignore
+  unitPriceMinor  BigInt          @default(0)
   // JSON string of selected modifier options [{id,nameEn,nameAr,price}]
   modifiers       String          @default("[]")
   notes           String?
   totalPrice      Float
-  totalPriceMinor BigInt          @default(0) @ignore
+  totalPriceMinor BigInt          @default(0)
   status          OrderItemStatus @default(pending)
   // which kitchen station handles this item
   stationSlug     String          @default("")
@@ -407,7 +407,7 @@ model SpecialOffer {
   descriptionEn       String   @default("")
   descriptionAr       String   @default("")
   discountPercent     Float    @default(0)
-  discountBasisPoints Int      @default(0) @ignore
+  discountBasisPoints Int      @default(0)
   image               String   @default("")
   isActive            Boolean  @default(true)
   validFrom           DateTime?
@@ -420,7 +420,7 @@ model PromoCode {
   id                  String   @id @default(cuid())
   code                String   @unique
   discountPercent     Float    @default(0)
-  discountBasisPoints Int      @default(0) @ignore
+  discountBasisPoints Int      @default(0)
   isActive            Boolean  @default(true)
   validFrom           DateTime?
   validUntil          DateTime?
@@ -448,9 +448,9 @@ model GiftCard {
   id            String    @id @default(cuid())
   code          String    @unique
   amount        Float
-  amountMinor   BigInt    @default(0) @ignore
+  amountMinor   BigInt    @default(0)
   balance       Float
-  balanceMinor  BigInt    @default(0) @ignore
+  balanceMinor  BigInt    @default(0)
   purchaserName String
   recipientName String
   message       String?
@@ -499,7 +499,7 @@ model Employee {
   pin             String     @unique
   role            StaffRole  @default(staff)
   hourlyWage      Float      @default(15.0)
-  hourlyWageMinor BigInt     @default(0) @ignore
+  hourlyWageMinor BigInt     @default(0)
   isActive        Boolean    @default(true)
   email           String?
   phone           String?
@@ -531,8 +531,8 @@ model Ingredient {
   quantity          Float    @default(0)
   lowThreshold      Float    @default(10)
   costPerUnit       Float    @default(0)
-  // Unit cost uses scale 1_000_000 during the expand phase.
-  costPerUnitMicros BigInt   @default(0) @ignore
+  // Unit cost uses scale 1_000_000 during the compatibility window.
+  costPerUnitMicros BigInt   @default(0)
   supplier          String?
   category          String?
   createdAt         DateTime @default(now())
@@ -557,7 +557,7 @@ model PurchaseOrder {
   notes          String?
   status         String   @default("draft")
   totalCost      Float    @default(0)
-  totalCostMinor BigInt   @default(0) @ignore
+  totalCostMinor BigInt   @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @default(now()) @updatedAt
 }
@@ -567,7 +567,7 @@ model CashDrawerEntry {
   id          String           @id @default(cuid())
   type        CashMovementType @default(payin)
   amount      Float            @default(0)
-  amountMinor BigInt           @default(0) @ignore
+  amountMinor BigInt           @default(0)
   note        String?
   createdBy   String?
   createdAt   DateTime         @default(now())
@@ -624,7 +624,7 @@ model DynamicPricing {
   nameAr           String
   type             DynamicPricingType @default(happy_hour)
   multiplier       Float              @default(1.0)
-  multiplierMicros BigInt             @default(0) @ignore
+  multiplierMicros BigInt             @default(0)
   dayOfWeek        Int?
   startTime        String?
   endTime          String?
@@ -641,7 +641,7 @@ model ComboMeal {
   descriptionEn String   @default("")
   descriptionAr String   @default("")
   price         Float
-  priceMinor    BigInt   @default(0) @ignore
+  priceMinor    BigInt   @default(0)
   items         String   @default("[]") // JSON array of menu item IDs
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
