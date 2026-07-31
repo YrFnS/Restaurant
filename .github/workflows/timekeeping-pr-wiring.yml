@@ -1,22 +1,26 @@
 name: Apply immutable timekeeping wiring
 
 on:
-  pull_request:
+  push:
     branches:
-      - "agent/**"
+      - agent/p1-employee-timekeeping
 
 permissions:
   contents: write
 
+concurrency:
+  group: timekeeping-wiring
+  cancel-in-progress: true
+
 jobs:
   wire:
-    if: ${{ github.event.pull_request.head.ref == 'agent/p1-employee-timekeeping' }}
+    if: ${{ github.event.head_commit.message != 'feat: integrate immutable employee timekeeping' }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out pull-request head
+      - name: Check out timekeeping branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: agent/p1-employee-timekeeping
           fetch-depth: 0
 
       - name: Apply reviewed timekeeping integration
@@ -24,11 +28,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f .github/workflows/agent-timekeeping-wiring.yml ]; then
-            echo "Timekeeping wiring is already applied."
+            echo "Timekeeping wiring source is unavailable or already removed."
             exit 0
           fi
 
-          # Complete the purchasing enum catalog that this stacked branch inherits.
+          # Complete the purchasing enum catalog inherited by this stacked branch.
           python3 - <<'PY'
           from pathlib import Path
 
@@ -80,7 +84,7 @@ jobs:
           path.write_text(text)
           PY
 
-          # Reuse the reviewed, deterministic integration patch already committed on the branch.
+          # Extract and run the reviewed deterministic patch already committed on the branch.
           python3 - <<'PY'
           from pathlib import Path
 
@@ -118,4 +122,4 @@ jobs:
           fi
 
           git commit -m "feat: integrate immutable employee timekeeping"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:agent/p1-employee-timekeeping
