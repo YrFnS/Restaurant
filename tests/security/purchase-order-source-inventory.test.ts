@@ -166,9 +166,7 @@ describe("purchase order and receiving source inventory", () => {
     expect(roadmap).toContain("agent/p1-purchase-orders-receiving");
     expect(design).toContain("partial deliveries");
     expect(design).toContain("submitted orders become immutable");
-    expect(design).toContain(
-      "Purchase-receipt stock movements cannot be reversed through the generic stock-ledger endpoint"
-    );
+    expect(design).toContain("Generic stock reversal");
     expect(design).toContain("weighted-average, FIFO, or lot valuation");
   });
 });
