@@ -18,6 +18,7 @@ import {
 } from "@/lib/cash/register-session";
 
 const REGISTER_MANAGEMENT_ROLES = ["owner", "admin", "manager"] as const;
+const LEGACY_COMPATIBILITY_REGISTER_CODE = "LEGACY-WEB-POS";
 
 const registerSchema = z
   .object({
@@ -116,6 +117,7 @@ export async function GET() {
         ORDER BY "openedAt" DESC
         LIMIT 1
       ) AS session ON true
+      WHERE register."code" <> ${LEGACY_COMPATIBILITY_REGISTER_CODE}
       ORDER BY register."name" ASC, register."code" ASC
     `);
 
@@ -154,6 +156,13 @@ export async function POST(req: NextRequest) {
           details: parsed.error.flatten().fieldErrors,
         },
         { status: 400 }
+      );
+    }
+    if (parsed.data.code === LEGACY_COMPATIBILITY_REGISTER_CODE) {
+      throw new CashRegisterError(
+        "That register code is reserved for legacy checkout compatibility",
+        "REGISTER_CODE_RESERVED",
+        400
       );
     }
 
