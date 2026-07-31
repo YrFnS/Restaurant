@@ -256,7 +256,7 @@ async function main() {
     expectStatus(cash, 200, "Exact cash ledger read");
     assertNoExactKeys(cash.data);
     const matchingEntry = (cash.data?.entries || []).find((entry: any) =>
-      String(entry.note || "").includes(orderNumber)
+      String(entry.note || "").includes(String(orderNumber))
     );
     assert.ok(matchingEntry, "Cash response must include the exact sale entry");
     assert.equal(matchingEntry.amount, Number(exactOrder.totalMinor) / 100);
