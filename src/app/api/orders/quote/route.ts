@@ -6,51 +6,36 @@ import {
   OrderPricingError,
   orderRequestSchema,
 } from "@/lib/orders/pricing";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const QUOTE_WINDOW_MS = 60_000;
 const MAX_QUOTES_PER_WINDOW = 60;
 
-type QuoteRateBucket = { count: number; resetAt: number };
-const globalForQuoteLimit = globalThis as unknown as {
-  restaurantQuoteRateLimits?: Map<string, QuoteRateBucket>;
-};
-const quoteRateLimits =
-  globalForQuoteLimit.restaurantQuoteRateLimits ??
-  new Map<string, QuoteRateBucket>();
-if (!globalForQuoteLimit.restaurantQuoteRateLimits) {
-  globalForQuoteLimit.restaurantQuoteRateLimits = quoteRateLimits;
-}
-
-function getClientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeQuoteRateLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = quoteRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + QUOTE_WINDOW_MS };
-  bucket.count += 1;
-  quoteRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_QUOTES_PER_WINDOW) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
-
 export async function POST(req: NextRequest) {
-  const retryAfter = consumeQuoteRateLimit(getClientKey(req));
-  if (retryAfter) {
+  let quoteLimit;
+  try {
+    quoteLimit = await consumeRateLimit({
+      scope: "order-quote",
+      identifier: getRequestSource(req),
+      limit: MAX_QUOTES_PER_WINDOW,
+      windowMs: QUOTE_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[orders/quote] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "Order quotes are temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  if (!quoteLimit.allowed) {
     return NextResponse.json(
       { error: "Too many quote requests", code: "QUOTE_RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
-      }
+      { status: 429, headers: rateLimitHeaders(quoteLimit) }
     );
   }
 
