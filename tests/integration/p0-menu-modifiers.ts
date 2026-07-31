@@ -77,7 +77,8 @@ function minimumForGroup(group: any): number {
 
 function preferredOptions(group: any): any[] {
   return [...(group.options || [])].sort((left, right) => {
-    const defaultDifference = Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault));
+    const defaultDifference =
+      Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault));
     if (defaultDifference !== 0) return defaultDifference;
     return Number(right.price || 0) - Number(left.price || 0);
   });
@@ -193,6 +194,43 @@ async function main() {
   );
   expectStatus(restore, 200, "Restore original menu price");
 
+  console.log("[p0-menu] validating audited dynamic-pricing creation");
+  const pricingAuditStart = new Date();
+  const pricingRuleName = `P0 inactive pricing ${crypto.randomUUID().slice(0, 8)}`;
+  const pricingRuleCreate = await request("/api/dynamic-pricing", {
+    method: "POST",
+    headers: { cookie: adminCookie },
+    body: JSON.stringify({
+      nameEn: pricingRuleName,
+      nameAr: pricingRuleName,
+      type: "surge",
+      multiplier: 1.1,
+      dayOfWeek: -1,
+      startTime: null,
+      endTime: null,
+      isActive: false,
+    }),
+  });
+  expectStatus(pricingRuleCreate, 201, "Authorized dynamic-pricing creation");
+  const pricingRuleId = String(pricingRuleCreate.data?.rule?.id || "");
+  assert.ok(pricingRuleId, "Dynamic-pricing creation must return an ID");
+
+  const pricingAudit = await db.auditEvent.findFirst({
+    where: {
+      action: "dynamic-pricing.create",
+      entityType: "DynamicPricing",
+      entityId: pricingRuleId,
+      createdAt: { gte: pricingAuditStart },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  assert.ok(pricingAudit, "Dynamic-pricing creation must be audited");
+  const pricingMetadata = pricingAudit.metadata as any;
+  assert.equal(pricingMetadata?.nameEn, pricingRuleName);
+  assert.equal(Number(pricingMetadata?.multiplier), 1.1);
+  assert.equal(pricingMetadata?.isActive, false);
+  await db.dynamicPricing.delete({ where: { id: pricingRuleId } });
+
   console.log("[p0-menu] validating required modifier enforcement");
   const missingRequired = await createOrder(configuredItem, []);
   expectStatus(missingRequired, 400, "Order without required modifiers");
@@ -272,7 +310,7 @@ async function main() {
   });
   expectStatus(logout, 200, "Administrative logout");
 
-  console.log("[p0-menu] Menu audit and modifier assertions passed.");
+  console.log("[p0-menu] Menu, pricing audit, and modifier assertions passed.");
 }
 
 main()
