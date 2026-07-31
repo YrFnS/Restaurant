@@ -8,6 +8,10 @@ import {
   PinConfigurationError,
 } from "@/lib/auth/pin";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  CURRENCY_MINOR_DIGITS,
+  parseNonNegativeDecimalToScaledInteger,
+} from "@/lib/money/scaled-integer";
 
 const EMPLOYEE_ROLES = [
   "owner",
@@ -51,6 +55,14 @@ const safeEmployeeSelect = {
   schedules: true,
 } as const;
 
+function wageMinor(value: number): bigint {
+  return parseNonNegativeDecimalToScaledInteger(
+    String(value),
+    CURRENCY_MINOR_DIGITS,
+    BigInt(Number.MAX_SAFE_INTEGER)
+  );
+}
+
 export async function GET() {
   const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
   if ("response" in auth) return auth.response;
@@ -92,10 +104,15 @@ export async function POST(req: NextRequest) {
 
     const { pin, ...employeeData } = parsed.data;
     const pinVerifier = await createPinVerifier(pin);
+    const hourlyWageMinor = wageMinor(employeeData.hourlyWage);
     const context = auditContextFromRequest(req);
     const employee = await db.$transaction(async (tx) => {
       const created = await tx.employee.create({
-        data: { ...employeeData, pin: pinVerifier },
+        data: {
+          ...employeeData,
+          hourlyWageMinor,
+          pin: pinVerifier,
+        },
         select: safeEmployeeSelect,
       });
 
@@ -110,6 +127,7 @@ export async function POST(req: NextRequest) {
           role: created.role,
           isActive: created.isActive,
           hourlyWage: created.hourlyWage,
+          hourlyWageMinor: hourlyWageMinor.toString(),
         },
       });
 
