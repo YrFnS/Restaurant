@@ -3,179 +3,224 @@
 > **Repository:** `YrFnS/Restaurant`  
 > **Branch:** `agent/p0-hardening`  
 > **Draft PR:** `#1`  
+> **Validated commit:** `706d55deec612a51afd9c4371b47e47d29caf9dd`  
 > **Last validated:** 2026-07-31  
-> **Release decision:** **Blocked — do not merge or deploy as production-complete yet.**
+> **Release decision:** **Code gate passed; production deployment remains blocked pending the operational rehearsal and security review below.**
 
-This document is the implementation companion to [`REMEDIATION_PLAN.md`](./REMEDIATION_PLAN.md). The plan remains the full backlog; this file records what is already implemented and validated, plus the remaining P0 blockers.
+This document is the implementation companion to [`REMEDIATION_PLAN.md`](./REMEDIATION_PLAN.md). It records what has been implemented and proved by automated checks, and separates those results from production-only work that CI cannot complete.
 
-## Validation baseline
+## Exact green validation baseline
 
-GitHub Actions run **P0 Validation #91** passed on the branch after temporary migration scripts were removed and CI was reduced to committed source only.
+The following GitHub Actions runs passed on the exact validated commit:
 
-Validated steps:
+- **P0 Validation #279**
+- **P0 Integration #114**
 
-- `bun install --frozen-lockfile`
-- `prisma validate`
-- `prisma generate`
-- `bun run typecheck`
-- `bun run test:unit`
-- `bun run lint`
-- `bun run build`
+### P0 Validation #279
 
-The workflow has read-only repository permissions and cannot rewrite source or the lockfile.
+Passed:
+
+- locked dependency installation
+- Prisma schema validation
+- Prisma client generation
+- strict TypeScript checking
+- focused unit tests
+- ESLint
+- production build
+
+The validation workflow has read-only repository permissions and validates committed source without rewriting it.
+
+### P0 Integration #114
+
+The clean-database job passed:
+
+- deployment of every committed migration to an empty PostgreSQL 16 database
+- representative development seeding
+- employee PIN migration and verifier check
+- production build and standalone-server startup
+- login, persistent session, logout, and revoked-session behavior
+- anonymous and role-based authorization boundaries
+- safe employee and KDS DTO redaction
+- server-authoritative order pricing and rejection of financial-field tampering
+- concurrent idempotency and unique order-reference behavior
+- durable KDS event creation, authenticated worker execution, and realtime delivery
+- signed customer tracking and response redaction
+- atomic cash checkout, replay protection, payment-event creation, cash-drawer linkage, and audit linkage
+
+The existing-data job also passed:
+
+- recreation of the pre-P0 schema and representative legacy data
+- adoption of the committed baseline migration
+- deployment of all additive P0 migrations
+- preservation of every tracked legacy model count
+- preservation of representative employee, order, customer, menu-item, and settings records
+- migration of plaintext employee PINs to non-recoverable verifiers
+- verification that all new P0 tables are usable
 
 ## Completed and validated
 
-### Emergency containment
+### Emergency containment and build safety
 
-- Removed visible quick-login PINs and client-side employee enumeration.
-- Removed the public production seed HTTP endpoint.
+- Removed visible quick-login credentials and browser-side employee enumeration.
+- Removed the production HTTP seed endpoint.
 - Disabled production Prisma query logging except errors.
-- Removed TypeScript error suppression and restored strict production builds.
-- Added safe request IDs and normalized public error responses across the hardened routes.
+- Removed TypeScript build-error suppression.
+- Restored strict typecheck, lint, unit-test, integration-test, migration, and production-build gates.
+- Added request IDs and safe public error codes/messages across hardened routes.
 
-### Staff authentication
+### Staff authentication and recovery
 
-- Staff PIN verification happens only on the server.
-- PIN values are converted to memory-hard, peppered verifiers.
-- Existing plaintext values have a controlled migration and verification command.
-- Staff sessions use signed HTTP-only cookies with `Secure` in production and `SameSite=Lax`.
-- Sensitive staff state is no longer persisted in Zustand/localStorage.
-- Login responses do not enumerate users or reveal why authentication failed.
-- Login attempts have temporary per-source throttling and lockout.
+- Staff PIN authentication occurs only on the server.
+- PINs are stored as deterministic, peppered, memory-hard verifiers rather than recoverable digits.
+- Existing plaintext PINs have controlled migration and verification commands.
+- Login failures are generic and do not reveal employee identity or credential state.
+- Login abuse controls use shared PostgreSQL counters rather than per-process memory.
+- Limits are scoped by both request source and attempted credential identity.
+- Successful authentication creates a signed, HTTP-only cookie backed by a persisted session record.
+- Sessions have absolute expiry, idle expiry, server-side revocation, and identifier rotation.
+- Logout revokes the database session; account deactivation, role change, PIN change, and deletion revoke affected sessions.
+- Sensitive authentication state is not persisted in Zustand/localStorage.
+- Owner/admin PIN recovery is available only through an interactive local CLI that hides input, revokes sessions, and writes an audit event.
 
 ### Browser-request protection
 
-- State-changing API requests are filtered centrally through the Next.js proxy.
+- State-changing API requests are filtered centrally.
 - Cross-site Fetch Metadata is rejected.
 - `Origin` is restricted to the application origin plus explicitly configured trusted origins.
-- JSON APIs reject unsafe body content types.
+- JSON mutation endpoints reject unsafe body content types.
 - SameSite cookies remain defense in depth rather than the only CSRF control.
 
-### Authorization and validation
+### Authorization and safe DTOs
 
-- Shared server guards enforce authenticated role checks.
-- Sensitive settings, menu, employee, cash, inventory, KDS, table, order, reservation, waitlist, analytics, report, and notification operations fail closed.
-- Write endpoints use strict allowlisted schemas instead of arbitrary request-body assignment.
-- Employee responses use safe field selections and never return the PIN verifier.
+- One shared role-policy module is used by server guards and frontend navigation.
+- Protected APIs enforce permissions independently of page visibility.
+- Administrative, reporting, cash, inventory, KDS, reservation, order, table, menu, and staff operations fail closed.
+- Operational table-status changes are separated from manager-only floor/layout changes.
+- Kitchen users receive a redacted KDS DTO rather than full financial/customer order records.
+- Strict allowlisted schemas replace arbitrary request-body assignment.
+- Employee responses never return PIN verifiers or session tokens.
+- The database-backed authorization matrix proves representative `401`, `403`, and allowed-role paths.
 
-### Server-authoritative orders
+### Server-authoritative ordering
 
-- Customer and POS order clients send selections rather than financial totals.
-- The server loads item and modifier prices, validates ownership/selection limits, applies dynamic pricing and promos, and calculates tax, fees, tips, discounts, and totals.
-- Pricing calculations use integer cents internally.
-- Order creation requires an idempotency key and maps it to a deterministic internal order identity.
-- Order, items, customer linkage, table status, and audit event are created in one transaction.
+- Customer and POS clients submit selections rather than authoritative totals.
+- Current item and modifier prices are loaded server-side.
+- Modifier ownership and selection bounds are validated.
+- Active dynamic-pricing and promo rules are evaluated server-side.
+- Tax, delivery, discounts, tips, and totals are calculated through integer-cent utilities.
+- Unknown fields, unavailable items, invalid quantities, malformed selections, and client financial fields are rejected.
 - Public orders always begin unpaid.
-- Order references are random, date-prefixed, unique, and independent from the primary key.
-- Invalid order and item status transitions are rejected.
-- Hard deletion of orders and financially relevant order items is disabled.
+- Order creation requires an idempotency key and derives a deterministic internal identity.
+- Safe retries return the original result instead of creating duplicate orders.
+- Human-readable order references are random, date-prefixed, unique, and separate from primary keys.
+- Order, items, customer linkage, table state, audit event, and KDS outbox event are committed atomically.
+- Invalid order and order-item state transitions are rejected.
+- Destructive deletion of financially relevant orders/items is disabled.
 
-### Payment containment
+### Durable KDS delivery
 
-- POS cash checkout is staff-only and uses the stored server total.
+- Order creation and KDS/order status mutations write outbox events inside the same database transaction as the business change.
+- Immediate delivery is attempted only after commit.
+- Failed events remain queued with retry time, attempt count, lease state, and bounded error details.
+- Workers claim rows safely with database locking and support concurrent instances.
+- The internal worker endpoint requires a constant-time compared bearer secret.
+- The worker reports stable `processed`, `delivered`, and `failed` counters.
+- Polling remains a display fallback.
+- Integration tests use a realtime mock and verify successful delivery and outbox state.
+
+### Payment and cash containment
+
+- Cash checkout requires an authorized staff session and trusts the stored order total.
 - Tendered cash and change are validated server-side.
-- Order payment state, cash drawer sale, table state, and audit event are committed atomically.
-- Replayed cash checkout cannot create a duplicate cash drawer sale.
-- Card and split-payment flows fail closed until a payment processor and payment ledger are implemented.
-- Direct public loyalty-point subtraction is disabled.
+- A successful checkout creates one immutable `PaymentEvent`, one cash-drawer sale, the order payment update, table update, and one audit event in one transaction.
+- Payment idempotency prevents duplicate successful captures and duplicate drawer entries.
+- Card and split-payment paths fail closed until their providers and workflows are implemented.
+- Manual cash mutations require explicit roles, positive bounded amounts, server-derived actors, and audit events.
+- Cash balance is calculated from the authoritative ledger rather than only the latest rows.
 
 ### Customer privacy
 
-- Order tracking requires an exact reference plus an opaque signed credential.
-- Tracking requests are rate-limited and return an allowlisted customer-safe DTO.
-- Phone-number order enumeration is removed.
-- Reservation and waitlist ownership use resource-specific signed credentials.
-- Public reservation and waitlist endpoints cannot enumerate other customers.
-- Loyalty lookup requires proof from a signed order credential linked to the customer.
+- Order tracking requires the exact order reference plus a resource-scoped signed credential.
+- Tracking responses are allowlisted and exclude private customer, payment, database, and token fields.
+- Reservation and waitlist ownership use resource-specific opaque credentials.
+- Public callers cannot enumerate reservation, waitlist, employee, or phone-number order data.
+- Business analytics and reports require reporting roles.
+- Public endpoints and tracking operations use shared rate limits where appropriate.
 
-### Cash and inventory containment
+### Inventory containment
 
-- Cash reads/writes require explicit roles.
-- Cash actors come from the authenticated session.
-- Cash balance is calculated from the full authoritative ledger rather than the newest 100 rows.
-- Inventory mutations require inventory roles and strict schemas.
-- Waste reduction and waste-log creation are atomic and cannot exceed available inventory.
+- Inventory reads and mutations require explicit inventory roles.
+- Ingredient writes use strict schemas.
+- Waste quantities must be positive and cannot exceed available stock.
+- Waste logging and stock reduction are atomic.
+- Inventory mutations and waste adjustments create audit records.
 
-### Append-only audit foundation
+### Append-only audit trail
 
-- Added an `AuditEvent` Prisma model and committed migration.
-- Audit metadata is recursively bounded and redacts credential-like fields.
-- Audit records include actor, action, entity, request ID, hashed source identifier, user agent, safe metadata, and timestamp.
-- Audit writes are part of the same transaction for:
+- `AuditEvent` has a committed additive migration and no update/delete API.
+- Audit records contain actor, role, session, action, entity, request ID, source hash, user agent, timestamp, and bounded/redacted metadata.
+- Audit writes are part of the protected transaction for implemented privileged and financial flows, including:
+  - successful login and privileged PIN recovery
   - employee creation/update/deletion
   - settings changes
-  - order creation and status changes
-  - POS cash capture
-  - manual cash movements
-  - ingredient creation/update/deletion
-  - waste adjustments
-- Successful staff logins require an audit event before a session cookie is issued.
-- Only owner/admin roles can read audit events; no API can update or delete them.
+  - menu creation, deletion, price, availability, and category changes
+  - order creation and order-status changes
+  - table operational and layout changes
+  - cash checkout and manual cash movements
+  - ingredient and waste changes
+- Only owner/admin roles can read audit events.
 
-### Focused security tests
+### Migration discipline
 
-Current unit coverage includes:
+- `prisma/migrations/` is committed and no longer ignored.
+- A pre-P0 baseline migration is committed.
+- Additive migrations are committed for audit events, persistent sessions, shared rate limits, KDS outbox events, and payment events.
+- Production uses `prisma migrate deploy`; `db push` remains for controlled development only.
+- CI proves clean-database deployment and representative existing-data baseline adoption.
+- Backup, first-adoption, rollback, KDS worker, and privileged-recovery procedures are documented in [`P0_DEPLOYMENT_RUNBOOK.md`](./P0_DEPLOYMENT_RUNBOOK.md).
 
-- browser mutation/origin policy
-- employee PIN format, verifier derivation, and verification
-- order-access token scoping and tamper detection
-- deterministic idempotency identity
-- reservation/waitlist token resource isolation
-- audit metadata redaction and bounding
+## Remaining production release blockers
 
-## Remaining P0 blockers
+These are not unresolved compile/test failures. They require the target production environment or an independent review.
 
-### 1. Existing-database deployment has not been exercised
+### 1. Rehearse against a protected copy of the real deployment database
 
-Required against both a clean database and a protected copy of existing data:
+The representative existing-data CI rehearsal is green, but the operator must still:
 
-```bash
-bun install --frozen-lockfile
-bun run db:deploy
-bun run auth:migrate-pins
-bun run auth:check-pins
-bun run build
-```
+- take and verify a restorable backup
+- restore a recent real production-like copy into isolation
+- record row-count and sentinel checks appropriate to that deployment
+- follow the baseline-adoption procedure exactly
+- run `db:deploy`, PIN migration/check, production build, and operational smoke tests
+- rehearse rollback from the verified backup
 
-A backup and rollback rehearsal must precede production deployment.
+### 2. Provision and verify production secrets
 
-### 2. Integration and end-to-end authorization tests are incomplete
+Independent production values must be configured for session signing, PIN peppering, customer/order access, rate-limit hashing, and the KDS worker. Trusted origins and service URLs must match the final topology.
 
-Still required:
+### 3. Configure the KDS retry schedule and monitoring
 
-- login/session/logout behavior against a real database
-- `401` and `403` coverage for every protected resource
-- tampered-order and modifier-ownership integration tests
-- concurrent order-reference and idempotency tests
-- transaction rollback tests
-- cross-customer privacy tests
-- staff-to-KDS-to-customer order lifecycle smoke test
-- cash checkout smoke test
+The authenticated worker endpoint is implemented and tested. Production still needs a trusted scheduler, queue-growth monitoring, and an incident response for repeated delivery failures.
 
-### 3. Sessions are signed but not centrally revocable
+### 4. Complete an independent security-focused review
 
-Logout clears the browser cookie, but a copied stateless token remains valid until expiry. P0 still needs a persisted session record or revocation/version strategy, rotation identifier, and idle timeout.
+A reviewer should inspect the final diff, role matrix, migration adoption procedure, production settings, and operational rollback plan before the PR is marked ready or deployed.
 
-### 4. Rate limiting is process-local
+### 5. Perform the controlled post-deployment smoke test
 
-Login, public-order, tracking, feedback, and newsletter limits currently protect one application instance. Multi-instance production requires a shared store such as Redis or a managed rate-limit service.
+After deployment, verify login/logout/revocation, authorized administration, public order placement, KDS progression, signed tracking, cash capture/payment ledger, reservation/waitlist access, audit records, and worker execution against the live topology.
 
-### 5. KDS delivery is not durable
+## Explicitly deferred beyond P0
 
-Realtime delivery occurs after the order transaction and polling is the fallback, but there is no transactional outbox, retry worker, or dead-letter visibility yet.
+These items remain important but are tracked as P1/P2 rather than reasons to reopen already-contained P0 paths:
 
-### 6. Payment and refund ledger is not implemented
-
-Cash capture is contained and audited, but the application still lacks immutable payment, refund, void, and split-payment records. Card and split flows intentionally remain disabled.
-
-### 7. Audit coverage is not complete for every future privileged flow
-
-Menu price changes, permission changes, discounts approved outside order creation, voids, refunds, and future payment-provider callbacks must emit audit events when those workflows are implemented.
-
-### 8. Money remains stored in floating-point columns
-
-Server calculations use cents, but existing Prisma fields still use `Float`. Converting persisted money to `Decimal` or smallest-unit integers remains P1 and must be completed before broad financial deployment.
+- Decimal/smallest-unit storage migration for all persisted monetary columns
+- full refund, void, card, and split-payment workflows
+- register opening/closing sessions and reconciliation
+- immutable stock movement/recipe ledger
+- multi-branch tenancy decision and isolation
+- production realtime topology beyond the durable outbox and polling fallback
+- broader accessibility, routing, observability, performance, and UX work
 
 ## Current release gate
 
@@ -188,13 +233,16 @@ Server calculations use cents, but existing Prisma fields still use `Float`. Con
 | Focused unit tests | Passed |
 | ESLint | Passed |
 | Production build | Passed |
-| Clean-database migration deployment | Open |
-| Existing-data migration rehearsal | Open |
-| PIN migration verification on deployment data | Open |
-| Integration authorization suite | Open |
-| End-to-end restaurant workflow suite | Open |
-| Persisted/revocable sessions | Open |
-| Durable KDS outbox | Open |
-| Production security review | Open |
+| Clean-database migration deployment | Passed in CI |
+| Representative existing-data adoption rehearsal | Passed in CI |
+| PIN migration and verifier check | Passed in both CI paths |
+| Database-backed authentication/order smoke suite | Passed |
+| Authorization matrix | Passed |
+| KDS outbox worker and realtime delivery | Passed |
+| Payment-ledger replay checks | Passed |
+| Protected real-data backup/restore rehearsal | Open — operator action |
+| Production KDS scheduler and monitoring | Open — operator action |
+| Independent security review | Open |
+| Controlled production deployment smoke test | Open |
 
-P0 remains open until every production gate above is resolved or explicitly reclassified in the master remediation plan with documented rationale.
+P0 implementation is now green in code and CI. The draft PR remains blocked until the production-only gates above are completed and documented.
