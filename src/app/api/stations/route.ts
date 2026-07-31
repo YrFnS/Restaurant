@@ -7,7 +7,11 @@ import {
   STAFF_ADMIN_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
-import { broadcastKds } from "@/lib/kds/broadcast";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+} from "@/lib/kds/outbox";
 
 const stationSchema = z
   .object({
@@ -59,11 +63,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const station = await db.kitchenStation.create({ data: parsed.data });
-    await broadcastKds({
-      type: "screen:update",
-      payload: { stationId: station.id },
+    const context = auditContextFromRequest(req);
+    const station = await db.$transaction(async (tx) => {
+      const created = await tx.kitchenStation.create({ data: parsed.data });
+
+      await writeAuditEvent(tx, {
+        actor: auth.session,
+        action: "kds.station.create",
+        entityType: "KitchenStation",
+        entityId: created.id,
+        context,
+        metadata: {
+          name: created.name,
+          slug: created.slug,
+          targetPrepMin: created.targetPrepMin,
+          sortOrder: created.sortOrder,
+          isActive: created.isActive,
+        },
+      });
+
+      await queueKdsEvent(tx, {
+        type: "screen:update",
+        screenSlugs: [],
+        payload: { stationId: created.id, created: true },
+      });
+
+      return created;
     });
+
+    await flushKdsOutboxBestEffort(10);
     return NextResponse.json({ station }, { status: 201 });
   } catch (error) {
     if (
