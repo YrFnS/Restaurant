@@ -75,6 +75,7 @@ jobs:
         run: |
           bun run db:seed
           bun run auth:check-pins
+          bun run money:check
 
       - name: Build production server
         env:
@@ -147,6 +148,7 @@ jobs:
           fi
 
           P0_BASE_URL=http://127.0.0.1:3000 bun run test:integration
+          bun run money:check
 
   existing-data-rehearsal:
     name: Existing-data baseline adoption rehearsal
@@ -209,7 +211,7 @@ jobs:
           bun tests/integration/p0-existing-data-rehearsal.ts \
             snapshot /tmp/p0-existing-data.json
 
-      - name: Adopt the baseline and deploy additive P0 migrations
+      - name: Adopt the baseline and deploy additive migrations
         shell: bash
         run: |
           set -euo pipefail
@@ -227,3 +229,4 @@ jobs:
           bun run auth:check-pins
           bun tests/integration/p0-existing-data-rehearsal.ts \
             verify /tmp/p0-existing-data.json
+          bun run money:check
