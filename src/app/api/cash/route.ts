@@ -10,7 +10,7 @@ import {
   CashRegisterError,
   linkCashEntryToSession,
   lockOpenRegisterSession,
-  parseCurrencyInputToMinor,
+  parseCurrencyInputToMinor as inputToMinor,
   readCurrentRegisterSession,
   readSessionCashEntries,
   readSessionExpectedCashMinor,
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const amountMinor = parseCurrencyInputToMinor(parsed.data.amount);
+    const amountMinor = inputToMinor(parsed.data.amount);
     const amount = exactMinorToNumber(amountMinor);
     const identity = registerIdentityFromRequest(req);
     const context = auditContextFromRequest(req);
