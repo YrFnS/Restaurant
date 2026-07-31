@@ -118,6 +118,35 @@ async function main() {
   console.log("[p0-customer] validating reservation token isolation");
   const reservationA = await createReservation("A", 10);
   const reservationB = await createReservation("B", 11);
+  const missingReservationId = `missing-${crypto.randomUUID()}`;
+
+  const anonymousReservationProbe = await request(
+    `/api/reservations/${encodeURIComponent(missingReservationId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({}),
+    }
+  );
+  expectStatus(
+    anonymousReservationProbe,
+    401,
+    "Anonymous reservation probe must fail before validation or lookup"
+  );
+
+  const wrongTokenMissingReservation = await request(
+    `/api/reservations/${encodeURIComponent(
+      missingReservationId
+    )}?token=${encodeURIComponent(reservationA.accessToken)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status: "cancelled" }),
+    }
+  );
+  expectStatus(
+    wrongTokenMissingReservation,
+    401,
+    "Wrong reservation token must not reveal whether a target exists"
+  );
 
   const crossReservationCancel = await request(
     `/api/reservations/${encodeURIComponent(
@@ -170,6 +199,35 @@ async function main() {
   console.log("[p0-customer] validating waitlist token and resource isolation");
   const waitlistA = await createWaitlistEntry("A");
   const waitlistB = await createWaitlistEntry("B");
+  const missingWaitlistId = `missing-${crypto.randomUUID()}`;
+
+  const anonymousWaitlistProbe = await request(
+    `/api/waitlist/${encodeURIComponent(missingWaitlistId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({}),
+    }
+  );
+  expectStatus(
+    anonymousWaitlistProbe,
+    401,
+    "Anonymous waitlist probe must fail before validation or lookup"
+  );
+
+  const wrongTokenMissingWaitlist = await request(
+    `/api/waitlist/${encodeURIComponent(
+      missingWaitlistId
+    )}?token=${encodeURIComponent(waitlistA.accessToken)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status: "cancelled" }),
+    }
+  );
+  expectStatus(
+    wrongTokenMissingWaitlist,
+    401,
+    "Wrong waitlist token must not reveal whether a target exists"
+  );
 
   const crossWaitlistRead = await request(
     `/api/waitlist?id=${encodeURIComponent(
@@ -252,7 +310,9 @@ async function main() {
     expectStatus(cancel, 200, `Clean up owned waitlist entry ${waitlist.entry.id}`);
   }
 
-  console.log("[p0-customer] Reservation and waitlist isolation assertions passed.");
+  console.log(
+    "[p0-customer] Reservation and waitlist isolation/no-oracle assertions passed."
+  );
 }
 
 main()
