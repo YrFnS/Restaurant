@@ -79,6 +79,14 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
   "POST /api/orders/quote": {
     markers: ["orderRequestSchema", "order-quote", "consumeRateLimit"],
   },
+  "POST /api/orders/recent": {
+    markers: [
+      "recentOrdersSchema",
+      "recent-orders-lookup",
+      "consumeRateLimit",
+      "verifyOrderAccessToken",
+    ],
+  },
   "POST /api/orders/track/[orderNumber]/cancel": {
     markers: [
       "verifyOrderAccessToken",
@@ -95,6 +103,14 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
       "createCustomerAccessToken",
     ],
   },
+  "POST /api/reservations/recent": {
+    markers: [
+      "credentialsSchema",
+      "recent-reservations-lookup",
+      "consumeRateLimit",
+      "verifyCustomerAccessToken",
+    ],
+  },
   "PATCH /api/reservations/[id]": {
     markers: ["verifyCustomerAccessToken", "requireStaffSession"],
     beforeJson: ["verifyCustomerAccessToken", "requireStaffSession"],
@@ -102,7 +118,7 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
   "POST /api/waitlist": {
     markers: [
       "waitlistCreateSchema",
-      "waitlist-join",
+      "waitlist-create",
       "consumeRateLimit",
       "createCustomerAccessToken",
     ],
