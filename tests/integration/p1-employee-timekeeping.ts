@@ -192,6 +192,20 @@ async function main() {
   assertStatus(clockInReplay.response, 200, "Clock-in replay");
   assert.equal(clockInReplay.data.replayed, true);
 
+  const clockInConflict = await api<any>("/api/employees/clock", {
+    method: "POST",
+    headers: { cookie: adminCookie, "Idempotency-Key": clockInKey },
+    body: JSON.stringify({
+      employeeId: employee.id,
+      action: "clock_in",
+      occurredAt: clockInAt.toISOString(),
+      reasonCode: "integration_test",
+      reason: "A different replay payload must be rejected",
+    }),
+  });
+  assertStatus(clockInConflict.response, 409, "Clock-in payload conflict");
+  assert.equal(clockInConflict.data.code, "TIME_EVENT_IDEMPOTENCY_CONFLICT");
+
   const duplicateClockIn = await managerClock(
     adminCookie,
     employee.id,
@@ -320,6 +334,25 @@ async function main() {
   assertStatus(adjustmentReplay.response, 200, "Adjustment replay");
   assert.equal(adjustmentReplay.data.replayed, true);
 
+  const adjustmentConflict = await api<any>("/api/timekeeping", {
+    method: "POST",
+    headers: {
+      cookie: adminCookie,
+      "Idempotency-Key": adjustmentKey,
+    },
+    body: JSON.stringify({
+      shiftId: shiftRows[0].id,
+      paidMinutesDelta: 45,
+      reasonCode: "missed_work",
+      reason: "A different adjustment payload must be rejected",
+    }),
+  });
+  assertStatus(adjustmentConflict.response, 409, "Adjustment payload conflict");
+  assert.equal(
+    adjustmentConflict.data.code,
+    "TIME_ADJUSTMENT_IDEMPOTENCY_CONFLICT"
+  );
+
   const corrected = await api<any>(
     `/api/timekeeping?from=${from}&to=${to}&employeeId=${encodeURIComponent(employee.id)}`,
     { headers: { cookie: adminCookie } }
@@ -328,6 +361,48 @@ async function main() {
   assert.equal(corrected.data.shifts[0].paidHours, 9);
   assert.equal(corrected.data.shifts[0].laborCost, 180);
   assert.equal(corrected.data.shifts[0].adjustmentCount, 1);
+
+  const roundingEmployee = await createEmployee(
+    adminCookie,
+    `P1 Raw Summary ${suffix}`,
+    60
+  );
+  const firstShortStart = new Date(Date.now() - 10 * 60_000);
+  const firstShortEnd = new Date(firstShortStart.getTime() + 61_000);
+  const secondShortStart = new Date(firstShortEnd.getTime() + 60_000);
+  const secondShortEnd = new Date(secondShortStart.getTime() + 61_000);
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_in", firstShortStart)).response,
+    201,
+    "First short shift clock in"
+  );
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_out", firstShortEnd)).response,
+    201,
+    "First short shift clock out"
+  );
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_in", secondShortStart)).response,
+    201,
+    "Second short shift clock in"
+  );
+  assertStatus(
+    (await managerClock(adminCookie, roundingEmployee.id, "clock_out", secondShortEnd)).response,
+    201,
+    "Second short shift clock out"
+  );
+  const rawSummary = await api<any>(
+    `/api/timekeeping?from=${from}&to=${to}&employeeId=${encodeURIComponent(roundingEmployee.id)}`,
+    { headers: { cookie: adminCookie } }
+  );
+  assertStatus(rawSummary.response, 200, "Raw-second timesheet summary");
+  assert.equal(rawSummary.data.shifts.length, 2);
+  assert.deepEqual(
+    rawSummary.data.shifts.map((shift: any) => shift.paidHours),
+    [0.02, 0.02]
+  );
+  assert.equal(rawSummary.data.summary.paidHours, 0.03);
+  assert.equal(rawSummary.data.summary.laborCost, 2.04);
 
   const excessiveNegative = await api<any>("/api/timekeeping", {
     method: "POST",

@@ -556,15 +556,43 @@ export async function clockEmployee(
       400
     );
   }
+  const submittedOccurredAt =
+    input.occurredAt === null ||
+    input.occurredAt === undefined ||
+    input.occurredAt === ""
+      ? null
+      : input.occurredAt instanceof Date
+        ? input.occurredAt
+        : new Date(input.occurredAt);
+  if (submittedOccurredAt && Number.isNaN(submittedOccurredAt.getTime())) {
+    throw new TimekeepingError(
+      "A valid clock time is required",
+      "INVALID_CLOCK_TIME",
+      400
+    );
+  }
+  const reasonCode = boundedText(input.reasonCode, 80);
+  const reason = boundedText(input.reason, 2000) || null;
+  const actorName = boundedText(input.actor.name, 160);
+  const actorRole = boundedText(input.actor.role, 80);
+
   await lockKey(client, "employee-time-event", key);
   const replay = await eventByKey(client, key);
   if (replay) {
     if (
       replay.employeeId !== input.employeeId ||
-      replay.eventType !== input.action
+      replay.eventType !== input.action ||
+      replay.source !== input.source ||
+      replay.actorId !== input.actor.id ||
+      replay.actorName !== actorName ||
+      replay.actorRole !== actorRole ||
+      replay.reasonCode !== reasonCode ||
+      (replay.reason ?? null) !== reason ||
+      (submittedOccurredAt !== null &&
+        replay.occurredAt.getTime() !== submittedOccurredAt.getTime())
     ) {
       throw new TimekeepingError(
-        "The timekeeping idempotency key was used for another event",
+        "The timekeeping idempotency key was used for another event payload",
         "TIME_EVENT_IDEMPOTENCY_CONFLICT",
         409
       );
@@ -653,8 +681,8 @@ export async function clockEmployee(
     occurredAt,
     operationalDate: day,
     actor: input.actor,
-    reasonCode: input.reasonCode,
-    reason: input.reason,
+    reasonCode,
+    reason,
     metadata: { employeeRole: employee.role },
   });
 
@@ -837,25 +865,32 @@ export async function readTimesheet(
       WHERE "shiftId" = shift."id"
     ) AS adjustment ON true
     WHERE shift."operationalDate" BETWEEN ${options.from}::date AND ${options.to}::date
+      AND shift."status" = 'closed'
       ${employeeFilter}
     ORDER BY shift."operationalDate" DESC, shift."startedAt" DESC, shift."id" DESC
     LIMIT ${limit}
   `);
   const shifts = rows.map(serializeTimesheet);
+  const totalPaidSeconds = rows.reduce(
+    (total, shift) => total + shift.effectivePaidSeconds,
+    0
+  );
+  const totalBreakSeconds = rows.reduce(
+    (total, shift) => total + shift.breakSeconds,
+    0
+  );
+  const totalLaborCostMinor = rows.reduce(
+    (total, shift) => total + shift.effectiveLaborCostMinor,
+    0n
+  );
   return {
     shifts,
     summary: {
-      shiftCount: shifts.length,
-      paidHours: Math.round(
-        shifts.reduce((total, shift) => total + shift.paidHours, 0) * 100
-      ) / 100,
-      breakHours: Math.round(
-        shifts.reduce((total, shift) => total + shift.breakHours, 0) * 100
-      ) / 100,
-      laborCost: Math.round(
-        shifts.reduce((total, shift) => total + shift.laborCost, 0) * 100
-      ) / 100,
-      adjustmentCount: shifts.reduce(
+      shiftCount: rows.length,
+      paidHours: secondsToHours(totalPaidSeconds),
+      breakHours: secondsToHours(totalBreakSeconds),
+      laborCost: minorToNumber(totalLaborCostMinor),
+      adjustmentCount: rows.reduce(
         (total, shift) => total + shift.adjustmentCount,
         0
       ),
@@ -914,19 +949,6 @@ export async function addTimeAdjustment(
       400
     );
   }
-  await lockKey(client, "employee-time-adjustment", key);
-  const replay = await adjustmentByKey(client, key);
-  if (replay) {
-    if (replay.shiftId !== input.shiftId) {
-      throw new TimekeepingError(
-        "The adjustment idempotency key was used for another shift",
-        "TIME_ADJUSTMENT_IDEMPOTENCY_CONFLICT",
-        409
-      );
-    }
-    return { adjustment: serializeAdjustment(replay), replayed: true };
-  }
-
   if (!Number.isFinite(input.paidMinutesDelta)) {
     throw new TimekeepingError(
       "A valid paid-time adjustment is required",
@@ -950,6 +972,29 @@ export async function addTimeAdjustment(
       "TIME_ADJUSTMENT_REASON_REQUIRED",
       400
     );
+  }
+  const actorName = boundedText(input.actor.name, 160);
+  const actorRole = boundedText(input.actor.role, 80);
+
+  await lockKey(client, "employee-time-adjustment", key);
+  const replay = await adjustmentByKey(client, key);
+  if (replay) {
+    if (
+      replay.shiftId !== input.shiftId ||
+      replay.paidSecondsDelta !== paidSecondsDelta ||
+      replay.reasonCode !== reasonCode ||
+      replay.reason !== reason ||
+      replay.actorId !== input.actor.id ||
+      replay.actorName !== actorName ||
+      replay.actorRole !== actorRole
+    ) {
+      throw new TimekeepingError(
+        "The adjustment idempotency key was used for another payload",
+        "TIME_ADJUSTMENT_IDEMPOTENCY_CONFLICT",
+        409
+      );
+    }
+    return { adjustment: serializeAdjustment(replay), replayed: true };
   }
 
   const shifts = await client.$queryRaw<ShiftRow[]>(Prisma.sql`
@@ -988,8 +1033,8 @@ export async function addTimeAdjustment(
     ) VALUES (
       ${id}, ${key}, ${shift.id}, ${paidSecondsDelta},
       ${laborCostDeltaMinor}, ${reasonCode}, ${reason}, ${input.actor.id},
-      ${boundedText(input.actor.name, 160)},
-      ${boundedText(input.actor.role, 80)}
+      ${actorName},
+      ${actorRole}
     )
   `);
   const created = await adjustmentByKey(client, key);

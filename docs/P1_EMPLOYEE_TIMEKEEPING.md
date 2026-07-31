@@ -164,3 +164,7 @@ This slice is complete only when all of the following pass:
 - payroll export and accounting journal generation;
 - multi-branch time-policy scoping;
 - destructive removal of the legacy employee clock-cache fields.
+
+## Replay and reporting precision
+
+Replays must match the original normalized event or adjustment payload. Historical timesheet summaries include closed shifts only and aggregate raw seconds plus exact minor-unit labor costs before converting once for display.

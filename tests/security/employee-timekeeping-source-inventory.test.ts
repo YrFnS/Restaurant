@@ -92,6 +92,11 @@ describe("employee timekeeping source inventory", () => {
       'INSERT INTO "EmployeeBreak"',
       'UPDATE "EmployeeShift"',
       "addTimeAdjustment",
+      "replay.source !== input.source",
+      "replay.paidSecondsDelta !== paidSecondsDelta",
+      'AND shift."status" = 'closed'',
+      "totalPaidSeconds",
+      "totalLaborCostMinor",
       'INSERT INTO "EmployeeTimeAdjustment"',
     ]) {
       expect(service).toContain(marker);
