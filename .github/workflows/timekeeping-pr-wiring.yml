@@ -28,6 +28,59 @@ jobs:
             exit 0
           fi
 
+          # Complete the purchasing enum catalog that this stacked branch inherits.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/integration/p1-domain-integrity.ts')
+          text = path.read_text()
+
+          old = '  PaymentStatus,\n  PrismaClient,'
+          new = '  PaymentStatus,\n  PurchaseOrderStatus,\n  PurchaseReceiptStatus,\n  PrismaClient,'
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Expected purchase enum import anchor was not found')
+              text = text.replace(old, new, 1)
+
+          old = '  StaffRole,\n  TableShape,'
+          new = '  StaffRole,\n  SupplierStatus,\n  TableShape,'
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Expected supplier enum import anchor was not found')
+              text = text.replace(old, new, 1)
+
+          old = '  PaymentEventStatus: ["pending", "succeeded", "failed", "voided"],\n};'
+          new = '''  PaymentEventStatus: ["pending", "succeeded", "failed", "voided"],
+  SupplierStatus: ["active", "inactive"],
+  PurchaseOrderStatus: [
+    "draft",
+    "submitted",
+    "partially_received",
+    "received",
+    "cancelled",
+  ],
+  PurchaseReceiptStatus: ["posted", "reversed"],
+};'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Expected purchase enum catalog anchor was not found')
+              text = text.replace(old, new, 1)
+
+          old = '  assert.equal(PaymentEventStatus.failed, "failed");\n}'
+          new = '''  assert.equal(PaymentEventStatus.failed, "failed");
+  assert.equal(SupplierStatus.active, "active");
+  assert.equal(PurchaseOrderStatus.partially_received, "partially_received");
+  assert.equal(PurchaseReceiptStatus.reversed, "reversed");
+}'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Expected purchase enum round-trip anchor was not found')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          # Reuse the reviewed, deterministic integration patch already committed on the branch.
           python3 - <<'PY'
           from pathlib import Path
 
@@ -41,16 +94,28 @@ jobs:
           PY
 
           python3 /tmp/apply-timekeeping-wiring.py
-          rm -f .github/workflows/agent-timekeeping-wiring.yml
-          rm -f .github/workflows/timekeeping-pr-wiring.yml
-          rm -f docs/.timekeeping-wiring-trigger
 
           git config user.name "OpenAI Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add -- \
+            prisma/schema.prisma \
+            prisma/migrations/20260731235970_add_employee_timekeeping/migration.sql \
+            src/lib/db.ts \
+            package.json \
+            src/components/admin/tabs/SettingsTab.tsx \
+            src/app/api/settings/route.ts \
+            'src/app/api/employees/[id]/route.ts' \
+            src/app/api/employees/clock/route.ts \
+            src/lib/timekeeping/timekeeping.ts \
+            tests/integration/p0-login-lockout.ts \
+            tests/integration/p1-employee-timekeeping.ts \
+            tests/integration/p1-domain-integrity.ts \
+            docs/REMEDIATION_PLAN.md
+
           if git diff --cached --quiet; then
-            echo "No wiring changes were required."
+            echo "No application wiring changes were required."
             exit 0
           fi
+
           git commit -m "feat: integrate immutable employee timekeeping"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
