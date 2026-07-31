@@ -1,0 +1,53 @@
+name: Apply timekeeping correctness PR patch
+
+on:
+  pull_request:
+    branches:
+      - "agent/**"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.event.pull_request.head.ref == 'agent/p1-employee-timekeeping' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Apply reviewed correctness patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'replay.source !== input.source' src/lib/timekeeping/timekeeping.ts; then
+            echo "Timekeeping correctness patch is already applied."
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-timekeeping-correctness.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(workflow) if "python3 - <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(workflow)) if workflow[i].strip() == 'PY')
+          script = []
+          for line in workflow[start:end]:
+              script.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/apply-timekeeping-correctness.py').write_text('\n'.join(script) + '\n')
+          PY
+
+          python3 /tmp/apply-timekeeping-correctness.py
+
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/lib/timekeeping/timekeeping.ts \
+            tests/security/employee-timekeeping-source-inventory.test.ts \
+            tests/integration/p0-login-lockout.ts \
+            tests/integration/p1-employee-timekeeping.ts \
+            docs/P1_EMPLOYEE_TIMEKEEPING.md
+          git commit -m "fix: harden timekeeping replay and summaries"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
