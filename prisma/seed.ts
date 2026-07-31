@@ -457,7 +457,7 @@ async function main() {
   const supplierByCode = new Map<string, { id: string; code: string; name: string }>();
   for (const supplier of supplierData) {
     const created = await db.supplier.create({
-      data: { ...supplier, status: SupplierStatus.active, address: "Baghdad", email: "", notes: "Seed supplier" },
+      data: { id: `seed_supplier_${uid()}`, ...supplier, status: SupplierStatus.active, address: "Baghdad", email: "", notes: "Seed supplier" },
       select: { id: true, code: true, name: true },
     });
     supplierByCode.set(created.code, created);
