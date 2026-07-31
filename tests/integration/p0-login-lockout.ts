@@ -325,15 +325,15 @@ async function main() {
 
     const clockInAudit = await db.auditEvent.findFirst({
       where: {
-        action: "employee.clock.in",
-        entityType: "Employee",
-        entityId: targetId,
+        action: "employee.time.clock_in",
+        entityType: "EmployeeTimeEvent",
         createdAt: { gte: testStartedAt },
       },
       orderBy: { createdAt: "desc" },
     });
     assert.ok(clockInAudit, "Successful clock-in must create an audit event");
-    assert.equal((clockInAudit.metadata as any)?.via, "pin");
+    assert.equal((clockInAudit.metadata as any)?.employeeId, targetId);
+    assert.equal((clockInAudit.metadata as any)?.source, "kiosk");
 
     const clockOut = await clock(targetPin, "out");
     expectStatus(clockOut, 201, "Clock out with valid PIN");
@@ -341,15 +341,15 @@ async function main() {
 
     const clockOutAudit = await db.auditEvent.findFirst({
       where: {
-        action: "employee.clock.out",
-        entityType: "Employee",
-        entityId: targetId,
+        action: "employee.time.clock_out",
+        entityType: "EmployeeTimeEvent",
         createdAt: { gte: testStartedAt },
       },
       orderBy: { createdAt: "desc" },
     });
     assert.ok(clockOutAudit, "Successful clock-out must create an audit event");
-    assert.equal((clockOutAudit.metadata as any)?.via, "pin");
+    assert.equal((clockOutAudit.metadata as any)?.employeeId, targetId);
+    assert.equal((clockOutAudit.metadata as any)?.source, "kiosk");
 
     console.log("[p0-lockout] Login and clock lockout assertions passed.");
   } finally {
