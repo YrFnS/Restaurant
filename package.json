@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test tests/security",
-    "test:integration": "bun tests/integration/p0-smoke.ts && bun tests/integration/p0-authorization-matrix.ts && bun tests/integration/p0-pricing.ts && bun tests/integration/p0-menu-modifiers.ts && bun tests/integration/p0-customer-isolation.ts && bun tests/integration/p0-kds-worker.ts && bun tests/integration/p0-payment-ledger.ts",
+    "test:integration": "bun tests/integration/p0-smoke.ts && bun tests/integration/p0-authorization-matrix.ts && bun tests/integration/p0-login-lockout.ts && bun tests/integration/p0-pricing.ts && bun tests/integration/p0-menu-modifiers.ts && bun tests/integration/p0-customer-isolation.ts && bun tests/integration/p0-kds-worker.ts && bun tests/integration/p0-payment-ledger.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
