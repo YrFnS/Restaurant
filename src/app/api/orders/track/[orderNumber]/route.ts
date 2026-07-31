@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getStaffSession } from "@/lib/auth/session";
+import {
+  ORDER_MANAGEMENT_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
 import {
   OrderAccessConfigurationError,
   verifyOrderAccessToken,
@@ -13,38 +16,6 @@ import {
 
 const TRACK_WINDOW_MS = 60_000;
 const MAX_TRACK_REQUESTS = 120;
-
-type TrackRateBucket = { count: number; resetAt: number };
-const globalForTrackLimit = globalThis as unknown as {
-  restaurantTrackRateLimits?: Map<string, TrackRateBucket>;
-};
-const trackRateLimits =
-  globalForTrackLimit.restaurantTrackRateLimits ??
-  new Map<string, TrackRateBucket>();
-if (!globalForTrackLimit.restaurantTrackRateLimits) {
-  globalForTrackLimit.restaurantTrackRateLimits = trackRateLimits;
-}
-
-function clientKey(req: NextRequest): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
-function consumeTrackLimit(key: string): number | null {
-  const now = Date.now();
-  const existing = trackRateLimits.get(key);
-  const bucket =
-    existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + TRACK_WINDOW_MS };
-  bucket.count += 1;
-  trackRateLimits.set(key, bucket);
-  if (bucket.count <= MAX_TRACK_REQUESTS) return null;
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
-}
 
 function bearerToken(req: NextRequest): string | null {
   const authorization = req.headers.get("authorization");
@@ -79,7 +50,10 @@ export async function GET(
   } catch (error) {
     console.error("[orders/track] Shared rate limiter failed", error);
     return NextResponse.json(
-      { error: "Order tracking is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      {
+        error: "Order tracking is temporarily unavailable",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      },
       { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
@@ -94,7 +68,17 @@ export async function GET(
     const { orderNumber } = await params;
     const normalized = normalizeOrderNumber(orderNumber);
     if (!normalized) {
-      return NextResponse.json({ order: null }, { status: 404 });
+      return NextResponse.json(
+        { order: null },
+        { status: 404, headers: rateLimitHeaders(trackingLimit) }
+      );
+    }
+
+    const token =
+      new URL(req.url).searchParams.get("token") || bearerToken(req);
+    if (!token) {
+      const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
+      if ("response" in auth) return auth.response;
     }
 
     const order = await db.order.findUnique({
@@ -148,14 +132,17 @@ export async function GET(
       },
     });
     if (!order) {
-      return NextResponse.json({ order: null }, { status: 404 });
+      return NextResponse.json(
+        { order: null },
+        { status: 404, headers: rateLimitHeaders(trackingLimit) }
+      );
     }
 
-    const token =
-      new URL(req.url).searchParams.get("token") || bearerToken(req);
-    const session = token ? null : await getStaffSession();
-    if (!session && !verifyOrderAccessToken(order.id, token)) {
-      return NextResponse.json({ order: null }, { status: 404 });
+    if (token && !verifyOrderAccessToken(order.id, token)) {
+      return NextResponse.json(
+        { order: null },
+        { status: 404, headers: rateLimitHeaders(trackingLimit) }
+      );
     }
 
     const timeline: Array<{
@@ -230,20 +217,23 @@ export async function GET(
           estimatedRemainingMin,
         },
       },
-      { headers: { "Cache-Control": "no-store" } }
+      { headers: rateLimitHeaders(trackingLimit) }
     );
   } catch (error) {
     if (error instanceof OrderAccessConfigurationError) {
       return NextResponse.json(
-        { error: "Order access is not configured", code: "ORDER_ACCESS_NOT_CONFIGURED" },
-        { status: 503 }
+        {
+          error: "Order access is not configured",
+          code: "ORDER_ACCESS_NOT_CONFIGURED",
+        },
+        { status: 503, headers: rateLimitHeaders(trackingLimit) }
       );
     }
 
     console.error("[orders/track] Failed to load order", error);
     return NextResponse.json(
       { error: "Unable to load order", code: "ORDER_TRACKING_FAILED" },
-      { status: 500 }
+      { status: 500, headers: rateLimitHeaders(trackingLimit) }
     );
   }
 }
