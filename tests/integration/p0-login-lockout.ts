@@ -310,7 +310,7 @@ async function main() {
     });
 
     const clockIn = await clock(targetPin, "in");
-    expectStatus(clockIn, 200, "Clock in after fixed-window expiry");
+    expectStatus(clockIn, 201, "Clock in after fixed-window expiry");
     assert.equal(clockIn.data?.employee?.id, targetId);
     assert.equal(clockIn.data?.employee?.clockedIn, true);
 
@@ -336,7 +336,7 @@ async function main() {
     assert.equal((clockInAudit.metadata as any)?.via, "pin");
 
     const clockOut = await clock(targetPin, "out");
-    expectStatus(clockOut, 200, "Clock out with valid PIN");
+    expectStatus(clockOut, 201, "Clock out with valid PIN");
     assert.equal(clockOut.data?.employee?.clockedIn, false);
 
     const clockOutAudit = await db.auditEvent.findFirst({
