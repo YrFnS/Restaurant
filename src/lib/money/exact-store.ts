@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
   BASIS_POINT_DIGITS,
   CURRENCY_MINOR_DIGITS,
@@ -9,7 +9,8 @@ import {
   scaledIntegerToSafeNumber,
 } from "./scaled-integer";
 
-export type ExactQueryClient = PrismaClient | Prisma.TransactionClient;
+/** Minimal structural contract shared by configured clients and transactions. */
+export type ExactQueryClient = Pick<Prisma.TransactionClient, "$queryRaw">;
 
 export interface ExactRestaurantPricingSettings {
   taxRateMicros: bigint;
