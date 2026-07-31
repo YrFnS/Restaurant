@@ -12,6 +12,7 @@ const TEST_SCOPES = [
   "reservation-create",
   "recent-orders-lookup",
   "recent-reservations-lookup",
+  "loyalty-lookup",
 ];
 
 type Json = Record<string, any> | null;
@@ -91,14 +92,18 @@ function futureServiceTime(daysAhead: number): string {
   return date.toISOString();
 }
 
-async function createOrder(itemId: string, label: string) {
+async function createOrder(
+  itemId: string,
+  label: string,
+  customerPhone = ""
+) {
   const result = await request("/api/orders", {
     method: "POST",
     headers: { "idempotency-key": `p0-recent-order-${crypto.randomUUID()}` },
     body: JSON.stringify({
       type: "takeout",
       customerName: `P0 Recent Order ${label}`,
-      customerPhone: "",
+      customerPhone,
       notes: `Recent ownership test ${label}`,
       tip: { mode: "none" },
       items: [
@@ -163,7 +168,23 @@ async function main() {
 
     const orderA = await createOrder(item.id, "A");
     const orderB = await createOrder(item.id, "B");
-    createdOrderIds.push(orderA.order.id, orderB.order.id);
+    const loyaltyPhone = uniquePhone("707");
+    const loyaltyOrder = await createOrder(item.id, "Loyalty", loyaltyPhone);
+    createdOrderIds.push(
+      orderA.order.id,
+      orderB.order.id,
+      loyaltyOrder.order.id
+    );
+
+    const storedLoyaltyOrder = await db.order.findUnique({
+      where: { id: loyaltyOrder.order.id },
+      select: { customerId: true },
+    });
+    assert.ok(
+      storedLoyaltyOrder?.customerId,
+      "Phone-linked order must persist a customer relationship"
+    );
+    createdCustomerIds.push(storedLoyaltyOrder.customerId);
 
     console.log("[p0-recent] validating mixed recent-order credentials");
     const mixedOrders = await request("/api/orders/recent", {
@@ -215,7 +236,52 @@ async function main() {
     expectStatus(bothOrders, 200, "Owned recent-order lookup");
     assert.deepEqual(
       new Set(bothOrders.data?.orders?.map((order: any) => order.id)),
-      new Set(createdOrderIds)
+      new Set([orderA.order.id, orderB.order.id])
+    );
+
+    console.log("[p0-recent] validating loyalty ownership and safe DTO fields");
+    const wrongLoyalty = await request("/api/customers/lookup", {
+      method: "POST",
+      body: JSON.stringify({
+        orders: [
+          {
+            orderNumber: loyaltyOrder.order.orderNumber,
+            accessToken: orderA.accessToken,
+          },
+          {
+            orderNumber: orderA.order.orderNumber,
+            accessToken: orderA.accessToken,
+          },
+        ],
+      }),
+    });
+    expectStatus(wrongLoyalty, 404, "Unowned loyalty lookup");
+    assert.equal(wrongLoyalty.data?.customer, null);
+    assert.deepEqual(wrongLoyalty.data?.redemptionOptions, []);
+
+    const ownedLoyalty = await request("/api/customers/lookup", {
+      method: "POST",
+      body: JSON.stringify({
+        orders: [
+          {
+            orderNumber: loyaltyOrder.order.orderNumber,
+            accessToken: loyaltyOrder.accessToken,
+          },
+        ],
+      }),
+    });
+    expectStatus(ownedLoyalty, 200, "Owned loyalty lookup");
+    assert.equal(ownedLoyalty.response.headers.get("ratelimit-limit"), "60");
+    assert.equal(
+      ownedLoyalty.data?.customer?.id,
+      storedLoyaltyOrder.customerId,
+      "Loyalty lookup must resolve only the customer linked to the owned order"
+    );
+    assert.equal(ownedLoyalty.data?.customer?.name, "P0 Recent Order Loyalty");
+    assert.equal(ownedLoyalty.data?.redemptionEnabled, false);
+    assertNoKeysMatching(
+      ownedLoyalty.data,
+      /^(phone|email|notes|customerPhone|accessToken|token)$/i
     );
 
     const reservationA = await createReservation("A", 30);
@@ -302,22 +368,28 @@ async function main() {
     const counters = await db.rateLimitCounter.findMany({
       where: {
         scope: {
-          in: ["recent-orders-lookup", "recent-reservations-lookup"],
+          in: [
+            "recent-orders-lookup",
+            "recent-reservations-lookup",
+            "loyalty-lookup",
+          ],
         },
         createdAt: { gte: startedAt },
       },
     });
     assert.equal(
       new Set(counters.map((counter) => counter.scope)).size,
-      2,
-      "Both recent credential routes must persist shared limiter counters"
+      3,
+      "Recent and loyalty credential routes must persist shared limiter counters"
     );
     assert.ok(
       counters.every((counter) => !counter.key.includes(SOURCE_IP)),
       "Shared limiter keys must not contain the raw source address"
     );
 
-    console.log("[p0-recent] Recent ownership and limiter assertions passed.");
+    console.log(
+      "[p0-recent] Recent ownership, loyalty, and limiter assertions passed."
+    );
   } finally {
     if (createdOrderIds.length > 0) {
       await db.$transaction(async (tx) => {
@@ -340,7 +412,9 @@ async function main() {
         where: { id: { in: createdReservationIds } },
       });
     }
-    const validCustomerIds = createdCustomerIds.filter(Boolean);
+    const validCustomerIds = Array.from(
+      new Set(createdCustomerIds.filter(Boolean))
+    );
     if (validCustomerIds.length > 0) {
       await db.customer.deleteMany({
         where: { id: { in: validCustomerIds } },
