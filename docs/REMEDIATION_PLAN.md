@@ -1,7 +1,7 @@
 # Restaurant Production Remediation Plan
 
 > **Repository:** `YrFnS/Restaurant`  
-> **Tracking branch:** `agent/p1-stock-ledger-recipes`  
+> **Tracking branch:** `agent/p1-purchase-orders-receiving`  
 > **Created:** 2026-07-30  
 > **Last reconciled:** 2026-07-31  
 > **Current milestone:** P1 restaurant workflow correctness — timekeeping, purchasing, reservations, and loyalty  
@@ -16,6 +16,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 - [`P1_CASH_REGISTER_SESSIONS.md`](./P1_CASH_REGISTER_SESSIONS.md)
 - [`P1_PAYMENT_REVERSALS.md`](./P1_PAYMENT_REVERSALS.md)
 - [`P1_STOCK_LEDGER_RECIPES.md`](./P1_STOCK_LEDGER_RECIPES.md)
+- [`P1_PURCHASE_ORDERS_RECEIVING.md`](./P1_PURCHASE_ORDERS_RECEIVING.md)
 
 ## Status notation
 
@@ -38,6 +39,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 | P1-A | Database, exact money, constraints, payment ledger | Exact-money foundation and cash reversals complete; contract migration deferred |
 | P1-B01 | Cash-register sessions and reconciliation | Completed and validated |
 | P1-B03 | Recipes and immutable stock ledger | Completed and validated |
+| P1-B04 | Suppliers, purchase orders, and partial receiving | In progress on `agent/p1-purchase-orders-receiving` |
 | P1-C | KDS, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
 | P2 | UX, accessibility, SEO, observability, performance | Not started as a coordinated phase |
 
@@ -54,6 +56,7 @@ main
         └── agent/p1-cash-register-sessions
             └── agent/p1-payment-reversals
                 └── agent/p1-stock-ledger-recipes
+                    └── agent/p1-purchase-orders-receiving
 ```
 
 Validated completed checkpoints:
@@ -208,6 +211,8 @@ Deferred from this slice:
 
 ## P1-B04 Purchase orders
 
+Current implementation target: `agent/p1-purchase-orders-receiving`
+
 - [ ] Add lines, supplier records, terms, and exact cost snapshots.
 - [ ] Add draft, submitted, partially received, received, and cancelled workflow.
 - [ ] Support partial receiving through stock-receipt movements.
@@ -331,3 +336,4 @@ Deferred from this slice:
 | 2026-07-31 | Added POS register assignment, opening/closing, cash reconciliation, immutable close records, and register-linked payment/cash ledgers. | Validation #558 and Integration #388 green at `c44030b`. |
 | 2026-07-31 | Added immutable cash refunds and voids, manager console, ledger reconciliation, and concurrency/database protections. | P1 Stacked Validation #6 green at `87d787b`. |
 | 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |
+| 2026-07-31 | Started first-class suppliers, exact purchase-order lines, partial receiving, and receipt-correction workflow. | `agent/p1-purchase-orders-receiving`. |

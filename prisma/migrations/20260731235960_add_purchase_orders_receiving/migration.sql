@@ -50,14 +50,14 @@ INSERT INTO "Supplier" (
 SELECT
   'supplier_' || md5(lower(btrim(legacy."supplier"))),
   'LEGACY-' || upper(substr(md5(lower(btrim(legacy."supplier"))), 1, 10)),
-  btrim(legacy."supplier"),
+  MIN(btrim(legacy."supplier")),
   'Created while adopting legacy purchase-order supplier text',
   'active'::"SupplierStatus",
   MIN(legacy."createdAt"),
   MAX(legacy."updatedAt")
 FROM "PurchaseOrder" AS legacy
 WHERE char_length(btrim(legacy."supplier")) > 0
-GROUP BY lower(btrim(legacy."supplier")), btrim(legacy."supplier")
+GROUP BY lower(btrim(legacy."supplier"))
 ON CONFLICT ("code") DO NOTHING;
 
 ALTER TABLE "PurchaseOrder"
@@ -378,7 +378,11 @@ DECLARE
   target_order_id TEXT;
   next_total BIGINT;
 BEGIN
-  target_order_id := CASE WHEN TG_OP = 'DELETE' THEN OLD."purchaseOrderId" ELSE NEW."purchaseOrderId" END;
+  IF TG_OP = 'DELETE' THEN
+    target_order_id := OLD."purchaseOrderId";
+  ELSE
+    target_order_id := NEW."purchaseOrderId";
+  END IF;
 
   SELECT COALESCE(SUM("lineTotalMinor"), 0)::bigint
     INTO next_total
@@ -393,7 +397,10 @@ BEGIN
     "updatedAt" = CURRENT_TIMESTAMP
   WHERE "id" = target_order_id;
 
-  RETURN COALESCE(NEW, OLD);
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END
 $$;
 
@@ -491,12 +498,18 @@ AS $$
 DECLARE
   parent_status "PurchaseOrderStatus";
   internal_receipt BOOLEAN;
+  target_order_id TEXT;
 BEGIN
   internal_receipt := current_setting('app.purchase_receipt_write', true) = 'on';
+  IF TG_OP = 'DELETE' THEN
+    target_order_id := OLD."purchaseOrderId";
+  ELSE
+    target_order_id := NEW."purchaseOrderId";
+  END IF;
 
   SELECT "status" INTO parent_status
   FROM "PurchaseOrder"
-  WHERE "id" = COALESCE(NEW."purchaseOrderId", OLD."purchaseOrderId")
+  WHERE "id" = target_order_id
   FOR UPDATE;
 
   IF parent_status IS NULL THEN
@@ -534,7 +547,10 @@ BEGIN
       USING ERRCODE = '55000';
   END IF;
 
-  RETURN COALESCE(NEW, OLD);
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END
 $$;
 

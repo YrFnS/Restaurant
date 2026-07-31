@@ -150,15 +150,15 @@ export async function POST(
             context,
             metadata: {
               receiptNumber: posted.receipt.receiptNumber,
-              purchaseOrderId: posted.purchaseOrder.id,
-              orderNumber: posted.purchaseOrder.orderNumber,
+              purchaseOrderId: posted.order.id,
+              orderNumber: posted.order.orderNumber,
               lineCount: posted.receipt.lineCount,
               totalCost: posted.receipt.totalCost,
               currency: posted.receipt.currency,
               stockMovementIds: posted.receipt.lines.map(
                 (line) => line.stockMovementId
               ),
-              resultingStatus: posted.purchaseOrder.status,
+              resultingStatus: posted.order.status,
             },
           });
         }

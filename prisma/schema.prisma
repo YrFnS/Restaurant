@@ -157,6 +157,24 @@ enum InventoryConsumptionState {
   untracked
 }
 
+enum SupplierStatus {
+  active
+  inactive
+}
+
+enum PurchaseOrderStatus {
+  draft
+  submitted
+  partially_received
+  received
+  cancelled
+}
+
+enum PurchaseReceiptStatus {
+  posted
+  reversed
+}
+
 // ─── Restaurant-wide settings (singleton) ───
 model RestaurantSettings {
   id                    String   @id @default("1")
@@ -571,6 +589,8 @@ model Ingredient {
   unitConversions   IngredientUnitConversion[]
   recipeComponents  RecipeComponent[]
   stockMovements    StockMovement[]
+  purchaseOrderLines PurchaseOrderLine[]
+  purchaseReceiptLines PurchaseReceiptLine[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt
 }
@@ -640,6 +660,8 @@ model StockMovement {
   reversalOfId        String?
   reversalOf          StockMovement?    @relation("StockMovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversals           StockMovement[]   @relation("StockMovementReversal")
+  purchaseReceiptLines PurchaseReceiptLine[] @relation("PurchaseReceiptLineStockMovement")
+  purchaseReceiptReversalLines PurchaseReceiptLine[] @relation("PurchaseReceiptLineReversalMovement")
   reasonCode          String            @default("")
   reason              String?
   actorId             String?
@@ -666,15 +688,133 @@ model WasteLog {
   updatedAt      DateTime @default(now()) @updatedAt
 }
 
+model Supplier {
+  id           String         @id
+  code         String         @unique(map: "Supplier_code_key")
+  name         String
+  contactName  String         @default("")
+  phone        String         @default("")
+  email        String         @default("")
+  address      String         @default("")
+  paymentTerms String         @default("")
+  notes        String?
+  status       SupplierStatus @default(active)
+  purchaseOrders PurchaseOrder[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([status, name], map: "Supplier_status_name_idx")
+}
+
 model PurchaseOrder {
-  id             String   @id @default(cuid())
-  supplier       String
+  id                 String              @id @default(cuid())
+  orderNumber        String              @unique(map: "PurchaseOrder_orderNumber_key")
+  creationKey        String              @unique(map: "PurchaseOrder_creationKey_key")
+  supplierId         String
+  supplierRecord     Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierCode       String              @default("")
+  supplier           String
+  currency           String              @default("USD")
+  notes              String?
+  status             PurchaseOrderStatus @default(draft)
+  totalCost          Float               @default(0)
+  totalCostMinor     BigInt              @default(0)
+  expectedAt         DateTime?
+  createdById        String?
+  createdByName      String              @default("")
+  submittedById      String?
+  submittedByName    String?
+  submittedAt        DateTime?
+  cancelledById      String?
+  cancelledByName    String?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  legacyImported     Boolean             @default(false)
+  lines              PurchaseOrderLine[]
+  receipts           PurchaseReceipt[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([supplierId, status, createdAt(sort: Desc)], map: "PurchaseOrder_supplier_status_createdAt_idx")
+  @@index([status, expectedAt], map: "PurchaseOrder_status_expectedAt_idx")
+}
+
+model PurchaseOrderLine {
+  id                              String        @id
+  purchaseOrderId                 String
+  purchaseOrder                   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  lineNumber                      Int
+  ingredientId                    String
+  ingredient                      Ingredient    @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  ingredientName                  String
+  baseUnit                        String
+  purchaseUnit                    String
+  conversionToBaseMicros          BigInt
+  orderedPurchaseQuantityMicros   BigInt
+  orderedBaseQuantityMicros       BigInt
+  receivedBaseQuantityMicros      BigInt        @default(0)
+  purchaseUnitCostMicros          BigInt
+  baseUnitCostMicros              BigInt
+  lineTotalMinor                  BigInt
+  notes                           String?
+  receiptLines                    PurchaseReceiptLine[]
+  createdAt                       DateTime      @default(now())
+  updatedAt                       DateTime      @updatedAt
+
+  @@unique([purchaseOrderId, lineNumber], map: "PurchaseOrderLine_order_lineNumber_key")
+  @@index([ingredientId, createdAt(sort: Desc)], map: "PurchaseOrderLine_ingredient_createdAt_idx")
+  @@index([purchaseOrderId, receivedBaseQuantityMicros], map: "PurchaseOrderLine_order_received_idx")
+}
+
+model PurchaseReceipt {
+  id             String                @id
+  receiptNumber  String                @unique(map: "PurchaseReceipt_receiptNumber_key")
+  idempotencyKey String                @unique(map: "PurchaseReceipt_idempotencyKey_key")
+  reversalKey    String?
+  purchaseOrderId String
+  purchaseOrder  PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  status         PurchaseReceiptStatus @default(posted)
+  totalCostMinor BigInt                @default(0)
   notes          String?
-  status         String   @default("draft")
-  totalCost      Float    @default(0)
-  totalCostMinor BigInt   @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @default(now()) @updatedAt
+  receivedById   String
+  receivedByName String
+  occurredAt     DateTime              @default(now())
+  reversedById   String?
+  reversedByName String?
+  reversedAt     DateTime?
+  reversalReason String?
+  lines          PurchaseReceiptLine[]
+  createdAt      DateTime              @default(now())
+
+  @@index([purchaseOrderId, createdAt(sort: Desc)], map: "PurchaseReceipt_order_createdAt_idx")
+  @@index([status, createdAt(sort: Desc)], map: "PurchaseReceipt_status_createdAt_idx")
+}
+
+model PurchaseReceiptLine {
+  id                         String            @id
+  receiptId                  String
+  receipt                    PurchaseReceipt   @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  purchaseOrderLineId        String
+  purchaseOrderLine          PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+  ingredientId               String
+  ingredient                 Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  ingredientName             String
+  submittedUnit              String
+  submittedQuantityMicros    BigInt
+  conversionToBaseMicros     BigInt
+  baseQuantityMicros         BigInt
+  purchaseUnitCostMicros     BigInt
+  baseUnitCostMicros         BigInt
+  totalCostMinor             BigInt
+  stockMovementId            String            @unique(map: "PurchaseReceiptLine_stockMovement_key")
+  stockMovement              StockMovement     @relation("PurchaseReceiptLineStockMovement", fields: [stockMovementId], references: [id], onDelete: Restrict)
+  reversalMovementId         String?
+  reversalMovement           StockMovement?    @relation("PurchaseReceiptLineReversalMovement", fields: [reversalMovementId], references: [id], onDelete: Restrict)
+  createdAt                  DateTime           @default(now())
+
+  @@unique([receiptId, purchaseOrderLineId], map: "PurchaseReceiptLine_receipt_orderLine_key")
+  @@index([purchaseOrderLineId, createdAt(sort: Desc)], map: "PurchaseReceiptLine_orderLine_createdAt_idx")
+  @@index([ingredientId, createdAt(sort: Desc)], map: "PurchaseReceiptLine_ingredient_createdAt_idx")
 }
 
 // ─── Cash registers, sessions, and drawer ledger ───
