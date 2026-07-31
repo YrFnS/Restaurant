@@ -94,6 +94,16 @@ describe("cash-register session source inventory", () => {
     expect(sessionRoute).toContain('action: "cash.session.close"');
   });
 
+  test("keeps the legacy compatibility register out of terminal assignment", () => {
+    expect(registersRoute).toContain(
+      'const LEGACY_COMPATIBILITY_REGISTER_CODE = "LEGACY-WEB-POS"'
+    );
+    expect(registersRoute).toContain(
+      'WHERE register."code" <> ${LEGACY_COMPATIBILITY_REGISTER_CODE}'
+    );
+    expect(registersRoute).toContain("REGISTER_CODE_RESERVED");
+  });
+
   test("binds every active cash mutation and cash capture to an open session", () => {
     for (const marker of [
       "lockOpenRegisterSession",
