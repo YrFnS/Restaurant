@@ -3,11 +3,11 @@
 > **Repository:** `YrFnS/Restaurant`  
 > **Branch:** `agent/p1-cash-register-sessions`  
 > **Stacked base:** `agent/p1-data-integrity`  
-> **Scope:** register identity, open/close lifecycle, cash reconciliation, and ledger linkage
+> **Scope:** register identity, POS assignment, open/close lifecycle, cash reconciliation, and ledger linkage
 
 ## Purpose
 
-The existing cash drawer was a restaurant-wide list of movements. A sale, payout, or cash drop had no register identity, no cashier shift, no opening float, no closing count, and no immutable reconciliation record. This slice makes every new explicit-register cash operation belong to one serialized open session.
+The previous cash drawer was a restaurant-wide list of movements. A sale, payout, or cash drop had no register identity, no cashier shift, no opening float, no closing count, and no immutable reconciliation record. This slice makes every new explicit-register cash operation belong to one serialized open session and exposes the lifecycle directly in the POS.
 
 ## Data model
 
@@ -137,9 +137,27 @@ Requires explicit register headers and an open session. The movement is attached
 
 Cash checkout attaches both its `CashDrawerEntry` and immutable `PaymentEvent` to the locked open register session.
 
+## POS workflow
+
+The `/pos` page now includes a persistent register control rather than relying on manually supplied HTTP headers.
+
+1. An owner, administrator, or manager creates a register for the terminal, including its code, device identity, location, and discrepancy threshold.
+2. The selected terminal assignment is stored in browser local storage and reused on future visits.
+3. A fixed status pill shows the selected register, whether it is open, and its live expected cash balance.
+4. An authorized cashier opens the drawer with an exact opening float.
+5. The payment dialog verifies that the assigned register still has an open session **before** it creates an order.
+6. Checkout sends the stored register and device headers to the backend, which locks the session and links both payment ledgers.
+7. Register data is refreshed after each completed sale.
+8. Closing displays expected cash, accepts counted cash, calculates the discrepancy, and requires a manager plus a reason when the configured threshold is exceeded.
+9. Exact closes can be completed by a cashier; approved discrepancy closes are permanently attributed to the approving manager.
+
+The browser assignment improves usability, but it is not the source of truth. Every operation is revalidated against the configured device identity and open database session.
+
 ## Compatibility transition
 
-The current POS frontend does not yet persist a register assignment. To avoid breaking the already-green checkout flow during this backend slice, headerless checkout uses a clearly identified compatibility register:
+The upgraded POS now requires an explicitly assigned and opened register before collecting cash. Headerless checkout compatibility remains only for older clients or external callers that have not yet adopted register headers.
+
+Those legacy calls use a clearly identified compatibility register:
 
 ```text
 register: LEGACY-WEB-POS
@@ -147,9 +165,9 @@ device: legacy-web-pos
 opening float: 0
 ```
 
-The compatibility session is created only when a headerless checkout first needs it and emits a `cash.session.auto-open` audit event. Manual cash movements do **not** receive this fallback; they require an explicitly opened register.
+The compatibility session is created only when a legacy headerless checkout first needs it and emits a `cash.session.auto-open` audit event. Manual cash movements do **not** receive this fallback; they require an explicitly opened register.
 
-The next UI slice should provision or select a register, persist its device identity locally, require opening before charging, display the live expected balance, and expose the counted-close workflow. Once that UI is deployed and existing terminals are assigned, the compatibility fallback can be removed through a separate reviewed change.
+After deployed terminals have been assigned and any external callers have migrated to the register headers, the compatibility fallback should be removed in a separate reviewed change.
 
 ## Validation gate
 
@@ -157,29 +175,33 @@ This branch is complete only when all of the following are green:
 
 - Prisma schema validation and generation;
 - strict TypeScript;
-- source inventory for tables, triggers, row locks, authorization, and ledger linkage;
+- source inventories for tables, triggers, row locks, authorization, ledger linkage, POS assignment, and checkout enforcement;
 - ESLint and production build;
 - migration deployment on an empty PostgreSQL database;
 - representative legacy-database adoption;
 - all P0 and P1 regression suites;
-- register provisioning authorization;
+- manager-only register provisioning;
+- persisted POS terminal assignment;
+- open-session verification before POS order creation;
 - device mismatch rejection;
 - idempotent opening and closing;
 - one-open-session concurrency behavior;
 - checkout and payout linkage;
+- live expected-balance display;
 - cashier exact close;
 - manager-approved discrepancy close;
-- post-close mutation rejection;
+- replay and post-close rejection;
 - immutable session and close records;
 - required audit events.
 
 ## Explicitly deferred
 
-- POS register-selection and opening/closing user interface;
+- register edit, reassignment, deactivation, and retirement administration;
 - denomination-by-denomination count sheets;
 - safe drops with dual custody;
 - card terminal settlement batches;
 - split tender;
 - refunds and voids;
 - multi-location register policy;
-- offline register synchronization.
+- offline register synchronization;
+- removal of the legacy headerless-checkout fallback after terminal rollout.
