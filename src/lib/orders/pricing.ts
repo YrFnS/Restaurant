@@ -2,6 +2,26 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import {
+  exactBasisPointsToPercent,
+  exactMinorToCents,
+  exactMinorToNumber,
+  exactRateMicrosToNumber,
+  readExactMenuItemPrices,
+  readExactModifierOptionPrices,
+  readExactPricingRuleMultipliers,
+  readExactPromoBasisPoints,
+  readExactRestaurantPricingSettings,
+} from "@/lib/money/exact-store";
+import {
+  applyScaledFactors,
+  BASIS_POINT_DIGITS,
+  CURRENCY_MINOR_DIGITS,
+  divideAndRoundHalfUp,
+  parseNonNegativeDecimalToScaledInteger,
+  RATE_MICRO_DIGITS,
+  scaleForDigits,
+} from "@/lib/money/scaled-integer";
 
 const modifierIdsSchema = z
   .array(z.string().trim().min(1).max(191))
@@ -135,15 +155,35 @@ export type OrderPricing = {
   activePricingRules: Array<{ id: string; nameEn: string; nameAr: string }>;
 };
 
-function toCents(value: number): number {
+const MAX_SAFE_SCALED_INPUT = BigInt(Number.MAX_SAFE_INTEGER);
+const RATE_SCALE = scaleForDigits(RATE_MICRO_DIGITS);
+const PERCENT_SCALE = scaleForDigits(BASIS_POINT_DIGITS + 2);
+
+function inputToScaledInteger(
+  value: number,
+  scaleDigits: number,
+  configurationCode: string
+): bigint {
   if (!Number.isFinite(value)) {
     throw new OrderPricingError(
-      "A configured price is invalid",
-      "INVALID_PRICE_CONFIGURATION",
-      503
+      "A submitted monetary value is invalid",
+      configurationCode,
+      400
     );
   }
-  return Math.round(value * 100);
+  try {
+    return parseNonNegativeDecimalToScaledInteger(
+      String(value),
+      scaleDigits,
+      MAX_SAFE_SCALED_INPUT
+    );
+  } catch {
+    throw new OrderPricingError(
+      "A submitted monetary value is invalid",
+      configurationCode,
+      400
+    );
+  }
 }
 
 export function fromCents(value: number): number {
@@ -181,6 +221,23 @@ function isRuleActive(
   return true;
 }
 
+function requiredExactValue(
+  map: ReadonlyMap<string, bigint>,
+  id: string,
+  kind: string
+): bigint {
+  const value = map.get(id);
+  if (value === undefined) {
+    throw new OrderPricingError(
+      `Exact ${kind} configuration is unavailable`,
+      "EXACT_PRICING_NOT_CONFIGURED",
+      503,
+      { id, kind }
+    );
+  }
+  return value;
+}
+
 export async function calculateOrderPricing(
   tx: Prisma.TransactionClient,
   input: OrderRequest,
@@ -188,25 +245,56 @@ export async function calculateOrderPricing(
 ): Promise<OrderPricing> {
   const itemIds = Array.from(new Set(input.items.map((item) => item.menuItemId)));
 
-  const [settings, menuItems, pricingRules] = await Promise.all([
-    tx.restaurantSettings.findUnique({ where: { id: "1" } }),
+  const [settings, exactSettings, menuItems, pricingRules] = await Promise.all([
+    tx.restaurantSettings.findUnique({
+      where: { id: "1" },
+      select: { id: true, avgPrepTimeMin: true },
+    }),
+    readExactRestaurantPricingSettings(tx),
     tx.menuItem.findMany({
       where: { id: { in: itemIds } },
-      include: {
-        category: true,
+      select: {
+        id: true,
+        nameEn: true,
+        isAvailable: true,
+        category: {
+          select: { isAvailable: true, stationSlugs: true },
+        },
         modifierGroups: {
           orderBy: { sortOrder: "asc" },
-          include: { options: true },
+          select: {
+            id: true,
+            nameEn: true,
+            isRequired: true,
+            minSelect: true,
+            maxSelect: true,
+            options: {
+              select: {
+                id: true,
+                nameEn: true,
+                nameAr: true,
+                preset: true,
+              },
+            },
+          },
         },
       },
     }),
     tx.dynamicPricing.findMany({
       where: { isActive: true },
       orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        nameEn: true,
+        nameAr: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+      },
     }),
   ]);
 
-  if (!settings) {
+  if (!settings || !exactSettings) {
     throw new OrderPricingError(
       "Restaurant settings are not configured",
       "SETTINGS_NOT_CONFIGURED",
@@ -225,15 +313,28 @@ export async function calculateOrderPricing(
     );
   }
 
+  const modifierOptionIds = menuItems.flatMap((item) =>
+    item.modifierGroups.flatMap((group) => group.options.map((option) => option.id))
+  );
+  const [itemPrices, optionPrices, pricingMultipliers] = await Promise.all([
+    readExactMenuItemPrices(tx, itemIds),
+    readExactModifierOptionPrices(tx, modifierOptionIds),
+    readExactPricingRuleMultipliers(
+      tx,
+      pricingRules.map((rule) => rule.id)
+    ),
+  ]);
+
   const activePricingRules = pricingRules.filter((rule) =>
     isRuleActive(rule, now)
   );
-  const dynamicMultiplier = activePricingRules.reduce((result, rule) => {
-    if (
-      !Number.isFinite(rule.multiplier) ||
-      rule.multiplier <= 0 ||
-      rule.multiplier > 10
-    ) {
+  const activeMultiplierMicros = activePricingRules.map((rule) => {
+    const multiplier = requiredExactValue(
+      pricingMultipliers,
+      rule.id,
+      "dynamic-pricing multiplier"
+    );
+    if (multiplier <= BigInt(0) || multiplier > BigInt(10_000_000)) {
       throw new OrderPricingError(
         "A dynamic pricing rule is misconfigured",
         "INVALID_PRICING_RULE",
@@ -241,8 +342,14 @@ export async function calculateOrderPricing(
         { ruleId: rule.id }
       );
     }
-    return result * rule.multiplier;
-  }, 1);
+    return multiplier;
+  });
+  const combinedMultiplierMicros = applyScaledFactors(
+    RATE_SCALE,
+    activeMultiplierMicros,
+    RATE_MICRO_DIGITS
+  );
+  const dynamicMultiplier = exactRateMicrosToNumber(combinedMultiplierMicros);
 
   const lines: PricedOrderLine[] = input.items.map((requestedLine) => {
     const menuItem = menuItemMap.get(requestedLine.menuItemId)!;
@@ -265,6 +372,11 @@ export async function calculateOrderPricing(
       price: number;
       preset: string;
     }> = [];
+    let configuredUnitMinor = requiredExactValue(
+      itemPrices,
+      menuItem.id,
+      "menu-item price"
+    );
 
     for (const group of menuItem.modifierGroups) {
       const selectedForGroup = group.options.filter((option) => {
@@ -292,12 +404,18 @@ export async function calculateOrderPricing(
       }
 
       selectedForGroup.forEach((option) => {
+        const optionMinor = requiredExactValue(
+          optionPrices,
+          option.id,
+          "modifier-option price"
+        );
+        configuredUnitMinor += optionMinor;
         selectedOptions.push({
           id: option.id,
           groupId: group.id,
           nameEn: option.nameEn,
           nameAr: option.nameAr,
-          price: fromCents(toCents(option.price)),
+          price: exactMinorToNumber(optionMinor),
           preset: option.preset,
         });
       });
@@ -315,14 +433,12 @@ export async function calculateOrderPricing(
       );
     }
 
-    const configuredUnitCents =
-      toCents(menuItem.price) +
-      selectedOptions.reduce((sum, option) => sum + toCents(option.price), 0);
-    const unitPriceCents = Math.max(
-      0,
-      Math.round(configuredUnitCents * dynamicMultiplier)
+    const unitPriceMinor = applyScaledFactors(
+      configuredUnitMinor,
+      activeMultiplierMicros,
+      RATE_MICRO_DIGITS
     );
-    const totalPriceCents = unitPriceCents * requestedLine.quantity;
+    const totalPriceMinor = unitPriceMinor * BigInt(requestedLine.quantity);
     const stationSlug =
       menuItem.category.stationSlugs
         .split(",")
@@ -332,8 +448,8 @@ export async function calculateOrderPricing(
     return {
       menuItemId: menuItem.id,
       quantity: requestedLine.quantity,
-      unitPriceCents,
-      totalPriceCents,
+      unitPriceCents: exactMinorToCents(unitPriceMinor),
+      totalPriceCents: exactMinorToCents(totalPriceMinor),
       modifiers: JSON.stringify(selectedOptions),
       notes: requestedLine.notes || null,
       stationSlug,
@@ -341,36 +457,46 @@ export async function calculateOrderPricing(
     };
   });
 
-  const subtotalCents = lines.reduce(
-    (sum, line) => sum + line.totalPriceCents,
-    0
+  const subtotalMinor = lines.reduce(
+    (sum, line) => sum + BigInt(line.totalPriceCents),
+    BigInt(0)
   );
-  const minimumDeliveryOrderCents = toCents(settings.minDeliveryOrder);
+  const minimumDeliveryOrderMinor = exactSettings.minDeliveryOrderMinor;
   if (
     input.type === "delivery" &&
-    subtotalCents < minimumDeliveryOrderCents
+    subtotalMinor < minimumDeliveryOrderMinor
   ) {
     throw new OrderPricingError(
-      `Minimum delivery order is ${fromCents(minimumDeliveryOrderCents)}`,
+      `Minimum delivery order is ${exactMinorToNumber(minimumDeliveryOrderMinor)}`,
       "MINIMUM_DELIVERY_ORDER",
       400,
-      { minimumDeliveryOrder: fromCents(minimumDeliveryOrderCents) }
+      { minimumDeliveryOrder: exactMinorToNumber(minimumDeliveryOrderMinor) }
     );
   }
 
   let promoCode: string | null = null;
-  let promoDiscountPercent = 0;
+  let promoDiscountBasisPoints = 0;
   if (input.promoCode) {
-    const promo = await tx.promoCode.findUnique({
-      where: { code: input.promoCode },
-    });
+    const [promo, exactDiscountBasisPoints] = await Promise.all([
+      tx.promoCode.findUnique({
+        where: { code: input.promoCode },
+        select: {
+          code: true,
+          isActive: true,
+          validFrom: true,
+          validUntil: true,
+        },
+      }),
+      readExactPromoBasisPoints(tx, input.promoCode),
+    ]);
     if (
       !promo?.isActive ||
       (promo.validFrom && now < promo.validFrom) ||
       (promo.validUntil && now > promo.validUntil) ||
-      !Number.isFinite(promo.discountPercent) ||
-      promo.discountPercent < 0 ||
-      promo.discountPercent > 100
+      exactDiscountBasisPoints === null ||
+      !Number.isInteger(exactDiscountBasisPoints) ||
+      exactDiscountBasisPoints < 0 ||
+      exactDiscountBasisPoints > 10_000
     ) {
       throw new OrderPricingError(
         "The promo code is invalid or expired",
@@ -379,43 +505,60 @@ export async function calculateOrderPricing(
       );
     }
     promoCode = promo.code;
-    promoDiscountPercent = promo.discountPercent;
+    promoDiscountBasisPoints = exactDiscountBasisPoints;
   }
 
-  const discountCents = Math.min(
-    subtotalCents,
-    Math.round((subtotalCents * promoDiscountPercent) / 100)
+  const discountMinor =
+    promoDiscountBasisPoints === 0
+      ? BigInt(0)
+      : divideAndRoundHalfUp(
+          subtotalMinor * BigInt(promoDiscountBasisPoints),
+          PERCENT_SCALE
+        );
+  const boundedDiscountMinor =
+    discountMinor > subtotalMinor ? subtotalMinor : discountMinor;
+  const discountedSubtotalMinor = subtotalMinor - boundedDiscountMinor;
+  const taxMinor = divideAndRoundHalfUp(
+    discountedSubtotalMinor * exactSettings.taxRateMicros,
+    RATE_SCALE
   );
-  const discountedSubtotalCents = subtotalCents - discountCents;
-  const taxCents = Math.max(
-    0,
-    Math.round(discountedSubtotalCents * settings.taxRate)
-  );
-  const deliveryFeeCents =
-    input.type === "delivery" ? toCents(settings.deliveryFee) : 0;
-  const tipCents =
+  const deliveryFeeMinor =
+    input.type === "delivery" ? exactSettings.deliveryFeeMinor : BigInt(0);
+  const tipMinor =
     input.tip.mode === "percent"
-      ? Math.round((discountedSubtotalCents * input.tip.value) / 100)
+      ? divideAndRoundHalfUp(
+          discountedSubtotalMinor *
+            inputToScaledInteger(
+              input.tip.value,
+              BASIS_POINT_DIGITS,
+              "INVALID_TIP_PERCENT"
+            ),
+          PERCENT_SCALE
+        )
       : input.tip.mode === "amount"
-        ? toCents(input.tip.value)
-        : 0;
-  const totalCents = Math.max(
-    0,
-    discountedSubtotalCents + taxCents + deliveryFeeCents + tipCents
-  );
+        ? inputToScaledInteger(
+            input.tip.value,
+            CURRENCY_MINOR_DIGITS,
+            "INVALID_TIP_AMOUNT"
+          )
+        : BigInt(0);
+  const totalMinor =
+    discountedSubtotalMinor + taxMinor + deliveryFeeMinor + tipMinor;
 
   return {
     lines,
-    subtotalCents,
-    discountCents,
-    taxCents,
-    deliveryFeeCents,
-    tipCents,
-    totalCents,
-    minimumDeliveryOrderCents,
+    subtotalCents: exactMinorToCents(subtotalMinor),
+    discountCents: exactMinorToCents(boundedDiscountMinor),
+    taxCents: exactMinorToCents(taxMinor),
+    deliveryFeeCents: exactMinorToCents(deliveryFeeMinor),
+    tipCents: exactMinorToCents(tipMinor),
+    totalCents: exactMinorToCents(totalMinor),
+    minimumDeliveryOrderCents: exactMinorToCents(minimumDeliveryOrderMinor),
     averagePrepMinutes: settings.avgPrepTimeMin,
     promoCode,
-    promoDiscountPercent,
+    promoDiscountPercent: exactBasisPointsToPercent(
+      promoDiscountBasisPoints
+    ),
     dynamicMultiplier,
     activePricingRules: activePricingRules.map((rule) => ({
       id: rule.id,
