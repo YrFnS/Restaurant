@@ -6,11 +6,18 @@ import {
   KITCHEN_OPERATION_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 import {
   flushKdsOutboxBestEffort,
   queueKdsEvent,
   resolveKdsScreenSlugs,
 } from "@/lib/kds/outbox";
+import {
+  consumeOrderInventory,
+  consumeOrderItemInventory,
+  InventoryLedgerError,
+  inventoryLedgerErrorFromDatabase,
+} from "@/lib/inventory/stock-ledger";
 
 const slugSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 const kitchenQuerySchema = z
@@ -69,6 +76,13 @@ const KDS_ORDER_SELECT = {
     },
   },
 } as const;
+
+function inventoryErrorResponse(error: InventoryLedgerError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code, details: error.details },
+    { status: error.status, headers: { "Cache-Control": "no-store" } }
+  );
+}
 
 export async function GET(req: NextRequest) {
   const auth = await requireStaffSession(KITCHEN_OPERATION_ROLES);
@@ -223,6 +237,7 @@ export async function PATCH(req: NextRequest) {
         { status: 400 }
       );
     }
+    const context = auditContextFromRequest(req);
 
     if ("itemId" in parsed.data) {
       const { itemId, status: nextStatus } = parsed.data;
@@ -250,13 +265,35 @@ export async function PATCH(req: NextRequest) {
         }
       }
 
-      const item = await db.$transaction(async (tx) => {
+      const result = await db.$transaction(async (tx) => {
+        const consumption = ["preparing", "ready", "served"].includes(
+          nextStatus
+        )
+          ? await consumeOrderItemInventory(tx, {
+              orderItemId: itemId,
+              actor: auth.session,
+            })
+          : null;
+        const inventory = consumption
+          ? {
+              tracked: consumption.tracked,
+              recipeId: consumption.recipeId,
+              recipeVersion: consumption.recipeVersion,
+              movementCount: consumption.movements.length,
+              replayedMovementCount: consumption.replayedMovementCount,
+            }
+          : null;
+
         const updated = await tx.orderItem.update({
           where: { id: itemId },
           data: {
             status: nextStatus,
-            ...(nextStatus === "preparing" ? { firedAt: new Date() } : {}),
-            ...(nextStatus === "ready" ? { readyAt: new Date() } : {}),
+            ...(nextStatus === "preparing" && existing.status !== "preparing"
+              ? { firedAt: new Date() }
+              : {}),
+            ...(nextStatus === "ready" && existing.status !== "ready"
+              ? { readyAt: new Date() }
+              : {}),
             ...(nextStatus === "cancelled" ? { hold: false } : {}),
           },
           select: {
@@ -310,6 +347,24 @@ export async function PATCH(req: NextRequest) {
           });
         }
 
+        if (
+          inventory &&
+          inventory.movementCount > inventory.replayedMovementCount
+        ) {
+          await writeAuditEvent(tx, {
+            actor: auth.session,
+            action: "inventory.production.consume_item",
+            entityType: "OrderItem",
+            entityId: itemId,
+            context,
+            metadata: {
+              orderId: existing.orderId,
+              source: "kitchen",
+              ...inventory,
+            },
+          });
+        }
+
         const targetScreenSlugs = await resolveKdsScreenSlugs(tx, [
           updated.stationSlug,
         ]);
@@ -323,12 +378,15 @@ export async function PATCH(req: NextRequest) {
           },
         });
 
-        return updated;
+        return { item: updated, inventory };
       });
 
       await flushKdsOutboxBestEffort(10);
 
-      return NextResponse.json({ item });
+      return NextResponse.json({
+        item: result.item,
+        inventory: result.inventory,
+      });
     }
 
     const { orderId } = parsed.data;
@@ -352,7 +410,12 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const order = await db.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx) => {
+      const inventory = await consumeOrderInventory(tx, {
+        orderId,
+        actor: auth.session,
+      });
+
       await tx.order.update({
         where: { id: orderId },
         data: { status: "completed", completedAt: new Date() },
@@ -368,13 +431,24 @@ export async function PATCH(req: NextRequest) {
         });
       }
 
+      if (inventory.movementCount > inventory.replayedMovementCount) {
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "inventory.production.consume_order",
+          entityType: "Order",
+          entityId: orderId,
+          context,
+          metadata: { source: "kitchen", ...inventory },
+        });
+      }
+
       await queueKdsEvent(tx, {
         type: "order:status",
         screenSlugs: [],
         payload: { orderId, status: "completed" },
       });
 
-      return tx.order.findUniqueOrThrow({
+      const order = await tx.order.findUniqueOrThrow({
         where: { id: orderId },
         select: {
           ...KDS_ORDER_SELECT,
@@ -407,12 +481,21 @@ export async function PATCH(req: NextRequest) {
           },
         },
       });
+      return { order, inventory };
     });
 
     await flushKdsOutboxBestEffort(10);
 
-    return NextResponse.json({ order });
+    return NextResponse.json({
+      order: result.order,
+      inventory: result.inventory,
+    });
   } catch (error) {
+    if (error instanceof InventoryLedgerError) {
+      return inventoryErrorResponse(error);
+    }
+    const mapped = inventoryLedgerErrorFromDatabase(error);
+    if (mapped) return inventoryErrorResponse(mapped);
     console.error("[kitchen] Failed to update KDS state", error);
     return NextResponse.json(
       { error: "Unable to update kitchen state", code: "KDS_UPDATE_FAILED" },
