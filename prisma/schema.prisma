@@ -11,252 +11,377 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum OrderType {
+  dine_in
+  takeout
+  delivery
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  preparing
+  ready
+  completed
+  cancelled
+}
+
+enum OrderItemStatus {
+  pending
+  preparing
+  ready
+  served
+  cancelled
+}
+
+enum PaymentMethod {
+  cash
+  card
+  split
+}
+
+enum PaymentStatus {
+  unpaid
+  partially_paid
+  paid
+  partially_refunded
+  refunded
+  voided
+}
+
+enum StaffRole {
+  owner
+  admin
+  manager
+  cashier
+  server
+  cook
+  bartender
+  host
+  inventory_manager
+  analyst
+  staff
+}
+
+enum TableStatus {
+  open
+  seated
+  ordered
+  served
+  paid
+  cleaning
+  reserved
+}
+
+enum TableShape {
+  square
+  round
+}
+
+enum ReservationStatus {
+  confirmed
+  seated
+  completed
+  cancelled
+  no_show
+}
+
+enum WaitlistStatus {
+  waiting
+  notified
+  seated
+  cancelled
+  no_show
+}
+
+enum CashMovementType {
+  payin
+  payout
+  drop
+  sale
+  refund
+  adjustment
+  opening_float
+  closing_adjustment
+}
+
+enum KdsScreenType {
+  prep
+  expo
+  all
+}
+
+enum KdsLayoutType {
+  grid
+  compact
+}
+
+enum DynamicPricingType {
+  happy_hour
+  lunch_special
+  surge
+}
+
+enum PaymentEventType {
+  capture
+  refund
+  void
+  adjustment
+}
+
+enum PaymentEventStatus {
+  pending
+  succeeded
+  failed
+  voided
+}
+
 // ─── Restaurant-wide settings (singleton) ───
 model RestaurantSettings {
-  id                 String   @id @default("1")
-  nameEn             String   @default("")
-  nameAr             String   @default("")
-  taglineEn          String   @default("")
-  taglineAr          String   @default("")
-  descriptionEn      String   @default("")
-  descriptionAr      String   @default("")
-  phone              String   @default("")
-  email              String   @default("")
-  addressEn          String   @default("")
-  addressAr          String   @default("")
-  latitude           Float    @default(0)
-  longitude          Float    @default(0)
-  taxRate            Float    @default(0)
-  currency           String   @default("USD")
-  currencySymbol     String   @default("$")
-  deliveryFee        Float    @default(0)
-  minDeliveryOrder   Float    @default(0)
-  deliveryRadiusKm   Float    @default(0)
-  avgPrepTimeMin     Int      @default(20)
-  tipPresets         String   @default("10,15,20")
-  openTime           String   @default("09:00")
-  closeTime          String   @default("23:00")
-  logoUrl            String   @default("")
-  heroImageUrl       String   @default("")
-  facebookUrl        String   @default("")
-  instagramUrl       String   @default("")
-  twitterUrl         String   @default("")
-  whatsappUrl        String   @default("")
-  giftCardAmounts    String   @default("25,50,75,100")
-  statsOrdersServed  Int      @default(0)
-  statsHappyCustomers Int     @default(0)
-  statsYearsService  Int      @default(0)
+  id                  String   @id @default("1")
+  nameEn              String   @default("")
+  nameAr              String   @default("")
+  taglineEn           String   @default("")
+  taglineAr           String   @default("")
+  descriptionEn       String   @default("")
+  descriptionAr       String   @default("")
+  phone               String   @default("")
+  email               String   @default("")
+  addressEn           String   @default("")
+  addressAr           String   @default("")
+  latitude            Float    @default(0)
+  longitude           Float    @default(0)
+  taxRate             Float    @default(0)
+  currency            String   @default("USD")
+  currencySymbol      String   @default("$")
+  deliveryFee         Float    @default(0)
+  minDeliveryOrder    Float    @default(0)
+  deliveryRadiusKm    Float    @default(0)
+  avgPrepTimeMin      Int      @default(20)
+  tipPresets          String   @default("10,15,20")
+  openTime            String   @default("09:00")
+  closeTime           String   @default("23:00")
+  logoUrl             String   @default("")
+  heroImageUrl        String   @default("")
+  facebookUrl         String   @default("")
+  instagramUrl        String   @default("")
+  twitterUrl          String   @default("")
+  whatsappUrl         String   @default("")
+  giftCardAmounts     String   @default("25,50,75,100")
+  statsOrdersServed   Int      @default(0)
+  statsHappyCustomers Int      @default(0)
+  statsYearsService   Int      @default(0)
   // KDS timing thresholds (minutes)
-  kdsGreenMin        Int      @default(10)
-  kdsYellowMin       Int      @default(18)
-  kdsRedMin          Int      @default(25)
-  soundOnNewTicket   Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  kdsGreenMin         Int      @default(10)
+  kdsYellowMin        Int      @default(18)
+  kdsRedMin           Int      @default(25)
+  soundOnNewTicket    Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 // ─── Menu ───
 model MenuCategory {
-  id          String     @id @default(cuid())
-  nameEn      String
-  nameAr      String
-  icon        String     @default("🍽️")
-  color       String     @default("#f59e0b")
-  sortOrder   Int        @default(0)
-  isAvailable Boolean    @default(true)
+  id           String     @id @default(cuid())
+  nameEn       String
+  nameAr       String
+  icon         String     @default("🍽️")
+  color        String     @default("#f59e0b")
+  sortOrder     Int        @default(0)
+  isAvailable  Boolean    @default(true)
   // Which kitchen station(s) handle this category (comma-separated station slugs, empty = all)
-  stationSlugs String    @default("")
-  items       MenuItem[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  stationSlugs String     @default("")
+  items        MenuItem[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 }
 
 model MenuItem {
-  id             String       @id @default(cuid())
-  nameEn         String
-  nameAr         String
-  descriptionEn  String       @default("")
-  descriptionAr  String       @default("")
-  price          Float
-  image          String       @default("")
-  isAvailable    Boolean      @default(true)
-  isPopular      Boolean      @default(false)
-  isSpecial      Boolean      @default(false)
-  isNew          Boolean      @default(false)
-  preparationTime Int         @default(15)
-  calories       Int          @default(0)
+  id              String          @id @default(cuid())
+  nameEn          String
+  nameAr          String
+  descriptionEn   String          @default("")
+  descriptionAr   String          @default("")
+  price           Float
+  image           String          @default("")
+  isAvailable     Boolean         @default(true)
+  isPopular       Boolean         @default(false)
+  isSpecial       Boolean         @default(false)
+  isNew           Boolean         @default(false)
+  preparationTime Int             @default(15)
+  calories        Int             @default(0)
   // comma-separated allergens: gluten, dairy, nuts, eggs, seafood, soy, sesame
-  allergens      String       @default("")
+  allergens       String          @default("")
   // comma-separated dietary: vegetarian, vegan, gluten_free, halal, spicy
-  dietary        String       @default("")
-  sortOrder      Int          @default(0)
-  categoryId     String
-  category       MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  modifierGroups ModifierGroup[]
-  orderItems     OrderItem[]
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  dietary         String          @default("")
+  sortOrder       Int             @default(0)
+  categoryId      String
+  category        MenuCategory    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  modifierGroups  ModifierGroup[]
+  orderItems      OrderItem[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 }
 
 // Modifier groups: required/optional, single/multi-select, priced options
 model ModifierGroup {
-  id            String     @id @default(cuid())
-  nameEn        String
-  nameAr        String
-  isRequired    Boolean    @default(false)
-  minSelect     Int        @default(0)
-  maxSelect     Int        @default(1) // 1 = single, >1 = multi
-  sortOrder     Int        @default(0)
-  menuItemId    String
-  menuItem      MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-  options       ModifierOption[]
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id         String           @id @default(cuid())
+  nameEn     String
+  nameAr     String
+  isRequired Boolean          @default(false)
+  minSelect  Int              @default(0)
+  maxSelect  Int              @default(1) // 1 = single, >1 = multi
+  sortOrder  Int              @default(0)
+  menuItemId String
+  menuItem   MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  options    ModifierOption[]
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 }
 
 model ModifierOption {
-  id              String       @id @default(cuid())
-  nameEn          String
-  nameAr          String
-  price           Float        @default(0)
-  isDefault       Boolean      @default(false)
+  id        String        @id @default(cuid())
+  nameEn    String
+  nameAr    String
+  price     Float         @default(0)
+  isDefault Boolean       @default(false)
   // preset tag: none, no, extra, side, light — for kitchen readability
-  preset          String       @default("none")
-  groupId         String
-  group           ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  preset    String        @default("none")
+  groupId   String
+  group     ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 }
 
 // ─── Customers ───
 model Customer {
-  id             String        @id @default(cuid())
-  name           String
-  phone          String        @unique
-  email          String?
-  loyaltyPoints  Int           @default(0)
-  totalSpent     Float         @default(0)
-  visits         Int           @default(0)
-  notes          String        @default("")
-  orders         Order[]
-  reservations   Reservation[]
+  id              String          @id @default(cuid())
+  name            String
+  phone           String          @unique
+  email           String?
+  loyaltyPoints   Int             @default(0)
+  totalSpent      Float           @default(0)
+  visits          Int             @default(0)
+  notes           String          @default("")
+  orders          Order[]
+  reservations    Reservation[]
   waitlistEntries WaitlistEntry[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 }
 
 // ─── Orders ───
 model Order {
-  id              String       @id @default(cuid())
-  orderNumber     String       @unique
-  type            String       @default("dine_in") // dine_in, takeout, delivery
-  status          String       @default("pending") // pending, confirmed, preparing, ready, completed, cancelled
-  customerName    String       @default("")
-  customerPhone   String       @default("")
+  id              String           @id @default(cuid())
+  orderNumber     String           @unique
+  type            OrderType        @default(dine_in)
+  status          OrderStatus      @default(pending)
+  customerName    String           @default("")
+  customerPhone   String           @default("")
   deliveryAddress String?
   notes           String?
-  subtotal        Float        @default(0)
-  taxAmount       Float        @default(0)
-  deliveryFee     Float        @default(0)
-  discountAmount  Float        @default(0)
-  tipAmount       Float        @default(0)
-  total           Float        @default(0)
-  paymentMethod   String       @default("cash") // cash, card, split
-  paymentStatus   String       @default("unpaid") // unpaid, paid
+  subtotal        Float            @default(0)
+  taxAmount       Float            @default(0)
+  deliveryFee     Float            @default(0)
+  discountAmount  Float            @default(0)
+  tipAmount       Float            @default(0)
+  total           Float            @default(0)
+  paymentMethod   PaymentMethod    @default(cash)
+  paymentStatus   PaymentStatus    @default(unpaid)
   // who took the order
-  serverName      String       @default("")
+  serverName      String           @default("")
   tableId         String?
   table           RestaurantTable? @relation(fields: [tableId], references: [id])
   customerId      String?
-  customer        Customer?    @relation(fields: [customerId], references: [id])
+  customer        Customer?        @relation(fields: [customerId], references: [id])
   items           OrderItem[]
   paymentEvents   PaymentEvent[]
   estimatedReady  DateTime?
   completedAt     DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model OrderItem {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   orderId     String
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order       Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   menuItemId  String
-  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
-  quantity    Int      @default(1)
+  menuItem    MenuItem        @relation(fields: [menuItemId], references: [id])
+  quantity    Int             @default(1)
   unitPrice   Float
   // JSON string of selected modifier options [{id,nameEn,nameAr,price}]
-  modifiers   String   @default("[]")
+  modifiers   String          @default("[]")
   notes       String?
   totalPrice  Float
-  status      String   @default("pending") // pending, preparing, ready, served, cancelled
+  status      OrderItemStatus @default(pending)
   // which kitchen station handles this item
-  stationSlug String   @default("")
+  stationSlug String          @default("")
   // course number for course firing (1 = first course, 2 = main, etc.)
-  course      Int      @default(1)
-  hold        Boolean  @default(false) // held until expo fires it
+  course      Int             @default(1)
+  hold        Boolean         @default(false) // held until expo fires it
   firedAt     DateTime?
   readyAt     DateTime?
   seatNumber  Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 }
 
 // ─── Tables / Floor ───
 model RestaurantTable {
-  id          String        @id @default(cuid())
-  number      Int           @unique
-  capacity    Int           @default(4)
-  section     String        @default("main") // main, patio, private, bar
-  status      String        @default("open") // open, seated, ordered, served, paid, cleaning, reserved
-  shape       String        @default("square") // square, round
-  x           Float         @default(0)
-  y           Float         @default(0)
-  width       Float         @default(80)
-  height      Float         @default(80)
-  serverName  String        @default("")
-  seatedAt    DateTime?
-  orders      Order[]
+  id           String        @id @default(cuid())
+  number       Int           @unique
+  capacity     Int           @default(4)
+  section      String        @default("main") // main, patio, private, bar
+  status       TableStatus   @default(open)
+  shape        TableShape    @default(square)
+  x            Float         @default(0)
+  y            Float         @default(0)
+  width        Float         @default(80)
+  height       Float         @default(80)
+  serverName   String        @default("")
+  seatedAt     DateTime?
+  orders       Order[]
   reservations Reservation[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 // ─── Reservations ───
 model Reservation {
-  id            String          @id @default(cuid())
+  id            String            @id @default(cuid())
   customerName  String
   customerPhone String
   customerEmail String?
   partySize     Int
   tableId       String?
-  table         RestaurantTable? @relation(fields: [tableId], references: [id])
+  table         RestaurantTable?  @relation(fields: [tableId], references: [id])
   customerId    String?
-  customer      Customer?       @relation(fields: [customerId], references: [id])
+  customer      Customer?         @relation(fields: [customerId], references: [id])
   dateTime      DateTime
-  status        String          @default("confirmed") // confirmed, seated, completed, cancelled, no_show
+  status        ReservationStatus @default(confirmed)
   occasion      String?
   preference    String?
   notes         String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 }
 
 // ─── Waitlist ───
 model WaitlistEntry {
-  id            String    @id @default(cuid())
+  id            String         @id @default(cuid())
   customerName  String
   customerPhone String
   partySize     Int
-  status        String    @default("waiting") // waiting, notified, seated, cancelled, no_show
-  estimatedWait Int       @default(15)
+  status        WaitlistStatus @default(waiting)
+  estimatedWait Int            @default(15)
   notes         String?
   customerId    String?
-  customer      Customer? @relation(fields: [customerId], references: [id])
+  customer      Customer?      @relation(fields: [customerId], references: [id])
   seatedAt      DateTime?
   notifiedAt    DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 }
 
 // ─── Offers / Promos ───
@@ -288,33 +413,33 @@ model PromoCode {
 
 // ─── Loyalty ───
 model RewardTier {
-  id         String   @id @default(cuid())
-  nameEn     String
-  nameAr     String
-  points     Int
-  icon       String   @default("🎁")
-  tier       String   @default("bronze") // bronze, silver, gold, platinum
-  perkEn     String   @default("")
-  perkAr     String   @default("")
-  sortOrder  Int      @default(0)
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  nameEn    String
+  nameAr    String
+  points    Int
+  icon      String   @default("🎁")
+  tier      String   @default("bronze") // bronze, silver, gold, platinum
+  perkEn    String   @default("")
+  perkAr    String   @default("")
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model GiftCard {
-  id             String    @id @default(cuid())
-  code           String    @unique
-  amount         Float
-  balance        Float
-  purchaserName  String
-  recipientName  String
-  message        String?
-  template       String    @default("birthday")
-  isRedeemed     Boolean   @default(false)
-  redeemedAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  code          String    @unique
+  amount        Float
+  balance       Float
+  purchaserName String
+  recipientName String
+  message       String?
+  template      String    @default("birthday")
+  isRedeemed    Boolean   @default(false)
+  redeemedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 // ─── Feedback / Testimonials / Newsletter ───
@@ -353,7 +478,7 @@ model Employee {
   id           String     @id @default(cuid())
   name         String
   pin          String     @unique
-  role         String     @default("staff") // admin, manager, server, cook, bartender, host
+  role         StaffRole  @default(staff)
   hourlyWage   Float      @default(15.0)
   isActive     Boolean    @default(true)
   email        String?
@@ -389,7 +514,7 @@ model Ingredient {
   supplier     String?
   category     String?
   createdAt    DateTime @default(now())
-  updatedAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
 }
 
 model WasteLog {
@@ -401,7 +526,7 @@ model WasteLog {
   notes          String?
   reportedBy     String?
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
 }
 
 model PurchaseOrder {
@@ -411,18 +536,18 @@ model PurchaseOrder {
   status    String   @default("draft")
   totalCost Float    @default(0)
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 // ─── Cash Drawer ───
 model CashDrawerEntry {
-  id        String   @id @default(cuid())
-  type      String   @default("payin") // payin, payout, drop, sale, refund
-  amount    Float    @default(0)
+  id        String           @id @default(cuid())
+  type      CashMovementType @default(payin)
+  amount    Float            @default(0)
   note      String?
   createdBy String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @default(now()) @updatedAt
 }
 
 // ─── Notifications ───
@@ -433,55 +558,54 @@ model Notification {
   message   String
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 // ─── KDS: Stations + Screens (each screen = unique URL) ───
 model KitchenStation {
-  id               String   @id @default(cuid())
-  name             String
-  slug             String   @unique
-  icon             String   @default("ChefHat")
-  color            String   @default("#f59e0b")
-  targetPrepMin    Int      @default(15)
-  sortOrder        Int      @default(0)
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now())
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  icon          String   @default("ChefHat")
+  color         String   @default("#f59e0b")
+  targetPrepMin Int      @default(15)
+  sortOrder     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
 }
 
 model KitchenScreen {
-  id                  String   @id @default(cuid())
-  name                String
-  slug                String   @unique
-  description         String   @default("")
+  id             String        @id @default(cuid())
+  name           String
+  slug           String        @unique
+  description    String        @default("")
   // comma-separated station slugs to display; empty = all stations
-  stationFilter       String   @default("")
-  // prep | expo | all
-  screenType          String   @default("prep")
-  layoutType          String   @default("grid") // grid, compact
-  autoRefreshSec      Int      @default(10)
-  showCompleted       Boolean  @default(false)
-  maxOrders           Int      @default(0)
-  sortOrder           Int      @default(0)
-  isActive            Boolean  @default(true)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @default(now())
+  stationFilter  String        @default("")
+  screenType     KdsScreenType @default(prep)
+  layoutType     KdsLayoutType @default(grid)
+  autoRefreshSec Int           @default(10)
+  showCompleted  Boolean       @default(false)
+  maxOrders      Int           @default(0)
+  sortOrder      Int           @default(0)
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @default(now()) @updatedAt
 }
 
 // ─── Dynamic Pricing (happy hour etc.) ───
 model DynamicPricing {
-  id         String   @id @default(cuid())
+  id         String             @id @default(cuid())
   nameEn     String
   nameAr     String
-  type       String   @default("happy_hour") // happy_hour, lunch_special, surge
-  multiplier Float    @default(1.0)
+  type       DynamicPricingType @default(happy_hour)
+  multiplier Float              @default(1.0)
   dayOfWeek  Int?
   startTime  String?
   endTime    String?
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @default(now())
+  isActive   Boolean            @default(true)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @default(now()) @updatedAt
 }
 
 // ─── Combo Meals ───
@@ -496,24 +620,24 @@ model ComboMeal {
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
 }
 
 // ─── Append-only security and financial audit trail ───
 model AuditEvent {
-  id          String   @id @default(cuid())
-  actorId     String?
-  actorName   String   @default("")
-  actorRole   String   @default("")
-  sessionId   String?
-  action      String
-  entityType  String
-  entityId    String?
-  requestId   String?
-  sourceHash  String   @default("")
-  userAgent   String   @default("")
-  metadata    Json?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorName  String   @default("")
+  actorRole  String   @default("")
+  sessionId  String?
+  action     String
+  entityType String
+  entityId   String?
+  requestId  String?
+  sourceHash String   @default("")
+  userAgent  String   @default("")
+  metadata   Json?
+  createdAt  DateTime @default(now())
 
   @@index([createdAt])
   @@index([entityType, entityId])
@@ -573,24 +697,23 @@ model KdsOutboxEvent {
 
 // ─── Immutable payment event ledger ───
 model PaymentEvent {
-  id             String   @id @default(cuid())
-  idempotencyKey String   @unique
+  id             String             @id @default(cuid())
+  idempotencyKey String             @unique
   orderId        String
-  order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  eventType      String
-  method         String
-  status         String   @default("succeeded")
+  order          Order              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  eventType      PaymentEventType
+  method         PaymentMethod
+  status         PaymentEventStatus @default(succeeded)
   amountCents    Int
   tenderedCents  Int?
   changeCents    Int?
-  currency       String   @default("USD")
+  currency       String             @default("USD")
   actorId        String?
-  actorName      String   @default("")
+  actorName      String             @default("")
   metadata       Json?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime           @default(now())
 
   @@index([orderId, createdAt])
   @@index([eventType, createdAt])
   @@index([createdAt])
 }
-
