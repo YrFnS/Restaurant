@@ -1,0 +1,42 @@
+name: Apply purchasing seed fix
+
+on:
+  pull_request:
+    branches:
+      - "agent/**"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.event.pull_request.head.ref == 'agent/p1-purchase-orders-receiving' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Add application-assigned supplier IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('prisma/seed.ts')
+          text = path.read_text()
+          old = '''      data: { ...supplier, status: SupplierStatus.active, address: "Baghdad", email: "", notes: "Seed supplier" },'''
+          new = '''      data: { id: `seed_supplier_${uid()}`, ...supplier, status: SupplierStatus.active, address: "Baghdad", email: "", notes: "Seed supplier" },'''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Expected seeded supplier marker was not found')
+              path.write_text(text.replace(old, new, 1))
+          PY
+
+          git rm .github/workflows/agent-purchasing-seed-fix.yml
+          git add prisma/seed.ts
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: assign seeded supplier ids"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
