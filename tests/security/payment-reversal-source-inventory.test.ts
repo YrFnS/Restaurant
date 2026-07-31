@@ -50,7 +50,7 @@ describe("payment reversal source inventory", () => {
 
   test("maps the reversal relationship in Prisma to prevent migration drift", () => {
     for (const pattern of [
-      /\bparentEventId\s+String\?\b/,
+      /\bparentEventId\s+String\?/,
       /\bparentEvent\s+PaymentEvent\?\s+@relation\("PaymentEventReversals"/,
       /\breversals\s+PaymentEvent\[\]\s+@relation\("PaymentEventReversals"\)/,
       /\breasonCode\s+String\s+@default\(""\)/,
