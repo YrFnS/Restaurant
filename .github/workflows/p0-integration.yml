@@ -8,6 +8,7 @@ on:
     branches:
       - main
       - agent/p0-hardening
+      - agent/p1-data-integrity
 
 permissions:
   contents: read
