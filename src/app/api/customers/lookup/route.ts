@@ -9,6 +9,11 @@ import {
   OrderAccessConfigurationError,
   verifyOrderAccessToken,
 } from "@/lib/orders/access";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
 const loyaltyCredentialsSchema = z
   .object({
@@ -26,6 +31,9 @@ const loyaltyCredentialsSchema = z
       .max(20),
   })
   .strict();
+
+const LOYALTY_LOOKUP_WINDOW_MS = 60_000;
+const MAX_LOYALTY_LOOKUPS_PER_WINDOW = 60;
 
 function normalizeOrderNumber(value: string): string {
   return `#${value.replace(/^#/, "").trim()}`;
@@ -82,12 +90,38 @@ export async function GET(req: NextRequest) {
 
 // Customer loyalty access requires proof of ownership of a linked order.
 export async function POST(req: NextRequest) {
+  let lookupLimit;
+  try {
+    lookupLimit = await consumeRateLimit({
+      scope: "loyalty-lookup",
+      identifier: getRequestSource(req),
+      limit: MAX_LOYALTY_LOOKUPS_PER_WINDOW,
+      windowMs: LOYALTY_LOOKUP_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[customers/lookup] Shared rate limiter failed", error);
+    return NextResponse.json(
+      {
+        error: "Loyalty lookup is temporarily unavailable",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  if (!lookupLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many loyalty requests", code: "LOYALTY_RATE_LIMITED" },
+      { status: 429, headers: rateLimitHeaders(lookupLimit) }
+    );
+  }
+
   try {
     const parsed = loyaltyCredentialsSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid loyalty credentials", code: "VALIDATION_ERROR" },
-        { status: 400 }
+        { status: 400, headers: rateLimitHeaders(lookupLimit) }
       );
     }
 
@@ -112,7 +146,7 @@ export async function POST(req: NextRequest) {
     if (!authorizedOrder?.customerId) {
       return NextResponse.json(
         { customer: null, redemptionOptions: [] },
-        { status: 404, headers: { "Cache-Control": "no-store" } }
+        { status: 404, headers: rateLimitHeaders(lookupLimit) }
       );
     }
 
@@ -135,20 +169,23 @@ export async function POST(req: NextRequest) {
           : [],
         redemptionEnabled: false,
       },
-      { headers: { "Cache-Control": "no-store" } }
+      { headers: rateLimitHeaders(lookupLimit) }
     );
   } catch (error) {
     if (error instanceof OrderAccessConfigurationError) {
       return NextResponse.json(
-        { error: "Loyalty access is not configured", code: "ORDER_ACCESS_NOT_CONFIGURED" },
-        { status: 503 }
+        {
+          error: "Loyalty access is not configured",
+          code: "ORDER_ACCESS_NOT_CONFIGURED",
+        },
+        { status: 503, headers: rateLimitHeaders(lookupLimit) }
       );
     }
 
     console.error("[customers/lookup] Loyalty lookup failed", error);
     return NextResponse.json(
       { error: "Unable to load loyalty account", code: "LOYALTY_LOOKUP_FAILED" },
-      { status: 500 }
+      { status: 500, headers: rateLimitHeaders(lookupLimit) }
     );
   }
 }
@@ -156,7 +193,8 @@ export async function POST(req: NextRequest) {
 export async function PATCH() {
   return NextResponse.json(
     {
-      error: "Point redemption must be applied through a validated checkout transaction",
+      error:
+        "Point redemption must be applied through a validated checkout transaction",
       code: "DIRECT_REDEMPTION_DISABLED",
     },
     { status: 405, headers: { Allow: "GET, POST" } }
