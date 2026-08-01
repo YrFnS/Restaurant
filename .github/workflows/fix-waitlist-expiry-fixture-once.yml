@@ -30,20 +30,13 @@ jobs:
 
           path = Path("tests/integration/p1-waitlist-operations.ts")
           text = path.read_text()
-          old = '''  await db.waitlistEntry.update({
-            where: { id: expiryEntry.data.entry.id },
-            data: { notificationExpiresAt: addMinutes(new Date(), -1) },
-          });'''
-          new = '''  const expiredNotificationAt = new Date();
-          await db.waitlistEntry.update({
-            where: { id: expiryEntry.data.entry.id },
-            data: {
-              notifiedAt: addMinutes(expiredNotificationAt, -2),
-              notificationExpiresAt: addMinutes(expiredNotificationAt, -1),
-            },
-          });'''
+          old = "    data: { notificationExpiresAt: addMinutes(new Date(), -1) },"
+          new = """    data: {
+              notifiedAt: addMinutes(new Date(), -2),
+              notificationExpiresAt: addMinutes(new Date(), -1),
+            },"""
           if text.count(old) != 1:
-              raise SystemExit(f"Expected one expiry fixture, found {text.count(old)}")
+              raise SystemExit(f"Expected one expiry assignment, found {text.count(old)}")
           path.write_text(text.replace(old, new, 1))
           PY
 
