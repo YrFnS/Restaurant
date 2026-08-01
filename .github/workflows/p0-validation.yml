@@ -20,7 +20,7 @@ concurrency:
 jobs:
   apply-loyalty-wiring:
     name: Apply reviewed loyalty wiring
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/p1-loyalty-gift-cards' && github.event.head_commit.message != 'feat: wire loyalty and gift-card schema' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/p1-loyalty-gift-cards' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out loyalty branch
