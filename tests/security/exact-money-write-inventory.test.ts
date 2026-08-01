@@ -58,9 +58,10 @@ const policies: ExactWritePolicy[] = [
     file: "src/app/api/pos/checkout/route.ts",
     compatibilityFields: ["amount", "total"],
     exactMarkers: [
-      "readExactOrderTotalMinor",
-      "amountMinor: exactTotalMinor",
-      "amountCents: totalCents",
+      "prepareCheckoutCredits",
+      "plan.captureAmountMinor",
+      "amountMinor: plan.cashAmountMinor",
+      "amountCents: cents(plan.captureAmountMinor)",
     ],
   },
   {
@@ -89,10 +90,8 @@ const policies: ExactWritePolicy[] = [
 ];
 
 const deferredCompatibilityModels = {
-  GiftCard: ["amount", "balance"],
   PurchaseOrder: ["totalCost"],
   ComboMeal: ["price"],
-  Customer: ["totalSpent"],
   SpecialOffer: ["discountPercent"],
   PromoCode: ["discountPercent"],
 } as const;
