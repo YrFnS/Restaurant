@@ -239,6 +239,12 @@ model RestaurantSettings {
   reservationMinPartySize                  Int      @default(1)
   reservationMaxPartySize                  Int      @default(12)
   reservationCustomerCancelCutoffMinutes   Int      @default(120)
+  waitlistEnabled                         Boolean  @default(true)
+  waitlistAverageTurnoverMinutes          Int      @default(75)
+  waitlistNotificationExpiryMinutes       Int      @default(10)
+  waitlistEstimatePaddingMinutes          Int      @default(5)
+  waitlistMaxQuoteMinutes                 Int      @default(240)
+  waitlistRequireConfirmation             Boolean  @default(true)
   logoUrl                                  String   @default("")
   heroImageUrl               String   @default("")
   facebookUrl                String   @default("")
@@ -440,9 +446,10 @@ model RestaurantTable {
   height       Float         @default(80)
   serverName   String        @default("")
   seatedAt     DateTime?
-  orders       Order[]
-  reservations Reservation[]
-  createdAt    DateTime      @default(now())
+  orders          Order[]
+  reservations    Reservation[]
+  waitlistEntries WaitlistEntry[]
+  createdAt       DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 }
 
@@ -508,19 +515,34 @@ model ReservationClosure {
 
 // ─── Waitlist ───
 model WaitlistEntry {
-  id            String         @id @default(cuid())
-  customerName  String
-  customerPhone String
-  partySize     Int
-  status        WaitlistStatus @default(waiting)
-  estimatedWait Int            @default(15)
-  notes         String?
-  customerId    String?
-  customer      Customer?      @relation(fields: [customerId], references: [id])
-  seatedAt      DateTime?
-  notifiedAt    DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id                      String             @id @default(cuid())
+  idempotencyKey          String?            @unique(map: "WaitlistEntry_idempotencyKey_key")
+  customerName            String
+  customerPhone           String
+  partySize               Int
+  status                  WaitlistStatus     @default(waiting)
+  estimatedWait           Int                @default(15)
+  notes                   String?
+  customerId              String?
+  customer                Customer?          @relation(fields: [customerId], references: [id])
+  source                   ReservationSource @default(customer)
+  preference               String?
+  tableId                  String?
+  table                    RestaurantTable?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  estimatedSeatAt          DateTime?          @db.Timestamptz(3)
+  estimateCalculatedAt     DateTime?          @db.Timestamptz(3)
+  seatedAt                 DateTime?          @db.Timestamptz(3)
+  notifiedAt               DateTime?          @db.Timestamptz(3)
+  notificationExpiresAt    DateTime?          @db.Timestamptz(3)
+  notificationConfirmedAt  DateTime?          @db.Timestamptz(3)
+  cancelledAt              DateTime?          @db.Timestamptz(3)
+  noShowAt                 DateTime?          @db.Timestamptz(3)
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  @@index([status, estimatedSeatAt, createdAt], map: "WaitlistEntry_status_estimatedSeatAt_idx")
+  @@index([tableId, status, notificationExpiresAt], map: "WaitlistEntry_table_status_idx")
+  @@index([customerId, createdAt(sort: Desc)], map: "WaitlistEntry_customer_createdAt_idx")
 }
 
 // ─── Offers / Promos ───

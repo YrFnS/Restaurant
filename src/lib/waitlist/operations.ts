@@ -354,6 +354,8 @@ export function safeWaitlistPolicy(policy: WaitlistPolicy) {
     maxPartySize: policy.maxPartySize,
     averageTurnoverMinutes: policy.averageTurnoverMinutes,
     notificationExpiryMinutes: policy.notificationExpiryMinutes,
+    estimatePaddingMinutes: policy.estimatePaddingMinutes,
+    maxQuoteMinutes: policy.maxQuoteMinutes,
     requireConfirmation: policy.requireConfirmation,
   };
 }
@@ -726,6 +728,30 @@ export async function createWaitlistEntry(
   await advisoryLock(tx, "waitlist-phone", customerPhone);
   await expireStaleNotifications(tx, input.context);
 
+  const replay = await readWaitlistEntryByKey(tx, key);
+  if (replay) {
+    const matches =
+      replay.customerName === customerName &&
+      replay.customerPhone === customerPhone &&
+      replay.partySize === input.partySize &&
+      replay.source === input.source &&
+      sameOptional(input.preference, replay.preference, 80) &&
+      sameOptional(input.notes, replay.notes, 2_000);
+    if (!matches) {
+      throw new WaitlistOperationsError(
+        "The waitlist idempotency key was used for another payload",
+        "WAITLIST_IDEMPOTENCY_CONFLICT",
+        409
+      );
+    }
+    const active = await recalculateWaitlistEstimates(tx);
+    return {
+      entry: (await readWaitlistEntry(tx, replay.id)) || replay,
+      active,
+      replayed: true,
+    };
+  }
+
   const policy = await readWaitlistPolicy(tx);
   if (!policy.enabled) {
     throw new WaitlistOperationsError(
@@ -753,29 +779,7 @@ export async function createWaitlistEntry(
     );
   }
 
-  const replay = await readWaitlistEntryByKey(tx, key);
-  if (replay) {
-    const matches =
-      replay.customerName === customerName &&
-      replay.customerPhone === customerPhone &&
-      replay.partySize === input.partySize &&
-      replay.source === input.source &&
-      sameOptional(input.preference, replay.preference, 80) &&
-      sameOptional(input.notes, replay.notes, 2_000);
-    if (!matches) {
-      throw new WaitlistOperationsError(
-        "The waitlist idempotency key was used for another payload",
-        "WAITLIST_IDEMPOTENCY_CONFLICT",
-        409
-      );
-    }
-    const active = await recalculateWaitlistEstimates(tx);
-    return {
-      entry: (await readWaitlistEntry(tx, replay.id)) || replay,
-      active,
-      replayed: true,
-    };
-  }
+
 
   const duplicates = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT "id"

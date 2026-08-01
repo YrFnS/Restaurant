@@ -56,7 +56,7 @@ Each entry stores:
 - notification, expiry, and confirmation timestamps;
 - seated, cancelled, and no-show timestamps.
 
-Existing entries are adopted additively. Existing notified entries are treated as already confirmed so migration does not strand them behind the new confirmation rule.
+Existing entries are adopted additively. Legacy notified entries return to `waiting` for a fresh estimate because the previous schema did not contain a trustworthy physical table hold.
 
 ## Capacity estimate
 

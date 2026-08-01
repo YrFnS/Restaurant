@@ -67,6 +67,9 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
   "POST /api/internal/kds-outbox": {
     markers: ["configuredSecret", "secretsMatch", "flushKdsOutbox"],
   },
+  "POST /api/internal/waitlist": {
+    markers: ["configuredSecret", "secretsMatch", "refreshWaitlist"],
+  },
   "POST /api/newsletter": {
     markers: ["newsletterSchema", "newsletter-subscribe", "consumeRateLimit"],
   },
@@ -102,6 +105,8 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
       "reservationCreateSchema",
       "reservation-create",
       "consumeRateLimit",
+      "idempotency-key",
+      "createWaitlistEntry",
       "createCustomerAccessToken",
     ],
   },

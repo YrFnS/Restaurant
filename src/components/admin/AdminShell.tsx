@@ -42,6 +42,7 @@ import {
   Grid3x3,
   ShoppingCart,
   ShieldAlert,
+  Hourglass,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -53,6 +54,7 @@ import { MenuTab } from "./tabs/MenuTab";
 import { OrdersTab } from "./tabs/OrdersTab";
 import { TablesTab } from "./tabs/TablesTab";
 import { ReservationsTab } from "./tabs/ReservationsTab";
+import { WaitlistTab } from "./tabs/WaitlistTab";
 import { StaffTab } from "./tabs/StaffTab";
 import { InventoryTab } from "./tabs/InventoryTab";
 import { PurchasingTab } from "./tabs/PurchasingTab";
@@ -66,6 +68,7 @@ export type AdminTab =
   | "orders"
   | "tables"
   | "reservations"
+  | "waitlist"
   | "staff"
   | "inventory"
   | "purchasing"
@@ -101,6 +104,7 @@ const TAB_COMPONENTS: Record<AdminTab, React.ComponentType> = {
   orders: OrdersTab,
   tables: TablesTab,
   reservations: ReservationsTab,
+  waitlist: WaitlistTab,
   staff: StaffTab,
   inventory: InventoryTab,
   purchasing: PurchasingTab,
@@ -157,6 +161,12 @@ export function AdminShell({ user }: AdminShellProps) {
         id: "reservations",
         label: t.admin.reservations,
         icon: <CalendarCheck className="size-[18px]" />,
+        roles: RESERVATION_MANAGEMENT_ROLES,
+      },
+      {
+        id: "waitlist",
+        label: isRTL ? "قائمة الانتظار" : "Waitlist",
+        icon: <Hourglass className="size-[18px]" />,
         roles: RESERVATION_MANAGEMENT_ROLES,
       },
       {

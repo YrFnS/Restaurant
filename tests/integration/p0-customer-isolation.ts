@@ -108,6 +108,9 @@ async function createReservation(label: string, daysAhead: number) {
 async function createWaitlistEntry(label: string) {
   const result = await request("/api/waitlist", {
     method: "POST",
+    headers: {
+      "Idempotency-Key": `p0-customer-waitlist-${crypto.randomUUID()}`,
+    },
     body: JSON.stringify({
       customerName: `P0 Waitlist ${label}`,
       customerPhone: uniquePhone("703"),
@@ -150,7 +153,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled" }),
+      body: JSON.stringify({ action: "cancel" }),
     }
   );
   expectStatus(
@@ -165,7 +168,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled" }),
+      body: JSON.stringify({ action: "cancel" }),
     }
   );
   expectStatus(
@@ -190,7 +193,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled" }),
+      body: JSON.stringify({ action: "cancel" }),
     }
   );
   expectStatus(validReservationCancel, 200, "Customer cancels owned reservation");
@@ -202,10 +205,27 @@ async function main() {
     )}?token=${encodeURIComponent(reservationB.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled" }),
+      body: JSON.stringify({ action: "cancel" }),
     }
   );
   expectStatus(cancelReservationB, 200, "Clean up reservation B");
+
+  await db.reservationServicePeriod.deleteMany();
+  for (let dayOfWeek = 0; dayOfWeek <= 6; dayOfWeek += 1) {
+    await db.reservationServicePeriod.create({
+      data: {
+        dayOfWeek,
+        opensAtMinute: 0,
+        closesAtMinute: 1439,
+        label: "P0 waitlist integration service",
+        isActive: true,
+      },
+    });
+  }
+  await db.restaurantSettings.update({
+    where: { id: "1" },
+    data: { waitlistEnabled: true },
+  });
 
   console.log("[p0-customer] validating waitlist token and resource isolation");
   const waitlistA = await createWaitlistEntry("A");
@@ -231,7 +251,7 @@ async function main() {
     )}?token=${encodeURIComponent(waitlistA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled" }),
+      body: JSON.stringify({ action: "cancel" }),
     }
   );
   expectStatus(
@@ -269,7 +289,7 @@ async function main() {
     )}?token=${encodeURIComponent(waitlistA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "cancelled" }),
+      body: JSON.stringify({ action: "cancel" }),
     }
   );
   expectStatus(
@@ -315,7 +335,7 @@ async function main() {
       )}?token=${encodeURIComponent(waitlist.accessToken)}`,
       {
         method: "PATCH",
-        body: JSON.stringify({ status: "cancelled" }),
+        body: JSON.stringify({ action: "cancel" }),
       }
     );
     expectStatus(cancel, 200, `Clean up owned waitlist entry ${waitlist.entry.id}`);

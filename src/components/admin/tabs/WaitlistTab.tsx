@@ -46,6 +46,8 @@ interface WaitlistPolicy {
   maxPartySize: number;
   averageTurnoverMinutes: number;
   notificationExpiryMinutes: number;
+  estimatePaddingMinutes: number;
+  maxQuoteMinutes: number;
   requireConfirmation: boolean;
 }
 
@@ -192,8 +194,8 @@ export function WaitlistTab() {
       averageTurnoverMinutes: query.data.policy.averageTurnoverMinutes,
       notificationExpiryMinutes:
         query.data.policy.notificationExpiryMinutes,
-      estimatePaddingMinutes: 5,
-      maxQuoteMinutes: 240,
+      estimatePaddingMinutes: query.data.policy.estimatePaddingMinutes,
+      maxQuoteMinutes: query.data.policy.maxQuoteMinutes,
       requireConfirmation: query.data.policy.requireConfirmation,
     });
   }, [policyForm, query.data?.policy]);
@@ -293,8 +295,8 @@ export function WaitlistTab() {
         enabled: result.policy.enabled,
         averageTurnoverMinutes: result.policy.averageTurnoverMinutes,
         notificationExpiryMinutes: result.policy.notificationExpiryMinutes,
-        estimatePaddingMinutes: policyForm.estimatePaddingMinutes,
-        maxQuoteMinutes: policyForm.maxQuoteMinutes,
+        estimatePaddingMinutes: result.policy.estimatePaddingMinutes,
+        maxQuoteMinutes: result.policy.maxQuoteMinutes,
         requireConfirmation: result.policy.requireConfirmation,
       });
       await queryClient.invalidateQueries({ queryKey: ["waitlist", "admin"] });
