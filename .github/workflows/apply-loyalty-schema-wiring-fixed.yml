@@ -28,31 +28,31 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           source_path = Path('.github/workflows/apply-loyalty-schema-wiring.yml')
           source = source_path.read_text()
-          pattern = re.compile(
-              r"          schema = replace_once\(\n"
-              r"              schema,\n"
-              r"              '''  reversals         PaymentEvent\[\].*?"
-              r"              'payment event relations',\n"
-              r"          \)",
-              re.S,
-          )
-          replacement = '''          schema = replace_once(
+          old = '''          schema = replace_once(
               schema,
               \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
-\'\'\',
+  reasonCode       String               @default("")\'\'\',
               \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
   loyaltyEvents    LoyaltyPointEvent[]
   giftCardTransactions GiftCardTransaction[]
-\'\'\',
+  reasonCode       String               @default("")\'\'\',
               'payment event relations',
           )'''
-          source, count = pattern.subn(replacement, source, count=1)
+          new = '''          schema = replace_once(
+              schema,
+              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")\'\'\',
+              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+  loyaltyEvents    LoyaltyPointEvent[]
+  giftCardTransactions GiftCardTransaction[]\'\'\',
+              'payment event relations',
+          )'''
+          count = source.count(old)
           if count != 1:
-              raise SystemExit(f'Expected one payment relation block, found {count}')
+              raise SystemExit(f'Expected one exact payment relation block, found {count}')
+          source = source.replace(old, new, 1)
           source_path.write_text(source)
 
           lines = source.splitlines()
