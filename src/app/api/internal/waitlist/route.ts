@@ -10,7 +10,10 @@ import {
 } from "@/lib/waitlist/operations";
 
 function configuredSecret(): string | null {
-  const secret = process.env.WAITLIST_WORKER_SECRET || process.env.CRON_SECRET;
+  const secret =
+    process.env.WAITLIST_WORKER_SECRET ||
+    process.env.CRON_SECRET ||
+    process.env.KDS_OUTBOX_SECRET;
   if (!secret) return null;
   if (process.env.NODE_ENV === "production" && secret.length < 32) return null;
   return secret;
