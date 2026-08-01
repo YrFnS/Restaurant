@@ -11,105 +11,13 @@ on:
       - agent/p1-data-integrity
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: p0-integration-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  apply-checkout-test-fixes:
-    name: Apply checkout contract test fixes
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/p1-loyalty-gift-cards' }}
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out loyalty branch
-        uses: actions/checkout@v4
-        with:
-          ref: agent/p1-loyalty-gift-cards
-          fetch-depth: 0
-
-      - name: Patch stale checkout requests once
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          replacements = [
-              (
-                  Path('tests/integration/p1-cash-register-sessions.ts'),
-                  '''        method: "POST",
-        headers: { cookie: serverCookie },
-        body: JSON.stringify({
-          orderId: order.id,
-          paymentMethod: "cash",
-          tendered: order.total,
-        }),''',
-                  '''        method: "POST",
-        headers: {
-          cookie: serverCookie,
-          "idempotency-key": `p1-register-checkout-${crypto.randomUUID()}`,
-        },
-        body: JSON.stringify({
-          orderId: order.id,
-          paymentMethod: "cash",
-          tendered: order.total,
-        }),''',
-                  'register checkout request',
-              ),
-              (
-                  Path('tests/integration/p1-payment-reversals.ts'),
-                  '''      method: "POST",
-      headers: { cookie },
-      body: JSON.stringify({
-        orderId: order.id,
-        paymentMethod: "cash",
-        tendered: order.total,
-      }),''',
-                  '''      method: "POST",
-      headers: {
-        cookie,
-        "idempotency-key": `p1-reversal-checkout-${crypto.randomUUID()}`,
-      },
-      body: JSON.stringify({
-        orderId: order.id,
-        paymentMethod: "cash",
-        tendered: order.total,
-      }),''',
-                  'payment-reversal checkout request',
-              ),
-          ]
-
-          for path, old, new, label in replacements:
-              source = path.read_text()
-              old_count = source.count(old)
-              new_count = source.count(new)
-              if old_count == 1 and new_count == 0:
-                  path.write_text(source.replace(old, new, 1))
-              elif old_count == 0 and new_count == 1:
-                  continue
-              else:
-                  raise SystemExit(
-                      f'Unexpected {label} state: old={old_count}, new={new_count}'
-                  )
-          PY
-
-          if git diff --quiet -- \
-            tests/integration/p1-cash-register-sessions.ts \
-            tests/integration/p1-payment-reversals.ts; then
-            echo "Checkout contract tests are already current."
-            exit 0
-          fi
-
-          git config user.name "OpenAI Agent"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            tests/integration/p1-cash-register-sessions.ts \
-            tests/integration/p1-payment-reversals.ts
-          git commit -m "test: add checkout idempotency to register and reversal suites"
-          git push origin HEAD:agent/p1-loyalty-gift-cards
-
   integration:
     name: Database-backed security and order smoke test
     runs-on: ubuntu-latest
