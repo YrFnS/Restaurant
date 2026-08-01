@@ -69,7 +69,8 @@ jobs:
           rm -f \
             .github/workflows/apply-loyalty-schema-wiring.yml \
             .github/workflows/apply-loyalty-schema-wiring-pr.yml \
-            .github/workflows/apply-loyalty-schema-wiring-fixed.yml
+            .github/workflows/apply-loyalty-schema-wiring-fixed.yml \
+            docs/.loyalty-wiring-trigger
 
           git config user.name "OpenAI Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -83,6 +84,7 @@ jobs:
             src/components/admin/tabs/SettingsTab.tsx \
             .github/workflows/apply-loyalty-schema-wiring.yml \
             .github/workflows/apply-loyalty-schema-wiring-pr.yml \
-            .github/workflows/apply-loyalty-schema-wiring-fixed.yml
+            .github/workflows/apply-loyalty-schema-wiring-fixed.yml \
+            docs/.loyalty-wiring-trigger
           git commit -m "feat: wire loyalty and gift-card schema"
           git push origin HEAD:agent/p1-loyalty-gift-cards
