@@ -6,12 +6,14 @@ import { requireStaffSession } from "@/lib/auth/guard";
 import { auditContextFromRequest } from "@/lib/audit";
 import {
   idempotencyKeyFromRequest,
+  parseCurrencyInputToMinor,
   registerIdentityFromRequest,
 } from "@/lib/cash/register-session";
 import {
   PAYMENT_LEDGER_READ_ROLES,
   PAYMENT_REVERSAL_ROLES,
   REVERSAL_REASON_CODES,
+  PaymentReversalError,
   paymentReversalErrorResponse,
   readPaymentLedgerSummary,
   reversePayment,
@@ -99,11 +101,68 @@ export async function POST(
   try {
     const { id } = await params;
     const idempotencyKey = idempotencyKeyFromRequest(req);
-    const identity = registerIdentityFromRequest(req);
     const context = auditContextFromRequest(req);
 
-    const result = await db.$transaction((tx) =>
-      reversePayment(tx, {
+    const result = await db.$transaction(async (tx) => {
+      // Serialize every request for the order before checking the replay key. This
+      // lets a concurrent retry observe the first committed reversal instead of
+      // re-running eligibility checks against the newly reversed order state.
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id"
+        FROM "Order"
+        WHERE "id" = ${id}
+        FOR UPDATE
+      `);
+
+      const existing = await tx.paymentEvent.findUnique({
+        where: { idempotencyKey },
+        select: {
+          id: true,
+          orderId: true,
+          eventType: true,
+          status: true,
+          amountCents: true,
+          reasonCode: true,
+          reason: true,
+        },
+      });
+
+      if (existing) {
+        const expectedAmountCents =
+          parsed.action === "refund"
+            ? Number(parseCurrencyInputToMinor(parsed.amount!))
+            : existing.amountCents;
+        if (
+          existing.orderId !== id ||
+          existing.eventType !== parsed.action ||
+          existing.status !== "succeeded" ||
+          existing.amountCents !== expectedAmountCents ||
+          existing.reasonCode !== parsed.reasonCode ||
+          existing.reason !== parsed.reason
+        ) {
+          throw new PaymentReversalError(
+            "That idempotency key was already used for another reversal payload",
+            "IDEMPOTENCY_CONFLICT",
+            409
+          );
+        }
+
+        const summary = await readPaymentLedgerSummary(tx, id);
+        const reversal = summary.reversals.find(
+          (event) => event.id === existing.id
+        );
+        if (!reversal) {
+          throw new PaymentReversalError(
+            "That idempotency key does not identify a successful reversal",
+            "IDEMPOTENCY_CONFLICT",
+            409
+          );
+        }
+        return { ...summary, reversal, replayed: true };
+      }
+
+      const identity = registerIdentityFromRequest(req);
+      return reversePayment(tx, {
         orderId: id,
         action: parsed.action,
         amount: parsed.amount,
@@ -113,8 +172,8 @@ export async function POST(
         identity,
         actor: auth.session,
         context,
-      })
-    );
+      });
+    });
 
     return noStore(result, result.replayed ? 200 : 201);
   } catch (error) {
