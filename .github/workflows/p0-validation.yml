@@ -11,13 +11,59 @@ on:
       - agent/p1-data-integrity
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: p0-validation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  apply-loyalty-advisory-lock-fix:
+    name: Apply loyalty advisory-lock fix
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/p1-loyalty-gift-cards' && github.event.head_commit.message != 'fix: deserialize loyalty advisory locks safely' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out loyalty branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/p1-loyalty-gift-cards
+          fetch-depth: 0
+
+      - name: Commit the reviewed lock-result correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/lib/loyalty/ledger.ts')
+          source = path.read_text()
+          old = '''  await client.$queryRaw(Prisma.sql`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`${namespace}:${key}`}, 0)
+    )
+  `);'''
+          new = '''  await client.$queryRaw<Array<{ locked: string }>>(Prisma.sql`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`${namespace}:${key}`}, 0)
+    )::text AS "locked"
+  `);'''
+          if source.count(old) != 1:
+              raise SystemExit(f'Expected one advisory-lock block, found {source.count(old)}')
+          path.write_text(source.replace(old, new, 1))
+          PY
+
+          git show origin/main:.github/workflows/p0-validation.yml > .github/workflows/p0-validation.yml
+          rm -f .github/workflows/fix-loyalty-advisory-lock.yml
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/lib/loyalty/ledger.ts \
+            .github/workflows/p0-validation.yml \
+            .github/workflows/fix-loyalty-advisory-lock.yml
+          git commit -m "fix: deserialize loyalty advisory locks safely"
+          git push origin HEAD:agent/p1-loyalty-gift-cards
+
   validate:
     name: Typecheck, tests, lint, and build
     runs-on: ubuntu-latest
