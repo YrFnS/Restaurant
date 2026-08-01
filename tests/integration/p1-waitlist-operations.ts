@@ -481,7 +481,10 @@ async function main() {
 
   await db.waitlistEntry.update({
     where: { id: expiryEntry.data.entry.id },
-    data: { notificationExpiresAt: addMinutes(new Date(), -1) },
+    data: {
+    notifiedAt: addMinutes(new Date(), -2),
+    notificationExpiresAt: addMinutes(new Date(), -1),
+  },
   });
   const unauthorizedWorker = await api("/api/internal/waitlist", {
     method: "POST",
