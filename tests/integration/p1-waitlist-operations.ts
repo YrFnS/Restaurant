@@ -489,12 +489,14 @@ async function main() {
   const unauthorizedWorker = await api("/api/internal/waitlist", {
     method: "POST",
     headers: { authorization: "Bearer wrong-secret" },
+    body: JSON.stringify({}),
   });
   assertStatus(unauthorizedWorker, 401, "Unauthorized waitlist worker");
 
   const worker = await api<any>("/api/internal/waitlist", {
     method: "POST",
     headers: { authorization: `Bearer ${WORKER_SECRET}` },
+    body: JSON.stringify({}),
   });
   assertStatus(worker, 200, "Authenticated waitlist worker");
   assert.ok(worker.data.expired >= 1);
