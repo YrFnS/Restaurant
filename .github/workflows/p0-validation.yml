@@ -19,8 +19,8 @@ concurrency:
 
 jobs:
   apply-loyalty-advisory-lock-fix:
-    name: Apply loyalty advisory-lock fix
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/p1-loyalty-gift-cards' && github.event.head_commit.message != 'fix: deserialize loyalty advisory locks safely' }}
+    name: Apply loyalty advisory-lock compatibility fix
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/p1-loyalty-gift-cards' && github.event.head_commit.message != 'fix: make loyalty advisory locks Prisma-safe' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out loyalty branch
@@ -29,39 +29,64 @@ jobs:
           ref: agent/p1-loyalty-gift-cards
           fetch-depth: 0
 
-      - name: Commit the reviewed lock-result correction
+      - name: Cast lock results and remove temporary patch files
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('src/lib/loyalty/ledger.ts')
-          source = path.read_text()
-          old = '''  await client.$queryRaw(Prisma.sql`
-    SELECT pg_advisory_xact_lock(
-      hashtextextended(${`${namespace}:${key}`}, 0)
-    )
-  `);'''
-          new = '''  await client.$queryRaw<Array<{ locked: string }>>(Prisma.sql`
-    SELECT pg_advisory_xact_lock(
-      hashtextextended(${`${namespace}:${key}`}, 0)
-    )::text AS "locked"
-  `);'''
-          if source.count(old) != 1:
-              raise SystemExit(f'Expected one advisory-lock block, found {source.count(old)}')
-          path.write_text(source.replace(old, new, 1))
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              file = Path(path)
+              source = file.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one marker, found {count}")
+              file.write_text(source.replace(old, new, 1))
+
+          replace_once(
+              'src/lib/loyalty/ledger.ts',
+              '''  await client.$queryRaw(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`${namespace}:${key}`}, 0)\n    )\n  `);''',
+              '''  await client.$queryRaw<Array<{ locked: string }>>(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`${namespace}:${key}`}, 0)\n    )::text AS "locked"\n  `);''',
+              'shared loyalty advisory lock',
+          )
+          replace_once(
+              'src/app/api/gift-cards/route.ts',
+              '''  await tx.$queryRaw(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`gift-card-issue:${key}`}, 0)\n    )\n  `);''',
+              '''  await tx.$queryRaw<Array<{ locked: string }>>(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`gift-card-issue:${key}`}, 0)\n    )::text AS "locked"\n  `);''',
+              'gift-card issue advisory lock',
+          )
+          replace_once(
+              'src/app/api/gift-cards/route.ts',
+              '''    SELECT\n      transaction."amountMinor",\n      card."purchaserName",\n      card."recipientName",\n      card."message",\n      card."template",\n      card."expiresAt"\n    FROM "GiftCardTransaction" AS transaction\n    JOIN "GiftCard" AS card ON card."id" = transaction."giftCardId"\n    WHERE transaction."idempotencyKey" = ${key}\n    LIMIT 1\n    FOR UPDATE OF transaction, card''',
+              '''    SELECT\n      ledger_tx."amountMinor",\n      card."purchaserName",\n      card."recipientName",\n      card."message",\n      card."template",\n      card."expiresAt"\n    FROM "GiftCardTransaction" AS ledger_tx\n    JOIN "GiftCard" AS card ON card."id" = ledger_tx."giftCardId"\n    WHERE ledger_tx."idempotencyKey" = ${key}\n    LIMIT 1\n    FOR UPDATE OF ledger_tx, card''',
+              'gift-card issue SQL alias',
+          )
+          replace_once(
+              'src/app/api/gift-cards/[id]/route.ts',
+              '''  await tx.$queryRaw(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`gift-card-mutation:${key}`}, 0)\n    )\n  `);''',
+              '''  await tx.$queryRaw<Array<{ locked: string }>>(Prisma.sql`\n    SELECT pg_advisory_xact_lock(\n      hashtextextended(${`gift-card-mutation:${key}`}, 0)\n    )::text AS "locked"\n  `);''',
+              'gift-card mutation advisory lock',
+          )
           PY
 
           git show origin/main:.github/workflows/p0-validation.yml > .github/workflows/p0-validation.yml
-          rm -f .github/workflows/fix-loyalty-advisory-lock.yml
+          rm -f \
+            .github/workflows/apply-loyalty-advisory-lock-fix.yml \
+            .github/workflows/fix-loyalty-advisory-lock.yml \
+            docs/.loyalty-advisory-lock-trigger
+
           git config user.name "OpenAI Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             src/lib/loyalty/ledger.ts \
+            src/app/api/gift-cards/route.ts \
+            src/app/api/gift-cards/[id]/route.ts \
             .github/workflows/p0-validation.yml \
-            .github/workflows/fix-loyalty-advisory-lock.yml
-          git commit -m "fix: deserialize loyalty advisory locks safely"
+            .github/workflows/apply-loyalty-advisory-lock-fix.yml \
+            .github/workflows/fix-loyalty-advisory-lock.yml \
+            docs/.loyalty-advisory-lock-trigger
+          git commit -m "fix: make loyalty advisory locks Prisma-safe"
           git push origin HEAD:agent/p1-loyalty-gift-cards
 
   validate:
