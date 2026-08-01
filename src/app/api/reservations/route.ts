@@ -10,6 +10,15 @@ import {
   createCustomerAccessToken,
   CustomerAccessConfigurationError,
 } from "@/lib/customer-access";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  createReservationBooking,
+  readReservationPolicy,
+  reservationErrorFromDatabase,
+  ReservationAvailabilityError,
+  serializeReservationForCustomer,
+  serializeReservationForStaff,
+} from "@/lib/reservations/availability";
 import {
   consumeRateLimit,
   getRequestSource,
@@ -39,8 +48,9 @@ const reservationCreateSchema = z
       .union([z.literal(""), z.string().trim().email().max(254)])
       .nullable()
       .optional(),
-    partySize: z.number().int().min(1).max(50),
-    dateTime: z.string().datetime(),
+    partySize: z.number().int().min(1).max(100),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     occasion: z.string().trim().max(80).nullable().optional(),
     preference: z.string().trim().max(80).nullable().optional(),
     notes: z.string().trim().max(2_000).nullable().optional(),
@@ -50,27 +60,11 @@ const reservationCreateSchema = z
 const RESERVATION_WINDOW_MS = 60_000;
 const MAX_RESERVATIONS_PER_WINDOW = 10;
 
-function minutesSinceMidnight(value: string): number {
-  const [hours, minutes] = value.split(":").map(Number);
-  return hours * 60 + minutes;
-}
-
-function isWithinServiceHours(
-  reservationDate: Date,
-  openTime: string,
-  closeTime: string
-): boolean {
-  const reservationMinutes =
-    reservationDate.getHours() * 60 + reservationDate.getMinutes();
-  const openMinutes = minutesSinceMidnight(openTime);
-  const closeMinutes = minutesSinceMidnight(closeTime);
-
-  if (openMinutes <= closeMinutes) {
-    return (
-      reservationMinutes >= openMinutes && reservationMinutes < closeMinutes
-    );
-  }
-  return reservationMinutes >= openMinutes || reservationMinutes < closeMinutes;
+function reservationErrorResponse(error: ReservationAvailabilityError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code, details: error.details },
+    { status: error.status, headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -103,14 +97,22 @@ export async function GET(req: NextRequest) {
           }
         : {}),
     };
-    const reservations = await db.reservation.findMany({
-      where,
-      orderBy: { dateTime: "asc" },
-      take: parsed.data.limit,
-      include: { table: true },
-    });
+    const [policy, reservations] = await Promise.all([
+      readReservationPolicy(db),
+      db.reservation.findMany({
+        where,
+        orderBy: { dateTime: "asc" },
+        take: parsed.data.limit,
+        include: { table: true },
+      }),
+    ]);
     return NextResponse.json(
-      { reservations },
+      {
+        timezone: policy.timezone,
+        reservations: reservations.map((reservation) =>
+          serializeReservationForStaff(reservation, policy.timezone)
+        ),
+      },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
@@ -154,153 +156,76 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  try {
-    const parsed = reservationCreateSchema.safeParse(await req.json());
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid reservation",
-          code: "VALIDATION_ERROR",
-          details: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const reservationDate = new Date(parsed.data.dateTime);
-    const now = new Date();
-    const latestAllowed = new Date(
-      now.getTime() + 365 * 24 * 60 * 60 * 1_000
-    );
-    if (reservationDate.getTime() < now.getTime() + 15 * 60 * 1_000) {
-      return NextResponse.json(
-        {
-          error: "Reservation time must be in the future",
-          code: "PAST_RESERVATION",
-        },
-        { status: 400 }
-      );
-    }
-    if (reservationDate > latestAllowed) {
-      return NextResponse.json(
-        {
-          error: "Reservations can be made up to one year ahead",
-          code: "RESERVATION_TOO_FAR",
-        },
-        { status: 400 }
-      );
-    }
-
-    const settings = await db.restaurantSettings.findUnique({
-      where: { id: "1" },
-      select: { openTime: true, closeTime: true },
-    });
-    if (
-      settings &&
-      !isWithinServiceHours(
-        reservationDate,
-        settings.openTime,
-        settings.closeTime
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error: "The selected time is outside restaurant hours",
-          code: "OUTSIDE_SERVICE_HOURS",
-        },
-        { status: 400 }
-      );
-    }
-
-    const overlapStart = new Date(
-      reservationDate.getTime() - 90 * 60 * 1_000
-    );
-    const overlapEnd = new Date(
-      reservationDate.getTime() + 90 * 60 * 1_000
-    );
-    const duplicate = await db.reservation.findFirst({
-      where: {
-        customerPhone: parsed.data.customerPhone,
-        dateTime: { gte: overlapStart, lte: overlapEnd },
-        status: { in: ["confirmed", "seated"] },
-      },
-      select: { id: true },
-    });
-    if (duplicate) {
-      return NextResponse.json(
-        {
-          error: "An active reservation already exists near this time",
-          code: "DUPLICATE_RESERVATION",
-        },
-        { status: 409 }
-      );
-    }
-
-    const reservation = await db.$transaction(async (tx) => {
-      const candidateTables = await tx.restaurantTable.findMany({
-        where: { capacity: { gte: parsed.data.partySize } },
-        orderBy: [{ capacity: "asc" }, { number: "asc" }],
-        select: { id: true },
-      });
-      const occupied = await tx.reservation.findMany({
-        where: {
-          tableId: { in: candidateTables.map((table) => table.id) },
-          dateTime: { gte: overlapStart, lte: overlapEnd },
-          status: { in: ["confirmed", "seated"] },
-        },
-        select: { tableId: true },
-      });
-      const occupiedIds = new Set(
-        occupied.map((entry) => entry.tableId).filter(Boolean)
-      );
-      const availableTable = candidateTables.find(
-        (table) => !occupiedIds.has(table.id)
-      );
-      if (!availableTable) throw new Error("NO_TABLE_AVAILABLE");
-
-      const customer = await tx.customer.upsert({
-        where: { phone: parsed.data.customerPhone },
-        update: {
-          name: parsed.data.customerName,
-          ...(parsed.data.customerEmail
-            ? { email: parsed.data.customerEmail }
-            : {}),
-        },
-        create: {
-          name: parsed.data.customerName,
-          phone: parsed.data.customerPhone,
-          email: parsed.data.customerEmail || null,
-        },
-        select: { id: true },
-      });
-
-      return tx.reservation.create({
-        data: {
-          customerName: parsed.data.customerName,
-          customerPhone: parsed.data.customerPhone,
-          customerEmail: parsed.data.customerEmail || null,
-          partySize: parsed.data.partySize,
-          tableId: availableTable.id,
-          customerId: customer.id,
-          dateTime: reservationDate,
-          status: "confirmed",
-          occasion: parsed.data.occasion || null,
-          preference: parsed.data.preference || null,
-          notes: parsed.data.notes || null,
-        },
-        include: { table: true },
-      });
-    });
-
+  const parsed = reservationCreateSchema.safeParse(await req.json());
+  if (!parsed.success) {
     return NextResponse.json(
       {
-        reservation,
+        error: "Invalid reservation",
+        code: "VALIDATION_ERROR",
+        details: parsed.error.flatten().fieldErrors,
+      },
+      { status: 400, headers: rateLimitHeaders(reservationLimit) }
+    );
+  }
+
+  const idempotencyKey = req.headers.get("Idempotency-Key")?.trim();
+  if (!idempotencyKey || idempotencyKey.length > 191) {
+    return NextResponse.json(
+      {
+        error: "A valid Idempotency-Key header is required",
+        code: "IDEMPOTENCY_KEY_REQUIRED",
+      },
+      { status: 400, headers: rateLimitHeaders(reservationLimit) }
+    );
+  }
+
+  try {
+    const context = auditContextFromRequest(req);
+    const result = await db.$transaction(
+      async (tx) => {
+        const saved = await createReservationBooking(tx, {
+          idempotencyKey,
+          ...parsed.data,
+          source: "customer",
+        });
+        if (!saved.replayed) {
+          await writeAuditEvent(tx, {
+            actor: null,
+            action: "reservation.customer.create",
+            entityType: "Reservation",
+            entityId: saved.reservation.id,
+            context,
+            metadata: {
+              partySize: saved.reservation.partySize,
+              dateTime: saved.reservation.dateTime,
+              endsAt: saved.reservation.endsAt,
+              releaseAt: saved.reservation.releaseAt,
+              tableId: saved.reservation.tableId,
+              source: saved.reservation.source,
+            },
+          });
+        }
+        return saved;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+    const policy = await readReservationPolicy(db);
+    return NextResponse.json(
+      {
+        reservation: serializeReservationForCustomer(
+          result.reservation,
+          policy.timezone
+        ),
         accessToken: createCustomerAccessToken(
           "reservation",
-          reservation.id
+          result.reservation.id
         ),
+        replayed: result.replayed,
       },
-      { status: 201, headers: { "Cache-Control": "no-store" } }
+      {
+        status: result.replayed ? 200 : 201,
+        headers: rateLimitHeaders(reservationLimit),
+      }
     );
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
@@ -309,16 +234,30 @@ export async function POST(req: NextRequest) {
           error: "Reservation access is not configured",
           code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
         },
-        { status: 503 }
+        { status: 503, headers: rateLimitHeaders(reservationLimit) }
       );
     }
-    if (error instanceof Error && error.message === "NO_TABLE_AVAILABLE") {
+    if (error instanceof ReservationAvailabilityError) {
+      const response = reservationErrorResponse(error);
+      response.headers.set("X-RateLimit-Limit", String(reservationLimit.limit));
+      response.headers.set(
+        "X-RateLimit-Remaining",
+        String(reservationLimit.remaining)
+      );
+      return response;
+    }
+    const mapped = reservationErrorFromDatabase(error);
+    if (mapped) return reservationErrorResponse(mapped);
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
       return NextResponse.json(
         {
-          error: "No suitable table is available at that time",
-          code: "NO_TABLE_AVAILABLE",
+          error: "Reservation availability changed; please retry",
+          code: "RESERVATION_RETRY_REQUIRED",
         },
-        { status: 409 }
+        { status: 409, headers: rateLimitHeaders(reservationLimit) }
       );
     }
 
@@ -328,7 +267,7 @@ export async function POST(req: NextRequest) {
         error: "Unable to create reservation",
         code: "RESERVATION_CREATE_FAILED",
       },
-      { status: 500 }
+      { status: 500, headers: rateLimitHeaders(reservationLimit) }
     );
   }
 }

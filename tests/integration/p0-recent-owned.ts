@@ -9,6 +9,7 @@ const BASE_URL = (process.env.P0_BASE_URL || "http://127.0.0.1:3000").replace(
 const SOURCE_IP = "198.51.100.39";
 const TEST_SCOPES = [
   "order-create",
+  "reservation-availability",
   "reservation-create",
   "recent-orders-lookup",
   "recent-reservations-lookup",
@@ -86,10 +87,10 @@ function uniquePhone(prefix: string): string {
   return `+964${prefix}${crypto.randomUUID().replaceAll("-", "").slice(0, 7)}`;
 }
 
-function futureServiceTime(daysAhead: number): string {
-  const date = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1_000);
-  date.setHours(18, 0, 0, 0);
-  return date.toISOString();
+function futureDate(daysAhead: number): string {
+  return new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1_000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 async function createOrder(
@@ -124,14 +125,36 @@ async function createOrder(
 }
 
 async function createReservation(label: string, daysAhead: number) {
+  const date = futureDate(daysAhead);
+  const availability = await request(
+    `/api/reservations/availability?${new URLSearchParams({
+      date,
+      partySize: "2",
+    })}`
+  );
+  expectStatus(
+    availability,
+    200,
+    `Load recent reservation availability ${label}`
+  );
+  const time = availability.data?.slots?.[0]?.time;
+  assert.ok(
+    time,
+    `Recent reservation ${label} must have a server-approved slot`
+  );
+
   const result = await request("/api/reservations", {
     method: "POST",
+    headers: {
+      "Idempotency-Key": `p0-recent-reservation-${crypto.randomUUID()}`,
+    },
     body: JSON.stringify({
       customerName: `P0 Recent Reservation ${label}`,
       customerPhone: uniquePhone("706"),
       customerEmail: null,
       partySize: 2,
-      dateTime: futureServiceTime(daysAhead),
+      date,
+      time,
       occasion: null,
       preference: null,
       notes: `Recent ownership test ${label}`,
@@ -143,7 +166,11 @@ async function createReservation(label: string, daysAhead: number) {
     result.data?.accessToken,
     "Reservation creation must return an access token"
   );
-  return result.data as any;
+  const stored = await db.reservation.findUnique({
+    where: { id: result.data.reservation.id },
+    select: { customerId: true },
+  });
+  return { ...(result.data as any), customerId: stored?.customerId || null };
 }
 
 async function main() {
@@ -290,10 +317,8 @@ async function main() {
       reservationA.reservation.id,
       reservationB.reservation.id
     );
-    createdCustomerIds.push(
-      reservationA.reservation.customerId,
-      reservationB.reservation.customerId
-    );
+    if (reservationA.customerId) createdCustomerIds.push(reservationA.customerId);
+    if (reservationB.customerId) createdCustomerIds.push(reservationB.customerId);
 
     console.log("[p0-recent] validating mixed recent-reservation credentials");
     const mixedReservations = await request("/api/reservations/recent", {

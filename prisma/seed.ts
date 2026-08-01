@@ -9,6 +9,7 @@ import {
   PaymentStatus,
   PurchaseOrderStatus,
   PrismaClient,
+  ReservationSource,
   ReservationStatus,
   StaffRole,
   SupplierStatus,
@@ -32,6 +33,7 @@ async function main() {
   const tables = [
     "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",
     "PurchaseReceiptLine", "PurchaseReceipt", "PurchaseOrderLine",
+    "ReservationClosure", "ReservationServicePeriod",
     "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",
     "RecipeComponent", "Recipe", "IngredientUnitConversion", "StockMovement",
     "ModifierOption", "ModifierGroup", "MenuItem", "MenuCategory",
@@ -68,6 +70,19 @@ async function main() {
     },
   });
   console.log("  ✓ Settings");
+
+  for (let dayOfWeek = 0; dayOfWeek <= 6; dayOfWeek += 1) {
+    await db.reservationServicePeriod.create({
+      data: {
+        dayOfWeek,
+        opensAtMinute: 10 * 60,
+        closesAtMinute: 23 * 60,
+        label: "Regular service",
+        isActive: true,
+      },
+    });
+  }
+  console.log("  ✓ 7 reservation service periods");
 
   // ── 2. KITCHEN STATIONS ──
   const stations = [
@@ -274,7 +289,16 @@ async function main() {
         tableId: tbl?.id,
         customerId: custMap[r.phone],
         dateTime: r.date,
+        durationMinutes: 90,
+        turnoverMinutes: 15,
+        endsAt: new Date(r.date.getTime() + 90 * 60_000),
+        releaseAt: new Date(r.date.getTime() + 105 * 60_000),
+        source: ReservationSource.import,
         status: r.status as ReservationStatus,
+        seatedAt: r.status === "seated" ? r.date : null,
+        completedAt: r.status === "completed" ? r.date : null,
+        cancelledAt: r.status === "cancelled" ? r.date : null,
+        noShowAt: r.status === "no_show" ? r.date : null,
         occasion: r.occasion,
         preference: r.pref,
         notes: r.notes,

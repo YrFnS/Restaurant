@@ -6,6 +6,10 @@ import {
   verifyCustomerAccessToken,
 } from "@/lib/customer-access";
 import {
+  readReservationPolicy,
+  serializeReservationForCustomer,
+} from "@/lib/reservations/availability";
+import {
   consumeRateLimit,
   getRequestSource,
   rateLimitHeaders,
@@ -73,36 +77,33 @@ export async function POST(req: NextRequest) {
     const credentials = new Map(
       parsed.data.reservations.map((entry) => [entry.id, entry.accessToken])
     );
-    const reservations = await db.reservation.findMany({
-      where: { id: { in: Array.from(credentials.keys()) } },
-      orderBy: { dateTime: "asc" },
-      select: {
-        id: true,
-        customerName: true,
-        partySize: true,
-        dateTime: true,
-        status: true,
-        occasion: true,
-        preference: true,
-        notes: true,
-        createdAt: true,
-        updatedAt: true,
-        table: {
-          select: { id: true, number: true, section: true },
+    const [policy, reservations] = await Promise.all([
+      readReservationPolicy(db),
+      db.reservation.findMany({
+        where: { id: { in: Array.from(credentials.keys()) } },
+        orderBy: { dateTime: "asc" },
+        include: {
+          table: {
+            select: { id: true, number: true, section: true },
+          },
         },
-      },
-    });
+      }),
+    ]);
 
-    const authorizedReservations = reservations.filter((reservation) =>
-      verifyCustomerAccessToken(
-        "reservation",
-        reservation.id,
-        credentials.get(reservation.id)
+    const authorizedReservations = reservations
+      .filter((reservation) =>
+        verifyCustomerAccessToken(
+          "reservation",
+          reservation.id,
+          credentials.get(reservation.id)
+        )
       )
-    );
+      .map((reservation) =>
+        serializeReservationForCustomer(reservation, policy.timezone)
+      );
 
     return NextResponse.json(
-      { reservations: authorizedReservations },
+      { reservations: authorizedReservations, timezone: policy.timezone },
       { headers: rateLimitHeaders(lookupLimit) }
     );
   } catch (error) {
