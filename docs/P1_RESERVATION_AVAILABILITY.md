@@ -3,11 +3,13 @@
 > **Repository:** `YrFnS/Restaurant`  
 > **Branch:** `agent/p1-reservation-availability`  
 > **Base:** consolidated `main` after PRs #1–#7  
+> **Status:** Completed and validated at implementation checkpoint `45aff45f63bf18113338f7426fda92100760973f`  
+> **Validation:** P0 Validation #793 and P0 Integration #623 passed  
 > **Scope:** restaurant-local availability, weekly service periods, closures, table allocation, lifecycle transitions, customer cancellation, and database concurrency
 
 ## Purpose
 
-The current reservation endpoint assigns the smallest table that appears free inside a fixed plus-or-minus 90-minute window. It evaluates opening hours in the application server timezone, has no holiday or closure model, does not store a reservation end or turnover buffer, and can double-book a table when concurrent requests race.
+The previous reservation endpoint assigned the smallest table that appeared free inside a fixed plus-or-minus 90-minute window. It evaluated opening hours in the application server timezone, had no closure model, did not store a reservation end or turnover buffer, and could double-book a table when concurrent requests raced.
 
 This slice establishes one reservation-capacity engine shared by public booking, staff operations, the reservation calendar, and the future waitlist workflow.
 
@@ -126,7 +128,7 @@ Terminal states cannot transition. Customer cancellation is narrower than staff 
 
 ## Operator workflow
 
-The customer reservation screen will:
+The customer reservation screen now:
 
 - query live availability instead of showing hard-coded times;
 - submit restaurant-local date/time values;
@@ -134,7 +136,7 @@ The customer reservation screen will:
 - handle no-slot, stale-slot, loading, and conflict responses;
 - retain scoped reservation credentials on the current device.
 
-The staff workflow will:
+The staff workflow now:
 
 - group calendar entries using restaurant-local dates rather than UTC dates;
 - display start, end, table, party, and status;
@@ -155,7 +157,7 @@ The old browser-generated ISO booking contract is replaced by restaurant-local d
 
 ## Validation gate
 
-This slice is complete only when all of the following pass:
+This slice passed all of the following gates at implementation checkpoint `45aff45f63bf18113338f7426fda92100760973f`:
 
 - clean migration deployment;
 - representative existing-data adoption;
