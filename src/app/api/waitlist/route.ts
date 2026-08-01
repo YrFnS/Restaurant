@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   RESERVATION_MANAGEMENT_ROLES,
   requireStaffSession,
 } from "@/lib/auth/guard";
+import { auditContextFromRequest } from "@/lib/audit";
 import {
   createCustomerAccessToken,
   CustomerAccessConfigurationError,
@@ -15,84 +17,211 @@ import {
   getRequestSource,
   rateLimitHeaders,
 } from "@/lib/security/rate-limit";
+import {
+  createWaitlistEntry,
+  listWaitlistEntries,
+  readWaitlistEntry,
+  readWaitlistPolicy,
+  refreshWaitlist,
+  safeWaitlistPolicy,
+  serializeWaitlistForCustomer,
+  serializeWaitlistForStaff,
+  waitlistErrorFromDatabase,
+  WaitlistOperationsError,
+  waitlistPosition,
+} from "@/lib/waitlist/operations";
 
 const waitlistCreateSchema = z
   .object({
     customerName: z.string().trim().min(1).max(160),
     customerPhone: z.string().trim().min(5).max(40),
-    partySize: z.number().int().min(1).max(50),
+    partySize: z.number().int().min(1).max(100),
+    preference: z
+      .enum(["any", "indoor", "outdoor", "bar", "private"])
+      .nullable()
+      .optional(),
     notes: z.string().trim().max(2_000).nullable().optional(),
   })
   .strict();
 
+const adminQuerySchema = z
+  .object({
+    admin: z.literal("true"),
+    scope: z.enum(["active", "recent", "all"]).default("active"),
+    limit: z.coerce.number().int().min(1).max(500).default(200),
+  })
+  .strict();
+
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const WAITLIST_WINDOW_MS = 60_000;
 const MAX_JOINS_PER_WINDOW = 10;
+const MAX_READS_PER_WINDOW = 120;
+
+function noStore(status = 200) {
+  return {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  };
+}
+
+function waitlistError(error: WaitlistOperationsError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code, details: error.details },
+    noStore(error.status)
+  );
+}
+
+function idempotencyKey(req: NextRequest): string {
+  const key = req.headers.get("idempotency-key")?.trim() || "";
+  if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
+    throw new WaitlistOperationsError(
+      "A valid Idempotency-Key header is required",
+      "IDEMPOTENCY_KEY_REQUIRED",
+      400
+    );
+  }
+  return key;
+}
+
+async function publicLimit(req: NextRequest, scope: string, limit: number) {
+  try {
+    return await consumeRateLimit({
+      scope,
+      identifier: getRequestSource(req),
+      limit,
+      windowMs: WAITLIST_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error(`[waitlist] Shared ${scope} limiter failed`, error);
+    return null;
+  }
+}
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
+  const searchParams = new URL(req.url).searchParams;
   const admin = searchParams.get("admin") === "true";
-  const id = searchParams.get("id");
-  const token = searchParams.get("token");
+  const context = auditContextFromRequest(req);
 
   try {
     if (admin) {
       const auth = await requireStaffSession(RESERVATION_MANAGEMENT_ROLES);
       if ("response" in auth) return auth.response;
 
-      const entries = await db.waitlistEntry.findMany({
-        where: { status: { in: ["waiting", "notified"] } },
-        orderBy: { createdAt: "asc" },
+      const parsed = adminQuerySchema.safeParse(
+        Object.fromEntries(searchParams.entries())
+      );
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: "Invalid waitlist query", code: "VALIDATION_ERROR" },
+          noStore(400)
+        );
+      }
+
+      const result = await db.$transaction(async (tx) => {
+        const refreshed = await refreshWaitlist(tx, context);
+        const entries = await listWaitlistEntries(tx, {
+          activeOnly: parsed.data.scope === "active",
+          limit: parsed.data.limit,
+        });
+        const policy = await readWaitlistPolicy(tx);
+        const active = refreshed.active;
+        return {
+          entries,
+          active,
+          policy,
+          expiredCount: refreshed.expired.length,
+        };
       });
+
       return NextResponse.json(
-        { entries, waitingCount: entries.length },
-        { headers: { "Cache-Control": "no-store" } }
+        {
+          entries: result.entries.map(serializeWaitlistForStaff),
+          activeCount: result.active.length,
+          waitingCount: result.active.filter(
+            (entry) => entry.status === "waiting"
+          ).length,
+          notifiedCount: result.active.filter(
+            (entry) => entry.status === "notified"
+          ).length,
+          confirmedCount: result.active.filter(
+            (entry) =>
+              entry.status === "notified" &&
+              entry.notificationConfirmedAt !== null
+          ).length,
+          expiredCount: result.expiredCount,
+          policy: safeWaitlistPolicy(result.policy),
+        },
+        noStore()
       );
     }
 
-    const waitingCount = await db.waitlistEntry.count({
-      where: { status: { in: ["waiting", "notified"] } },
+    const limit = await publicLimit(
+      req,
+      "waitlist-read",
+      MAX_READS_PER_WINDOW
+    );
+    if (!limit) {
+      return NextResponse.json(
+        {
+          error: "The waitlist is temporarily unavailable",
+          code: "RATE_LIMIT_UNAVAILABLE",
+        },
+        noStore(503)
+      );
+    }
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "Too many waitlist requests", code: "WAITLIST_RATE_LIMITED" },
+        { status: 429, headers: rateLimitHeaders(limit) }
+      );
+    }
+
+    const id = searchParams.get("id");
+    const token = searchParams.get("token");
+    const tokenValid =
+      id && token ? verifyCustomerAccessToken("waitlist", id, token) : false;
+
+    const result = await db.$transaction(async (tx) => {
+      const refreshed = await refreshWaitlist(tx, context);
+      const policy = await readWaitlistPolicy(tx);
+      const entry = id && tokenValid ? await readWaitlistEntry(tx, id) : null;
+      return { active: refreshed.active, policy, entry };
     });
+    const waitingCount = result.active.length;
 
     if (!id || !token) {
       return NextResponse.json(
-        { entry: null, position: 0, waitingCount },
-        { headers: { "Cache-Control": "no-store" } }
+        {
+          entry: null,
+          position: 0,
+          waitingCount,
+          policy: safeWaitlistPolicy(result.policy),
+        },
+        noStore()
       );
     }
-
-    const entry = await db.waitlistEntry.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        customerName: true,
-        partySize: true,
-        status: true,
-        estimatedWait: true,
-        seatedAt: true,
-        notifiedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-    if (!entry || !verifyCustomerAccessToken("waitlist", entry.id, token)) {
+    if (!tokenValid || !result.entry) {
       return NextResponse.json(
-        { entry: null, position: 0, waitingCount },
-        { status: 404, headers: { "Cache-Control": "no-store" } }
+        {
+          entry: null,
+          position: 0,
+          waitingCount,
+          policy: safeWaitlistPolicy(result.policy),
+        },
+        noStore(404)
       );
     }
-
-    const position = ["waiting", "notified"].includes(entry.status)
-      ? (await db.waitlistEntry.count({
-          where: {
-            status: { in: ["waiting", "notified"] },
-            createdAt: { lt: entry.createdAt },
-          },
-        })) + 1
-      : 0;
 
     return NextResponse.json(
-      { entry, position, waitingCount },
-      { headers: { "Cache-Control": "no-store" } }
+      {
+        entry: serializeWaitlistForCustomer(result.entry),
+        position: ["waiting", "notified"].includes(result.entry.status)
+          ? waitlistPosition(result.active, result.entry.id)
+          : 0,
+        waitingCount,
+        policy: safeWaitlistPolicy(result.policy),
+      },
+      noStore()
     );
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
@@ -101,48 +230,45 @@ export async function GET(req: NextRequest) {
           error: "Waitlist access is not configured",
           code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
         },
-        { status: 503 }
+        noStore(503)
       );
     }
+    if (error instanceof WaitlistOperationsError) return waitlistError(error);
+    const mapped = waitlistErrorFromDatabase(error);
+    if (mapped) return waitlistError(mapped);
 
     console.error("[waitlist] Failed to load waitlist", error);
     return NextResponse.json(
       { error: "Unable to load waitlist", code: "WAITLIST_LOAD_FAILED" },
-      { status: 500 }
+      noStore(500)
     );
   }
 }
 
 export async function POST(req: NextRequest) {
-  let waitlistLimit;
-  try {
-    waitlistLimit = await consumeRateLimit({
-      scope: "waitlist-create",
-      identifier: getRequestSource(req),
-      limit: MAX_JOINS_PER_WINDOW,
-      windowMs: WAITLIST_WINDOW_MS,
-    });
-  } catch (error) {
-    console.error("[waitlist] Shared rate limiter failed", error);
+  const limit = await publicLimit(
+    req,
+    "waitlist-create",
+    MAX_JOINS_PER_WINDOW
+  );
+  if (!limit) {
     return NextResponse.json(
       {
         error: "The waitlist is temporarily unavailable",
         code: "RATE_LIMIT_UNAVAILABLE",
       },
-      { status: 503, headers: { "Cache-Control": "no-store" } }
+      noStore(503)
     );
   }
-  if (!waitlistLimit.allowed) {
+  if (!limit.allowed) {
     return NextResponse.json(
-      {
-        error: "Too many waitlist attempts",
-        code: "WAITLIST_RATE_LIMITED",
-      },
-      { status: 429, headers: rateLimitHeaders(waitlistLimit) }
+      { error: "Too many waitlist attempts", code: "WAITLIST_RATE_LIMITED" },
+      { status: 429, headers: rateLimitHeaders(limit) }
     );
   }
 
   try {
+    const key = idempotencyKey(req);
     const parsed = waitlistCreateSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json(
@@ -151,74 +277,32 @@ export async function POST(req: NextRequest) {
           code: "VALIDATION_ERROR",
           details: parsed.error.flatten().fieldErrors,
         },
-        { status: 400 }
+        noStore(400)
       );
     }
 
-    const existing = await db.waitlistEntry.findFirst({
-      where: {
-        customerPhone: parsed.data.customerPhone,
-        status: { in: ["waiting", "notified"] },
-      },
-      select: { id: true },
-    });
-    if (existing) {
-      return NextResponse.json(
-        {
-          error: "This phone number is already on the active waitlist",
-          code: "DUPLICATE_WAITLIST_ENTRY",
-        },
-        { status: 409 }
-      );
-    }
-
-    const ahead = await db.waitlistEntry.count({
-      where: { status: { in: ["waiting", "notified"] } },
-    });
-    const estimatedWait = Math.min(180, 15 + ahead * 12);
-
-    const entry = await db.$transaction(async (tx) => {
-      const customer = await tx.customer.upsert({
-        where: { phone: parsed.data.customerPhone },
-        update: { name: parsed.data.customerName },
-        create: {
-          name: parsed.data.customerName,
-          phone: parsed.data.customerPhone,
-        },
-        select: { id: true },
-      });
-
-      return tx.waitlistEntry.create({
-        data: {
-          customerName: parsed.data.customerName,
-          customerPhone: parsed.data.customerPhone,
-          partySize: parsed.data.partySize,
-          notes: parsed.data.notes || null,
-          estimatedWait,
-          customerId: customer.id,
-        },
-        select: {
-          id: true,
-          customerName: true,
-          partySize: true,
-          status: true,
-          estimatedWait: true,
-          seatedAt: true,
-          notifiedAt: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-    });
+    const context = auditContextFromRequest(req);
+    const result = await db.$transaction(
+      (tx) =>
+        createWaitlistEntry(tx, {
+          idempotencyKey: key,
+          ...parsed.data,
+          source: "customer",
+          actor: null,
+          context,
+        }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
 
     return NextResponse.json(
       {
-        entry,
-        position: ahead + 1,
-        waitingCount: ahead + 1,
-        accessToken: createCustomerAccessToken("waitlist", entry.id),
+        entry: serializeWaitlistForCustomer(result.entry),
+        position: waitlistPosition(result.active, result.entry.id),
+        waitingCount: result.active.length,
+        accessToken: createCustomerAccessToken("waitlist", result.entry.id),
+        replayed: result.replayed,
       },
-      { status: 201, headers: { "Cache-Control": "no-store" } }
+      noStore(result.replayed ? 200 : 201)
     );
   } catch (error) {
     if (error instanceof CustomerAccessConfigurationError) {
@@ -227,14 +311,47 @@ export async function POST(req: NextRequest) {
           error: "Waitlist access is not configured",
           code: "CUSTOMER_ACCESS_NOT_CONFIGURED",
         },
-        { status: 503 }
+        noStore(503)
       );
     }
+    if (error instanceof WaitlistOperationsError) return waitlistError(error);
+    const mapped = waitlistErrorFromDatabase(error);
+    if (mapped) return waitlistError(mapped);
 
     console.error("[waitlist] Failed to create waitlist entry", error);
     return NextResponse.json(
       { error: "Unable to join the waitlist", code: "WAITLIST_CREATE_FAILED" },
-      { status: 500 }
+      noStore(500)
+    );
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  const auth = await requireStaffSession(RESERVATION_MANAGEMENT_ROLES);
+  if ("response" in auth) return auth.response;
+
+  try {
+    const context = auditContextFromRequest(req);
+    const result = await db.$transaction(
+      (tx) => refreshWaitlist(tx, context),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+    return NextResponse.json(
+      {
+        entries: result.active.map(serializeWaitlistForStaff),
+        activeCount: result.active.length,
+        expiredCount: result.expired.length,
+      },
+      noStore()
+    );
+  } catch (error) {
+    if (error instanceof WaitlistOperationsError) return waitlistError(error);
+    const mapped = waitlistErrorFromDatabase(error);
+    if (mapped) return waitlistError(mapped);
+    console.error("[waitlist] Failed to refresh estimates", error);
+    return NextResponse.json(
+      { error: "Unable to refresh waitlist", code: "WAITLIST_REFRESH_FAILED" },
+      noStore(500)
     );
   }
 }
