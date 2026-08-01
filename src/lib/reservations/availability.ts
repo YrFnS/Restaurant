@@ -175,7 +175,6 @@ export function serializeReservationForCustomer(
     notes: reservation.notes,
     table: reservation.table
       ? {
-          id: reservation.table.id,
           number: reservation.table.number,
           section: reservation.table.section,
         }
@@ -326,6 +325,7 @@ export async function listReservationAvailability(input: {
     ),
     service_windows AS (
       SELECT
+        requested."localDate",
         requested."localDate"::timestamp +
           make_interval(mins => period."opensAtMinute") AS "localStart",
         requested."localDate"::timestamp +
@@ -343,6 +343,7 @@ export async function listReservationAvailability(input: {
       UNION ALL
 
       SELECT
+        requested."localDate",
         requested."localDate"::timestamp AS "localStart",
         requested."localDate"::timestamp +
           make_interval(mins => period."closesAtMinute") AS "localEnd"
@@ -370,6 +371,7 @@ export async function listReservationAvailability(input: {
         ),
         make_interval(mins => policy."slotIntervalMinutes")
       ) AS generated("localStart")
+      WHERE generated."localStart"::date = service_windows."localDate"
     ),
     utc_slots AS (
       SELECT

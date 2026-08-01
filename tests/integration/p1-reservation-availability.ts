@@ -316,12 +316,17 @@ async function main() {
     phone: `+96475085${Math.floor(Math.random() * 1000000)}`,
   });
   status(second, 201, "Second reassignment reservation");
+  const secondStored = await db.reservation.findUniqueOrThrow({
+    where: { id: second.data.reservation.id },
+    select: { tableId: true },
+  });
+  assert.ok(secondStored.tableId, "Second reservation must have a stored table");
   const reassign = await api<any>(
     `/api/reservations/${encodeURIComponent(first.data.reservation.id)}`,
     {
       method: "PATCH",
       headers: { cookie: adminCookie },
-      body: JSON.stringify({ tableId: second.data.reservation.table.id }),
+      body: JSON.stringify({ tableId: secondStored.tableId }),
     }
   );
   status(reassign, 409, "Conflicting table reassignment");
@@ -364,6 +369,11 @@ async function main() {
   status(customerCancel, 409, "Customer cancellation cutoff");
   assert.equal(customerCancel.data.code, "CUSTOMER_CANCELLATION_CUTOFF");
 
+  const lifecycleStored = await db.reservation.findUniqueOrThrow({
+    where: { id: lifecycle.data.reservation.id },
+    select: { tableId: true },
+  });
+  assert.ok(lifecycleStored.tableId, "Lifecycle reservation must have a stored table");
   const seated = await api<any>(
     `/api/reservations/${encodeURIComponent(lifecycle.data.reservation.id)}`,
     {
@@ -383,7 +393,7 @@ async function main() {
   );
   status(completed, 200, "Complete reservation");
   const table = await db.restaurantTable.findUniqueOrThrow({
-    where: { id: lifecycle.data.reservation.table.id },
+    where: { id: lifecycleStored.tableId! },
   });
   assert.equal(table.status, "cleaning");
 

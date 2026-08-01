@@ -105,6 +105,10 @@ describe("reservation availability source inventory", () => {
     expect(availabilityRoute).not.toContain("customerPhone");
     expect(availabilityRoute).not.toContain("customerEmail");
     expect(availabilityRoute).not.toContain("tableId");
+    expect(service).not.toContain("id: reservation.table.id");
+    expect(service).toContain(
+      'generated."localStart"::date = service_windows."localDate"'
+    );
   });
 
   test("creates bookings from local date/time with idempotency and audited allocation", () => {

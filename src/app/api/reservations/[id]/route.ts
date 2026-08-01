@@ -19,6 +19,7 @@ import {
   readReservationPolicy,
   reservationErrorFromDatabase,
   ReservationAvailabilityError,
+  serializeReservationForCustomer,
   serializeReservationForStaff,
 } from "@/lib/reservations/availability";
 
@@ -246,13 +247,11 @@ async function applyReservationUpdate(input: {
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );
 
+  const reservation = input.customerAuthorized
+    ? serializeReservationForCustomer(result.reservation, result.timezone)
+    : serializeReservationForStaff(result.reservation, result.timezone);
   return NextResponse.json(
-    {
-      reservation: serializeReservationForStaff(
-        result.reservation,
-        result.timezone
-      ),
-    },
+    { reservation },
     { headers: { "Cache-Control": "no-store" } }
   );
 }
