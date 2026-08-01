@@ -3,32 +3,79 @@ from pathlib import Path
 SOURCE_WORKFLOW = Path(".github/workflows/apply-loyalty-schema-wiring.yml")
 
 
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected one exact block, found {count}")
+    return text.replace(old, new, 1)
+
+
 def main() -> None:
     source = SOURCE_WORKFLOW.read_text()
-    old = '''          schema = replace_once(
+
+    source = replace_once(
+        source,
+        """          schema = replace_once(
               schema,
-              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
-  reasonCode       String               @default("")\'\'\',
-              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+              '''  reversals         PaymentEvent[]       @relation(\"PaymentEventReversals\")
+  reasonCode       String               @default(\"\")''',
+              '''  reversals         PaymentEvent[]       @relation(\"PaymentEventReversals\")
   loyaltyEvents    LoyaltyPointEvent[]
   giftCardTransactions GiftCardTransaction[]
-  reasonCode       String               @default("")\'\'\',
+  reasonCode       String               @default(\"\")''',
               'payment event relations',
-          )'''
-    new = '''          schema = replace_once(
+          )""",
+        """          schema = replace_once(
               schema,
-              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")\'\'\',
-              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+              '''  reversals         PaymentEvent[]       @relation(\"PaymentEventReversals\")''',
+              '''  reversals         PaymentEvent[]       @relation(\"PaymentEventReversals\")
   loyaltyEvents    LoyaltyPointEvent[]
-  giftCardTransactions GiftCardTransaction[]\'\'\',
+  giftCardTransactions GiftCardTransaction[]''',
               'payment event relations',
-          )'''
-    count = source.count(old)
-    if count != 1:
-        raise SystemExit(
-            f"Expected one exact payment relation block, found {count}"
-        )
-    source = source.replace(old, new, 1)
+          )""",
+        "payment relation wrapper",
+    )
+
+    source = replace_once(
+        source,
+        """          settings = replace_once(
+              settings,
+              '''          operationalDayStartMinutes: saved.operationalDayStartMinutes,
+          kdsThresholds:''',
+              '''          operationalDayStartMinutes: saved.operationalDayStartMinutes,
+          loyaltyPolicy: {
+            enabled: saved.loyaltyEnabled,
+            pointsPerCurrencyUnit: saved.loyaltyPointsPerCurrencyUnit,
+            redemptionPointsPerCurrencyUnit: saved.loyaltyRedemptionPointsPerCurrencyUnit,
+            redemptionIncrementPoints: saved.loyaltyRedemptionIncrementPoints,
+            maxRedemptionPercent: saved.loyaltyMaxRedemptionPercent,
+          },
+          giftCardPolicy: {
+            enabled: saved.giftCardEnabled,
+            defaultExpiryDays: saved.giftCardDefaultExpiryDays,
+          },
+          kdsThresholds:''',
+              'settings audit',
+          )""",
+        """          settings = replace_once(
+              settings,
+              '''          kdsThresholds:''',
+              '''          loyaltyPolicy: {
+            enabled: saved.loyaltyEnabled,
+            pointsPerCurrencyUnit: saved.loyaltyPointsPerCurrencyUnit,
+            redemptionPointsPerCurrencyUnit: saved.loyaltyRedemptionPointsPerCurrencyUnit,
+            redemptionIncrementPoints: saved.loyaltyRedemptionIncrementPoints,
+            maxRedemptionPercent: saved.loyaltyMaxRedemptionPercent,
+          },
+          giftCardPolicy: {
+            enabled: saved.giftCardEnabled,
+            defaultExpiryDays: saved.giftCardDefaultExpiryDays,
+          },
+          kdsThresholds:''',
+              'settings audit',
+          )""",
+        "settings audit wrapper",
+    )
 
     lines = source.splitlines()
     start = next(
