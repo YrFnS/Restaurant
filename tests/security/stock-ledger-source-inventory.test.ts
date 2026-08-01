@@ -62,7 +62,6 @@ describe("stock ledger and recipe source inventory", () => {
     }
   });
 
-
   test("maps exact stock models and one-way consumption snapshots in Prisma", () => {
     for (const marker of [
       "enum StockMovementType",
@@ -216,9 +215,7 @@ describe("stock ledger and recipe source inventory", () => {
 
   test("keeps the implementation policy and permanent database suite visible", () => {
     expect(roadmap).toContain("P1-B03 Recipes and immutable stock ledger");
-    expect(roadmap).toContain(
-      "Consumption occurs when an order item first enters production"
-    );
+    expect(roadmap).toContain("Stock consumption occurs on first production entry");
     expect(design).toContain("base-unit micros");
     expect(design).toContain("Movement rows cannot be updated or deleted");
     expect(packageJson).toContain(
