@@ -77,6 +77,46 @@ def main() -> None:
         "settings audit wrapper",
     )
 
+    source = replace_once(
+        source,
+        """          settings_ui = replace_once(
+              settings_ui,
+              '''          <TabsTrigger value=\"fees\" className=\"gap-1.5\"><DollarSign className=\"size-3.5\" />{isRTL ? \"رسوم\" : \"Fees\"}</TabsTrigger>
+          <TabsTrigger value=\"social\"''',
+              '''          <TabsTrigger value=\"fees\" className=\"gap-1.5\"><DollarSign className=\"size-3.5\" />{isRTL ? \"رسوم\" : \"Fees\"}</TabsTrigger>
+          <TabsTrigger value=\"loyalty\" className=\"gap-1.5\"><Gift className=\"size-3.5\" />{isRTL ? \"الولاء\" : \"Loyalty\"}</TabsTrigger>
+          <TabsTrigger value=\"social\"''',
+              'settings tab',
+          )""",
+        """          settings_ui = replace_once(
+              settings_ui,
+              '''<TabsTrigger value=\"social\"''',
+              '''<TabsTrigger value=\"loyalty\" className=\"gap-1.5\"><Gift className=\"size-3.5\" />{isRTL ? \"الولاء\" : \"Loyalty\"}</TabsTrigger>
+          <TabsTrigger value=\"social\"''',
+              'settings tab',
+          )""",
+        "settings tab wrapper",
+    )
+
+    source = replace_once(
+        source,
+        """          settings_ui = replace_once(
+              settings_ui,
+              '''        {/* FEES */}
+        <TabsContent value=\"fees\"''',
+              loyalty_panel + '''        {/* FEES */}
+        <TabsContent value=\"fees\"''',
+              'settings loyalty panel',
+          )""",
+        """          settings_ui = replace_once(
+              settings_ui,
+              '''{/* FEES */}''',
+              loyalty_panel + '''        {/* FEES */}''',
+              'settings loyalty panel',
+          )""",
+        "settings panel wrapper",
+    )
+
     lines = source.splitlines()
     start = next(
         index for index, line in enumerate(lines) if "python3 - <<'PY'" in line
