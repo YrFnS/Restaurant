@@ -153,7 +153,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ action: "cancel" }),
+      body: JSON.stringify({ status: "cancelled" }),
     }
   );
   expectStatus(
@@ -168,7 +168,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ action: "cancel" }),
+      body: JSON.stringify({ status: "cancelled" }),
     }
   );
   expectStatus(
@@ -193,7 +193,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationA.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ action: "cancel" }),
+      body: JSON.stringify({ status: "cancelled" }),
     }
   );
   expectStatus(validReservationCancel, 200, "Customer cancels owned reservation");
@@ -205,7 +205,7 @@ async function main() {
     )}?token=${encodeURIComponent(reservationB.accessToken)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ action: "cancel" }),
+      body: JSON.stringify({ status: "cancelled" }),
     }
   );
   expectStatus(cancelReservationB, 200, "Clean up reservation B");
