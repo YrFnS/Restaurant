@@ -6,6 +6,10 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  CURRENCY_MINOR_DIGITS,
+  parseNonNegativeDecimalToScaledInteger,
+} from "@/lib/money/scaled-integer";
 
 const mediaPathSchema = z
   .string()
@@ -82,6 +86,14 @@ const itemAuditSelect = {
   preparationTime: true,
   sortOrder: true,
 } as const;
+
+function moneyMinor(value: number): bigint {
+  return parseNonNegativeDecimalToScaledInteger(
+    String(value),
+    CURRENCY_MINOR_DIGITS,
+    BigInt(Number.MAX_SAFE_INTEGER)
+  );
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -164,10 +176,13 @@ export async function PATCH(
     }
 
     const { type: _type, ...data } = parsed.data;
+    const priceMinor = data.price === undefined ? null : moneyMinor(data.price);
+    const exactData =
+      priceMinor === null ? data : { ...data, priceMinor };
     const item = await db.$transaction(async (tx) => {
       const updated = await tx.menuItem.update({
         where: { id },
-        data,
+        data: exactData,
         select: itemAuditSelect,
       });
       await writeAuditEvent(tx, {
@@ -176,7 +191,13 @@ export async function PATCH(
         entityType: "MenuItem",
         entityId: id,
         context,
-        metadata: { before: existing, after: updated },
+        metadata: {
+          before: existing,
+          after: updated,
+          ...(priceMinor === null
+            ? {}
+            : { priceMinor: priceMinor.toString() }),
+        },
       });
       return updated;
     });

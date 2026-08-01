@@ -6,6 +6,15 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  exactMinorToCents,
+  exactMinorToNumber,
+  readExactOrderTotalMinor,
+} from "@/lib/money/exact-store";
+import {
+  CURRENCY_MINOR_DIGITS,
+  parseNonNegativeDecimalToScaledInteger,
+} from "@/lib/money/scaled-integer";
 
 const checkoutSchema = z
   .object({
@@ -32,8 +41,14 @@ const paymentEventSelect = {
   createdAt: true,
 } as const;
 
-function toCents(value: number): number {
-  return Math.round(value * 100);
+function inputToCents(value: number): number {
+  return exactMinorToCents(
+    parseNonNegativeDecimalToScaledInteger(
+      String(value),
+      CURRENCY_MINOR_DIGITS,
+      BigInt(Number.MAX_SAFE_INTEGER)
+    )
+  );
 }
 
 function fromCents(value: number | null): number | null {
@@ -80,11 +95,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const existing = await db.order.findUnique({
-      where: { id: input.orderId },
-      include: checkoutOrderInclude,
-    });
-    if (!existing) {
+    const [existing, exactTotalMinor] = await Promise.all([
+      db.order.findUnique({
+        where: { id: input.orderId },
+        include: checkoutOrderInclude,
+      }),
+      readExactOrderTotalMinor(db, input.orderId),
+    ]);
+    if (!existing || exactTotalMinor === null) {
       return NextResponse.json(
         { error: "Order not found", code: "ORDER_NOT_FOUND" },
         { status: 404 }
@@ -97,21 +115,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const totalCents = toCents(existing.total);
-    const tenderedCents = toCents(input.tendered ?? 0);
+    const totalCents = exactMinorToCents(exactTotalMinor);
+    const exactTotal = exactMinorToNumber(exactTotalMinor);
+    const tenderedCents =
+      input.tendered === undefined ? totalCents : inputToCents(input.tendered);
     if (tenderedCents < totalCents) {
       return NextResponse.json(
         {
           error: "Tendered cash is less than the order total",
           code: "INSUFFICIENT_TENDER",
-          total: existing.total,
+          total: exactTotal,
         },
         { status: 400 }
       );
     }
 
-    const tendered = input.tendered ?? existing.total;
-    const changeCents = Math.max(0, tenderedCents - totalCents);
+    const tendered = tenderedCents / 100;
+    const changeCents = tenderedCents - totalCents;
     const change = changeCents / 100;
 
     if (existing.paymentStatus === "paid") {
@@ -128,14 +148,10 @@ export async function POST(req: NextRequest) {
             method: paymentEvent?.method || existing.paymentMethod,
             status: paymentEvent?.status || "succeeded",
             currency: paymentEvent?.currency || null,
-            total: paymentEvent ? paymentEvent.amountCents / 100 : existing.total,
+            total: paymentEvent ? paymentEvent.amountCents / 100 : exactTotal,
             tendered:
-              fromCents(paymentEvent?.tenderedCents ?? null) ??
-              input.tendered ??
-              existing.total,
-            change:
-              fromCents(paymentEvent?.changeCents ?? null) ??
-              Math.max(0, (input.tendered ?? existing.total) - existing.total),
+              fromCents(paymentEvent?.tenderedCents ?? null) ?? tendered,
+            change: fromCents(paymentEvent?.changeCents ?? null) ?? change,
           },
           replayed: true,
         },
@@ -171,7 +187,8 @@ export async function POST(req: NextRequest) {
       const drawerEntry = await tx.cashDrawerEntry.create({
         data: {
           type: "sale",
-          amount: existing.total,
+          amount: exactTotal,
+          amountMinor: exactTotalMinor,
           note: `Sale ${existing.orderNumber}${existing.table ? ` / Table ${existing.table.number}` : ""}`,
           createdBy: auth.session.name,
         },
@@ -253,7 +270,7 @@ export async function POST(req: NextRequest) {
           currency: result.paymentEvent?.currency || null,
           total: result.paymentEvent
             ? result.paymentEvent.amountCents / 100
-            : result.order.total,
+            : exactTotal,
           tendered:
             fromCents(result.paymentEvent?.tenderedCents ?? null) ?? tendered,
           change: fromCents(result.paymentEvent?.changeCents ?? null) ?? change,

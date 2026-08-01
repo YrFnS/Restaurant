@@ -8,6 +8,10 @@ import {
   PinConfigurationError,
 } from "@/lib/auth/pin";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  CURRENCY_MINOR_DIGITS,
+  parseNonNegativeDecimalToScaledInteger,
+} from "@/lib/money/scaled-integer";
 
 const EMPLOYEE_ROLES = [
   "owner",
@@ -54,6 +58,14 @@ const safeEmployeeSelect = {
   schedules: true,
 } as const;
 
+function wageMinor(value: number): bigint {
+  return parseNonNegativeDecimalToScaledInteger(
+    String(value),
+    CURRENCY_MINOR_DIGITS,
+    BigInt(Number.MAX_SAFE_INTEGER)
+  );
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -97,7 +109,14 @@ export async function PATCH(
     }
 
     const { pin, ...employeeData } = parsed.data;
-    const updateData: Prisma.EmployeeUpdateInput = { ...employeeData };
+    const hourlyWageMinor =
+      employeeData.hourlyWage === undefined
+        ? null
+        : wageMinor(employeeData.hourlyWage);
+    const updateData: Prisma.EmployeeUpdateInput = {
+      ...employeeData,
+      ...(hourlyWageMinor === null ? {} : { hourlyWageMinor }),
+    };
     if (pin) updateData.pin = await createPinVerifier(pin);
 
     const revokeSessions =
@@ -135,6 +154,9 @@ export async function PATCH(
           previousActive: target.isActive,
           isActive: updated.isActive,
           revokedSessionCount,
+          ...(hourlyWageMinor === null
+            ? {}
+            : { hourlyWageMinor: hourlyWageMinor.toString() }),
         },
       });
 

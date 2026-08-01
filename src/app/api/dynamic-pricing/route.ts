@@ -6,6 +6,10 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  parseNonNegativeDecimalToScaledInteger,
+  RATE_MICRO_DIGITS,
+} from "@/lib/money/scaled-integer";
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const pricingRuleSchema = z
@@ -114,11 +118,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const multiplierMicros = parseNonNegativeDecimalToScaledInteger(
+      String(parsed.data.multiplier),
+      RATE_MICRO_DIGITS,
+      BigInt(10_000_000)
+    );
     const context = auditContextFromRequest(req);
     const rule = await db.$transaction(async (tx) => {
       const created = await tx.dynamicPricing.create({
         data: {
           ...parsed.data,
+          multiplierMicros,
           nameAr: parsed.data.nameAr || parsed.data.nameEn,
           startTime: parsed.data.startTime || null,
           endTime: parsed.data.endTime || null,
@@ -135,6 +145,7 @@ export async function POST(req: NextRequest) {
           nameEn: created.nameEn,
           type: created.type,
           multiplier: created.multiplier,
+          multiplierMicros: multiplierMicros.toString(),
           dayOfWeek: created.dayOfWeek,
           startTime: created.startTime,
           endTime: created.endTime,

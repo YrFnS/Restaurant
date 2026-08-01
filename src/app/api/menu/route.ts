@@ -6,6 +6,10 @@ import {
   requireStaffSession,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  CURRENCY_MINOR_DIGITS,
+  parseNonNegativeDecimalToScaledInteger,
+} from "@/lib/money/scaled-integer";
 
 const mediaPathSchema = z
   .string()
@@ -79,6 +83,14 @@ const menuItemSchema = z
     modifierGroups: z.array(modifierGroupSchema).max(50).optional(),
   })
   .strict();
+
+function moneyMinor(value: number): bigint {
+  return parseNonNegativeDecimalToScaledInteger(
+    String(value),
+    CURRENCY_MINOR_DIGITS,
+    BigInt(Number.MAX_SAFE_INTEGER)
+  );
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -164,10 +176,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { type: _type, modifierGroups = [], ...itemData } = parsed.data;
+    const itemPriceMinor = moneyMinor(itemData.price);
     const item = await db.$transaction(async (tx) => {
       const created = await tx.menuItem.create({
         data: {
           ...itemData,
+          priceMinor: itemPriceMinor,
           modifierGroups: {
             create: modifierGroups.map((group, groupIndex) => ({
               nameEn: group.nameEn,
@@ -181,6 +195,7 @@ export async function POST(req: NextRequest) {
                   nameEn: option.nameEn,
                   nameAr: option.nameAr,
                   price: option.price,
+                  priceMinor: moneyMinor(option.price),
                   isDefault: option.isDefault,
                   preset: option.preset,
                 })),
@@ -204,6 +219,7 @@ export async function POST(req: NextRequest) {
           nameAr: created.nameAr,
           categoryId: created.categoryId,
           price: created.price,
+          priceMinor: itemPriceMinor.toString(),
           isAvailable: created.isAvailable,
           modifierGroupCount: created.modifierGroups.length,
         },

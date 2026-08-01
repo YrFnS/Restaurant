@@ -7,6 +7,8 @@ on:
   pull_request:
     branches:
       - main
+      - agent/p0-hardening
+      - agent/p1-data-integrity
 
 permissions:
   contents: read
@@ -75,13 +77,14 @@ jobs:
         run: |
           bun run db:seed
           bun run auth:check-pins
+          bun run money:check
 
       - name: Build production server
         env:
           NODE_ENV: production
         run: bun run build
 
-      - name: Run database-backed P0 smoke tests
+      - name: Run database-backed P0 and P1 smoke tests
         shell: bash
         run: |
           set -euo pipefail
@@ -147,6 +150,8 @@ jobs:
           fi
 
           P0_BASE_URL=http://127.0.0.1:3000 bun run test:integration
+          bun tests/integration/p1-domain-integrity.ts
+          bun run money:check
 
   existing-data-rehearsal:
     name: Existing-data baseline adoption rehearsal
@@ -192,27 +197,28 @@ jobs:
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
 
-      - name: Generate current Prisma client
-        run: bun run db:generate
-
       - name: Recreate the pre-P0 database and representative data
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p .tmp
+          git show origin/main:prisma/schema.prisma > .tmp/legacy-schema.prisma
+          bunx prisma generate --schema .tmp/legacy-schema.prisma
+
           bunx prisma db execute \
             --file prisma/migrations/20260730000000_baseline/migration.sql \
-            --schema prisma/schema.prisma
+            --schema .tmp/legacy-schema.prisma
 
-          mkdir -p .tmp
           git show origin/main:prisma/seed.ts > .tmp/legacy-seed.ts
           bun .tmp/legacy-seed.ts
           bun tests/integration/p0-existing-data-rehearsal.ts \
             snapshot /tmp/p0-existing-data.json
 
-      - name: Adopt the baseline and deploy additive P0 migrations
+      - name: Adopt the baseline and deploy additive migrations
         shell: bash
         run: |
           set -euo pipefail
+          bun run db:generate
           bunx prisma migrate resolve \
             --applied 20260730000000_baseline \
             --schema prisma/schema.prisma
@@ -227,3 +233,5 @@ jobs:
           bun run auth:check-pins
           bun tests/integration/p0-existing-data-rehearsal.ts \
             verify /tmp/p0-existing-data.json
+          bun tests/integration/p1-domain-integrity.ts
+          bun run money:check

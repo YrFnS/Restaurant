@@ -63,7 +63,13 @@ const orderInclude = {
   table: true,
 } as const;
 
-type OrderWithRelations = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
+async function findExistingIdempotentOrder(orderId: string) {
+  return db.order.findUnique({ where: { id: orderId }, include: orderInclude });
+}
+
+type OrderWithRelations = NonNullable<
+  Awaited<ReturnType<typeof findExistingIdempotentOrder>>
+>;
 
 function publicOrderResponse(order: OrderWithRelations, replayed = false) {
   return {
@@ -71,10 +77,6 @@ function publicOrderResponse(order: OrderWithRelations, replayed = false) {
     accessToken: createOrderAccessToken(order.id),
     replayed,
   };
-}
-
-async function findExistingIdempotentOrder(orderId: string) {
-  return db.order.findUnique({ where: { id: orderId }, include: orderInclude });
 }
 
 export async function GET(req: NextRequest) {
@@ -256,11 +258,17 @@ export async function POST(req: NextRequest) {
             input.type === "delivery" ? input.deliveryAddress || null : null,
           notes: input.notes || null,
           subtotal: fromCents(pricing.subtotalCents),
+          subtotalMinor: BigInt(pricing.subtotalCents),
           taxAmount: fromCents(pricing.taxCents),
+          taxAmountMinor: BigInt(pricing.taxCents),
           deliveryFee: fromCents(pricing.deliveryFeeCents),
+          deliveryFeeMinor: BigInt(pricing.deliveryFeeCents),
           discountAmount: fromCents(pricing.discountCents),
+          discountAmountMinor: BigInt(pricing.discountCents),
           tipAmount: fromCents(pricing.tipCents),
+          tipAmountMinor: BigInt(pricing.tipCents),
           total: fromCents(pricing.totalCents),
+          totalMinor: BigInt(pricing.totalCents),
           paymentMethod: "cash",
           paymentStatus: "unpaid",
           serverName: "",
@@ -274,9 +282,11 @@ export async function POST(req: NextRequest) {
               menuItemId: line.menuItemId,
               quantity: line.quantity,
               unitPrice: fromCents(line.unitPriceCents),
+              unitPriceMinor: BigInt(line.unitPriceCents),
               modifiers: line.modifiers,
               notes: line.notes,
               totalPrice: fromCents(line.totalPriceCents),
+              totalPriceMinor: BigInt(line.totalPriceCents),
               stationSlug: line.stationSlug,
               course: line.course,
               status: "pending",

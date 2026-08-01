@@ -6,6 +6,11 @@ import {
   SETTINGS_MANAGEMENT_ROLES,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  CURRENCY_MINOR_DIGITS,
+  parseNonNegativeDecimalToScaledInteger,
+  RATE_MICRO_DIGITS,
+} from "@/lib/money/scaled-integer";
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const optionalLinkSchema = z
@@ -73,6 +78,30 @@ const settingsSchema = z
     }
   );
 
+function pricingExactValues(input: {
+  taxRate: number;
+  deliveryFee: number;
+  minDeliveryOrder: number;
+}) {
+  return {
+    taxRateMicros: parseNonNegativeDecimalToScaledInteger(
+      String(input.taxRate),
+      RATE_MICRO_DIGITS,
+      BigInt(1_000_000)
+    ),
+    deliveryFeeMinor: parseNonNegativeDecimalToScaledInteger(
+      String(input.deliveryFee),
+      CURRENCY_MINOR_DIGITS,
+      BigInt(Number.MAX_SAFE_INTEGER)
+    ),
+    minDeliveryOrderMinor: parseNonNegativeDecimalToScaledInteger(
+      String(input.minDeliveryOrder),
+      CURRENCY_MINOR_DIGITS,
+      BigInt(Number.MAX_SAFE_INTEGER)
+    ),
+  };
+}
+
 export async function GET() {
   const settings = await db.restaurantSettings.findFirst({ where: { id: "1" } });
   return NextResponse.json({ settings });
@@ -101,12 +130,13 @@ export async function PUT(req: NextRequest) {
       updatedAt: _updatedAt,
       ...settingsData
     } = parsed.data;
+    const exactValues = pricingExactValues(settingsData);
     const context = auditContextFromRequest(req);
     const settings = await db.$transaction(async (tx) => {
       const saved = await tx.restaurantSettings.upsert({
         where: { id: "1" },
-        update: settingsData,
-        create: { id: "1", ...settingsData },
+        update: { ...settingsData, ...exactValues },
+        create: { id: "1", ...settingsData, ...exactValues },
       });
 
       await writeAuditEvent(tx, {
@@ -118,9 +148,12 @@ export async function PUT(req: NextRequest) {
         metadata: {
           changedFields: Object.keys(settingsData),
           taxRate: saved.taxRate,
+          taxRateMicros: exactValues.taxRateMicros.toString(),
           currency: saved.currency,
           deliveryFee: saved.deliveryFee,
+          deliveryFeeMinor: exactValues.deliveryFeeMinor.toString(),
           minDeliveryOrder: saved.minDeliveryOrder,
+          minDeliveryOrderMinor: exactValues.minDeliveryOrderMinor.toString(),
           openTime: saved.openTime,
           closeTime: saved.closeTime,
           kdsThresholds: {
