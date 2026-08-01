@@ -64,6 +64,16 @@ const SPECIAL_POLICIES: Record<string, SpecialPolicy> = {
   "POST /api/feedback": {
     markers: ["feedbackSchema", "feedback-submit", "consumeRateLimit"],
   },
+  "POST /api/gift-cards/lookup": {
+    markers: [
+      "lookupSchema",
+      "gift-card-lookup",
+      "consumeRateLimit",
+      "lookupGiftCard",
+      '"Cache-Control": "no-store"',
+    ],
+    beforeJson: ["consumeRateLimit"],
+  },
   "POST /api/internal/kds-outbox": {
     markers: ["configuredSecret", "secretsMatch", "flushKdsOutbox"],
   },
