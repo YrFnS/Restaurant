@@ -163,7 +163,10 @@ describe("purchase order and receiving source inventory", () => {
       "bun tests/integration/p1-purchase-orders-receiving.ts"
     );
     expect(roadmap).toContain("P1-B04 Purchase orders");
-    expect(roadmap).toContain("agent/p1-purchase-orders-receiving");
+    expect(roadmap).toContain("P1_PURCHASE_ORDERS_RECEIVING.md");
+    expect(roadmap).toContain(
+      "P1 suppliers, purchase orders, and partial receiving"
+    );
     expect(design).toContain("partial deliveries");
     expect(design).toContain("submitted orders become immutable");
     expect(design).toContain("Generic stock reversal");
