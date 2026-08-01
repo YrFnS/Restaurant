@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/p1-loyalty-gift-cards
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -14,6 +17,7 @@ concurrency:
 
 jobs:
   patch:
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/p1-loyalty-gift-cards' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
