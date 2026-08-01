@@ -164,8 +164,8 @@ describe("waitlist operations source inventory", () => {
     for (const marker of [
       'queryKey: ["waitlist", "admin", scope]',
       'apiFetch("/api/waitlist/settings"',
-      'action: "notify"',
-      'action: "seat"',
+      'action="notify"',
+      'action="seat"',
       "Waitlist Operations",
       "إدارة قائمة الانتظار",
       "Require confirmation",
