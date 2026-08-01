@@ -28,12 +28,14 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import textwrap
 
           lines = Path('.github/workflows/apply-loyalty-schema-wiring.yml').read_text().splitlines()
           start = next(i for i, line in enumerate(lines) if "python3 - <<'PY'" in line) + 1
           end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
-          script = textwrap.dedent('\n'.join(lines[start:end])) + '\n'
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in lines[start:end]
+          ) + '\n'
           Path('/tmp/apply-loyalty-schema-wiring.py').write_text(script)
           PY
 
