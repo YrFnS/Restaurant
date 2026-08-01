@@ -10,9 +10,10 @@ const db = new PrismaClient();
 
 const expectedConstraints = [
   "RestaurantSettings_operational_bounds",
+  "RestaurantSettings_loyalty_policy_bounds",
   "MenuItem_operational_bounds",
   "ModifierGroup_selection_bounds",
-  "Customer_loyalty_bounds",
+  "Customer_loyalty_operational_bounds",
   "Order_discount_bounds",
   "OrderItem_operational_bounds",
   "RestaurantTable_geometry_bounds",
@@ -29,6 +30,15 @@ const expectedConstraints = [
   "RateLimitCounter_count_bounds",
   "KdsOutboxEvent_attempt_bounds",
   "PaymentEvent_financial_consistency",
+  "GiftCard_money_bounds",
+  "GiftCard_status_shape",
+  "GiftCard_credential_shape",
+  "LoyaltyPointEvent_parent_not_self",
+  "LoyaltyPointEvent_delta_bounds",
+  "LoyaltyPointEvent_shape",
+  "GiftCardTransaction_parent_not_self",
+  "GiftCardTransaction_amount_bounds",
+  "GiftCardTransaction_shape",
 ] as const;
 
 const expectedIndexes = [
@@ -36,6 +46,12 @@ const expectedIndexes = [
   "PaymentEvent_one_succeeded_capture_per_order_idx",
   "Reservation_active_datetime_idx",
   "Order_active_createdAt_idx",
+  "GiftCard_redemptionCodeHash_key",
+  "GiftCard_status_createdAt_idx",
+  "LoyaltyPointEvent_capture_type_key",
+  "LoyaltyPointEvent_reversal_parent_payment_type_key",
+  "GiftCardTransaction_redeem_payment_key",
+  "GiftCardTransaction_refund_parent_payment_key",
 ] as const;
 
 async function assertCatalog() {
