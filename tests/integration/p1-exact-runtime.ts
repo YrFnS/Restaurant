@@ -92,10 +92,6 @@ async function main() {
   const originalRules = await db.dynamicPricing.findMany({
     select: { id: true, isActive: true },
   });
-  let itemId: string | null = null;
-  let orderId: string | null = null;
-  let orderNumber: string | null = null;
-  let paymentEventId: string | null = null;
 
   try {
     await db.dynamicPricing.updateMany({ data: { isActive: false } });
@@ -126,7 +122,7 @@ async function main() {
     });
     expectStatus(createItem, 201, "Create exact-price menu item");
     assertNoExactKeys(createItem.data);
-    itemId = String(createItem.data?.item?.id || "");
+    const itemId = String(createItem.data?.item?.id || "");
     assert.ok(itemId, "Menu creation must return an item ID");
 
     const storedItem = await db.menuItem.findUnique({
@@ -180,8 +176,8 @@ async function main() {
     expectStatus(order, 201, "Create exact-price order");
     assertNoExactKeys(order.data);
     assert.equal(order.data?.order?.subtotal, 1.01);
-    orderId = String(order.data?.order?.id || "");
-    orderNumber = String(order.data?.order?.orderNumber || "");
+    const orderId = String(order.data?.order?.id || "");
+    const orderNumber = String(order.data?.order?.orderNumber || "");
     assert.ok(orderId && orderNumber, "Order creation must return identifiers");
 
     const exactOrder = await db.order.findUnique({
@@ -232,10 +228,14 @@ async function main() {
     const payment = await db.paymentEvent.findFirst({
       where: { orderId, eventType: "capture", status: "succeeded" },
       orderBy: { createdAt: "desc" },
-      select: { id: true, amountCents: true, tenderedCents: true, changeCents: true },
+      select: {
+        id: true,
+        amountCents: true,
+        tenderedCents: true,
+        changeCents: true,
+      },
     });
     assert.ok(payment);
-    paymentEventId = payment.id;
     assert.equal(payment.amountCents, Number(exactOrder.totalMinor));
     assert.equal(payment.tenderedCents, payment.amountCents);
     assert.equal(payment.changeCents, 0);
@@ -282,30 +282,9 @@ async function main() {
       "[p1-exact-runtime] Exact quote, order, checkout, and cash assertions passed."
     );
   } finally {
-    if (orderId) {
-      await db.paymentEvent.deleteMany({ where: { orderId } });
-      if (orderNumber) {
-        await db.cashDrawerEntry.deleteMany({
-          where: { note: { contains: orderNumber } },
-        });
-      }
-      await db.auditEvent.deleteMany({
-        where: {
-          OR: [
-            { entityId: orderId },
-            ...(paymentEventId ? [{ entityId: paymentEventId }] : []),
-          ],
-        },
-      });
-      await db.kdsOutboxEvent.deleteMany({
-        where: { payload: { path: ["orderId"], equals: orderId } },
-      });
-      await db.order.deleteMany({ where: { id: orderId } });
-    }
-    if (itemId) {
-      await db.auditEvent.deleteMany({ where: { entityId: itemId } });
-      await db.menuItem.deleteMany({ where: { id: itemId } });
-    }
+    // Payment events are intentionally immutable. The integration database is
+    // disposable, so this test leaves its uniquely named financial graph in
+    // place instead of weakening the ledger with a cleanup bypass.
     for (const rule of originalRules) {
       await db.dynamicPricing.update({
         where: { id: rule.id },

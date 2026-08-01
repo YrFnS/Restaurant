@@ -9,7 +9,6 @@ import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 import {
   CashRegisterError,
   linkCashEntryToSession,
-  linkPaymentEventToSession,
   lockOpenRegisterSession,
   readCurrentRegisterSession,
   readPaymentRegisterLink,
@@ -294,6 +293,7 @@ export async function POST(req: NextRequest) {
           currency: settings?.currency || "USD",
           actorId: auth.session.id,
           actorName: auth.session.name,
+          registerSessionId: registerContext.session.id,
           metadata: {
             orderNumber: existing.orderNumber,
             tableId: existing.tableId,
@@ -304,11 +304,6 @@ export async function POST(req: NextRequest) {
         },
         select: paymentEventSelect,
       });
-      await linkPaymentEventToSession(
-        tx,
-        paymentEvent.id,
-        registerContext.session.id
-      );
 
       if (existing.tableId) {
         await tx.restaurantTable.update({

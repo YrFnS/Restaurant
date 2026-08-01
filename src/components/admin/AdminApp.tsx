@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, RotateCcw } from "lucide-react";
 import { useRestaurantStore } from "@/lib/store";
 import { useI18n } from "@/lib/i18n";
 import { AdminLogin } from "./AdminLogin";
@@ -17,6 +18,8 @@ export interface AuthenticatedStaffUser {
 interface AuthSessionResponse {
   user: AuthenticatedStaffUser | null;
 }
+
+const PAYMENT_REVERSAL_ROLES = new Set(["owner", "admin", "manager"]);
 
 export function AdminApp() {
   const { isRTL } = useI18n();
@@ -43,6 +46,9 @@ export function AdminApp() {
     }
   }, [sessionQuery.data, setStaff, clearStaff]);
 
+  const user = sessionQuery.data?.user || null;
+  const canReversePayments = PAYMENT_REVERSAL_ROLES.has(user?.role || "");
+
   return (
     <div
       dir={isRTL ? "rtl" : "ltr"}
@@ -67,8 +73,26 @@ export function AdminApp() {
             {isRTL ? "إعادة المحاولة" : "Try again"}
           </button>
         </div>
-      ) : sessionQuery.data?.user ? (
-        <AdminShell user={sessionQuery.data.user} />
+      ) : user ? (
+        <>
+          <AdminShell user={user} />
+          {canReversePayments && (
+            <Link
+              href="/admin/payment-reversals"
+              className="fixed z-40 bottom-5 end-5 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              aria-label={
+                isRTL
+                  ? "فتح إدارة استرجاع وإلغاء المدفوعات"
+                  : "Open payment refunds and voids"
+              }
+            >
+              <RotateCcw className="size-4" />
+              <span className="hidden sm:inline">
+                {isRTL ? "استرجاع المدفوعات" : "Payment reversals"}
+              </span>
+            </Link>
+          )}
+        </>
       ) : (
         <AdminLogin />
       )}
