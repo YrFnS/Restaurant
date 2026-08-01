@@ -1,0 +1,38 @@
+name: Apply reservation schema foundation
+
+on:
+  push:
+    branches:
+      - agent/p1-reservation-availability
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reservation-schema-foundation
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    if: ${{ github.event.head_commit.message != 'feat: map reservation availability schema' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-reservation-availability
+          fetch-depth: 0
+
+      - name: Apply deterministic schema and seed mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-reservation-schema-foundation.py
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prisma/schema.prisma prisma/seed.ts tests/security/route-read-inventory.test.ts
+          if git diff --cached --quiet; then
+            echo "Reservation schema mapping already applied."
+            exit 0
+          fi
+          git commit -m "feat: map reservation availability schema"
+          git push origin HEAD:agent/p1-reservation-availability
