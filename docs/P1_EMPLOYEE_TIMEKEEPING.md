@@ -182,4 +182,4 @@ The permanent validation jobs confirmed:
 
 ## Replay and reporting precision
 
-Replays must match the full normalized request payload for the original event or adjustment. Historical timesheet summaries include closed shifts only and aggregate raw seconds plus exact minor-unit labor costs before converting once for display.
+Replays must match the original normalized event or adjustment payload—the full normalized request payload for that operation. Historical timesheet summaries include closed shifts only and aggregate raw seconds plus exact minor-unit labor costs before converting once for display.
