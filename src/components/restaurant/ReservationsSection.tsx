@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -16,6 +16,8 @@ import {
   ArrowRight,
   CalendarDays,
   Clock,
+  Loader2,
+  RefreshCw,
   Trash2,
   Users,
   X,
@@ -30,6 +32,17 @@ const statusColors: Record<string, string> = {
   no_show: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
 };
 
+function dateInTimezone(timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const map = new Map(parts.map((part) => [part.type, part.value]));
+  return `${map.get("year")}-${map.get("month")}-${map.get("day")}`;
+}
+
 export function ReservationsSection() {
   const { t, isRTL, fmtDate, fmtTime } = useI18n();
   const {
@@ -42,19 +55,112 @@ export function ReservationsSection() {
   } = useRestaurantStore();
   const queryClient = useQueryClient();
   const Arrow = isRTL ? ArrowRight : ArrowLeft;
+  const idempotencyKey = useRef<string | null>(null);
 
   const [form, setForm] = useState({
     name: customerName || "",
     phone: customerPhone || "",
     email: "",
     partySize: 2,
-    date: new Date().toISOString().split("T")[0],
-    time: "19:00",
+    date: "",
+    time: "",
     occasion: "",
     preference: "",
     notes: "",
   });
   const [submitting, setSubmitting] = useState(false);
+
+  const settingsQuery = useQuery({
+    queryKey: ["reservation-public-settings"],
+    queryFn: async () => {
+      const response = await fetch("/api/settings");
+      const data = await response.json();
+      if (!response.ok || !data?.settings) throw new Error(t.common.error);
+      return data.settings as { timezone?: string };
+    },
+    staleTime: 5 * 60_000,
+  });
+  const timezone = settingsQuery.data?.timezone || "UTC";
+
+  useEffect(() => {
+    if (!settingsQuery.data || form.date) return;
+    setForm((current) => ({
+      ...current,
+      date: dateInTimezone(timezone),
+    }));
+  }, [form.date, settingsQuery.data, timezone]);
+
+  const availabilityQuery = useQuery({
+    queryKey: [
+      "reservation-availability",
+      form.date,
+      form.partySize,
+      form.preference,
+    ],
+    enabled: Boolean(form.date),
+    retry: false,
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        date: form.date,
+        partySize: String(form.partySize),
+      });
+      if (form.preference) params.set("preference", form.preference);
+      const response = await fetch(`/api/reservations/availability?${params}`);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const error = new Error(data?.error || t.common.error) as Error & {
+          details?: Record<string, string>;
+        };
+        error.details = data?.details;
+        throw error;
+      }
+      return data as {
+        timezone: string;
+        policy: {
+          earliestDate: string;
+          latestDate: string;
+          minPartySize: number;
+          maxPartySize: number;
+          defaultDurationMinutes: number;
+        };
+        slots: Array<{
+          date: string;
+          time: string;
+          startsAt: string;
+          endsAt: string;
+          releaseAt: string;
+          availableTableCount: number;
+          bestCapacity: number;
+        }>;
+      };
+    },
+  });
+  const availability = availabilityQuery.data;
+  const slots = availability?.slots || [];
+
+  useEffect(() => {
+    if (!slots.length) {
+      if (form.time) setForm((current) => ({ ...current, time: "" }));
+      return;
+    }
+    if (!slots.some((slot) => slot.time === form.time)) {
+      setForm((current) => ({ ...current, time: slots[0].time }));
+    }
+  }, [form.time, slots]);
+
+  useEffect(() => {
+    idempotencyKey.current = null;
+  }, [
+    form.name,
+    form.phone,
+    form.email,
+    form.partySize,
+    form.date,
+    form.time,
+    form.occasion,
+    form.preference,
+    form.notes,
+  ]);
 
   const credentialsFingerprint = useMemo(
     () => JSON.stringify(recentReservations),
@@ -71,29 +177,12 @@ export function ReservationsSection() {
         body: JSON.stringify({ reservations: recentReservations }),
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(data?.error || t.common.error);
-      }
+      if (!response.ok) throw new Error(data?.error || t.common.error);
       return data;
     },
   });
   const reservations: any[] = reservationsQuery.data?.reservations || [];
 
-  const times = [
-    "12:00",
-    "12:30",
-    "13:00",
-    "13:30",
-    "14:00",
-    "18:00",
-    "18:30",
-    "19:00",
-    "19:30",
-    "20:00",
-    "20:30",
-    "21:00",
-    "21:30",
-  ];
   const occasions = [
     { id: "casual", label: t.reservations.occasionCasual },
     { id: "birthday", label: t.reservations.occasionBirthday },
@@ -108,28 +197,27 @@ export function ReservationsSection() {
   ];
 
   const submit = async () => {
-    if (!form.name || !form.phone) {
-      toast.error(t.reservations.yourName);
-      return;
-    }
-
-    const localDateTime = new Date(`${form.date}T${form.time}:00`);
-    if (Number.isNaN(localDateTime.getTime())) {
-      toast.error(t.common.error);
+    if (!form.name || !form.phone || !form.date || !form.time) {
+      toast.error(isRTL ? "اختر بيانات الحجز والوقت المتاح" : "Complete the booking and select an available time");
       return;
     }
 
     setSubmitting(true);
+    idempotencyKey.current ||= crypto.randomUUID();
     try {
       const response = await fetch("/api/reservations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey.current,
+        },
         body: JSON.stringify({
           customerName: form.name,
           customerPhone: form.phone,
           customerEmail: form.email || null,
           partySize: form.partySize,
-          dateTime: localDateTime.toISOString(),
+          date: form.date,
+          time: form.time,
           occasion: form.occasion || null,
           preference: form.preference || null,
           notes: form.notes || null,
@@ -137,15 +225,19 @@ export function ReservationsSection() {
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.reservation || !data?.accessToken) {
+        if (response.status < 500) idempotencyKey.current = null;
         toast.error(data?.error || t.common.error);
+        await availabilityQuery.refetch();
         return;
       }
 
       rememberReservationAccess(data.reservation.id, data.accessToken);
+      idempotencyKey.current = null;
       toast.success(t.reservations.bookingConfirmed);
-      await queryClient.invalidateQueries({
-        queryKey: ["customer-reservations"],
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["customer-reservations"] }),
+        availabilityQuery.refetch(),
+      ]);
     } catch {
       toast.error(t.common.error);
     } finally {
@@ -163,25 +255,24 @@ export function ReservationsSection() {
     }
 
     try {
-      const response = await fetch(
-        `/api/reservations/${encodeURIComponent(id)}?token=${encodeURIComponent(
-          credential.accessToken
-        )}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "cancelled" }),
-        }
-      );
+      const response = await fetch(`/api/reservations/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${credential.accessToken}`,
+        },
+        body: JSON.stringify({ status: "cancelled" }),
+      });
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         toast.error(data?.error || t.common.error);
         return;
       }
       toast.success(t.reservations.statusCancelled);
-      await queryClient.invalidateQueries({
-        queryKey: ["customer-reservations"],
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["customer-reservations"] }),
+        availabilityQuery.refetch(),
+      ]);
     } catch {
       toast.error(t.common.error);
     }
@@ -190,11 +281,7 @@ export function ReservationsSection() {
   return (
     <div className="flex-1 max-w-5xl mx-auto w-full px-4 md:px-6 py-6">
       <div className="flex items-center gap-3 mb-6">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setActiveSection("home")}
-        >
+        <Button variant="ghost" size="icon" onClick={() => setActiveSection("home")}>
           <Arrow className="size-5" />
         </Button>
         <div>
@@ -202,9 +289,7 @@ export function ReservationsSection() {
             <CalendarDays className="size-6 text-primary" />
             {t.reservations.title}
           </h1>
-          <p className="text-sm text-muted-foreground">
-            {t.reservations.subtitle}
-          </p>
+          <p className="text-sm text-muted-foreground">{t.reservations.subtitle}</p>
         </div>
       </div>
 
@@ -212,176 +297,90 @@ export function ReservationsSection() {
         <Card>
           <CardContent className="p-5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground mb-1 block">
-                  {t.reservations.yourName}
-                </label>
-                <Input
-                  value={form.name}
-                  onChange={(event) =>
-                    setForm({ ...form, name: event.target.value })
-                  }
-                  dir="auto"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground mb-1 block">
-                  {t.reservations.phone}
-                </label>
-                <Input
-                  value={form.phone}
-                  onChange={(event) =>
-                    setForm({ ...form, phone: event.target.value })
-                  }
-                  dir="ltr"
-                />
-              </div>
+              <Field label={t.reservations.yourName}>
+                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} dir="auto" />
+              </Field>
+              <Field label={t.reservations.phone}>
+                <Input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} dir="ltr" />
+              </Field>
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1 block">
-                {t.reservations.email}
-              </label>
-              <Input
-                type="email"
-                value={form.email}
-                onChange={(event) =>
-                  setForm({ ...form, email: event.target.value })
-                }
-                dir="ltr"
-              />
-            </div>
+            <Field label={t.reservations.email}>
+              <Input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} dir="ltr" />
+            </Field>
 
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">
-                  <Users className="size-3" />
-                  {t.reservations.partySize}
-                </label>
-                <div className="flex items-center gap-1 border rounded-xl p-1 flex-wrap">
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((partySize) => (
-                    <button
-                      key={partySize}
-                      onClick={() => setForm({ ...form, partySize })}
-                      className={`size-9 rounded-lg text-sm font-medium transition-colors ${
-                        form.partySize === partySize
-                          ? "bg-primary text-primary-foreground"
-                          : "hover:bg-accent"
-                      }`}
-                    >
-                      {partySize}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground mb-1 block">
-                  {t.reservations.date}
-                </label>
+              <Field label={t.reservations.partySize} icon={<Users className="size-3" />}>
+                <Input
+                  type="number"
+                  min={availability?.policy.minPartySize || 1}
+                  max={availability?.policy.maxPartySize || 100}
+                  value={form.partySize}
+                  onChange={(event) =>
+                    setForm({ ...form, partySize: Math.max(1, Number(event.target.value) || 1) })
+                  }
+                />
+              </Field>
+              <Field label={t.reservations.date}>
                 <Input
                   type="date"
                   value={form.date}
-                  min={new Date().toISOString().split("T")[0]}
-                  onChange={(event) =>
-                    setForm({ ...form, date: event.target.value })
-                  }
+                  min={availability?.policy.earliestDate || dateInTimezone(timezone)}
+                  max={availability?.policy.latestDate}
+                  onChange={(event) => setForm({ ...form, date: event.target.value })}
                 />
-              </div>
+              </Field>
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">
-                <Clock className="size-3" />
-                {t.reservations.time}
+              <label className="text-xs font-semibold text-muted-foreground mb-2 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1"><Clock className="size-3" />{t.reservations.time}</span>
+                <span className="font-normal">{timezone}</span>
               </label>
-              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
-                {times.map((time) => (
-                  <button
-                    key={time}
-                    onClick={() => setForm({ ...form, time })}
-                    className={`py-2 rounded-lg text-xs font-medium transition-colors ${
-                      form.time === time
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-accent hover:bg-accent/70"
-                    }`}
-                  >
-                    {time}
-                  </button>
-                ))}
-              </div>
+              {availabilityQuery.isFetching ? (
+                <div className="h-24 flex items-center justify-center rounded-xl border border-dashed">
+                  <Loader2 className="size-5 animate-spin text-primary" />
+                </div>
+              ) : availabilityQuery.isError ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                  <p className="text-destructive mb-2">{availabilityQuery.error.message}</p>
+                  <Button size="sm" variant="outline" onClick={() => availabilityQuery.refetch()}>
+                    <RefreshCw className="size-3 me-1" />{isRTL ? "إعادة المحاولة" : "Retry"}
+                  </Button>
+                </div>
+              ) : slots.length === 0 ? (
+                <div className="rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
+                  {isRTL ? "لا توجد أوقات متاحة لهذا التاريخ وحجم المجموعة" : "No times are available for this date and party size"}
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-44 overflow-y-auto">
+                  {slots.map((slot) => (
+                    <button
+                      key={slot.startsAt}
+                      type="button"
+                      onClick={() => setForm({ ...form, time: slot.time })}
+                      className={`py-2 rounded-lg text-xs font-medium transition-colors ${
+                        form.time === slot.time
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-accent hover:bg-accent/70"
+                      }`}
+                    >
+                      <span className="block">{slot.time}</span>
+                      <span className="block text-[9px] opacity-70">
+                        {slot.availableTableCount} {isRTL ? "متاح" : "available"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1 block">
-                {t.reservations.occasion}
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {occasions.map((occasion) => (
-                  <button
-                    key={occasion.id}
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        occasion:
-                          form.occasion === occasion.id ? "" : occasion.id,
-                      })
-                    }
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium ${
-                      form.occasion === occasion.id
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-accent"
-                    }`}
-                  >
-                    {occasion.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <ChoiceGroup label={t.reservations.occasion} items={occasions} selected={form.occasion} onSelect={(occasion) => setForm({ ...form, occasion })} />
+            <ChoiceGroup label={t.reservations.preference} items={preferences} selected={form.preference} onSelect={(preference) => setForm({ ...form, preference })} />
 
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground mb-1 block">
-                {t.reservations.preference}
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {preferences.map((preference) => (
-                  <button
-                    key={preference.id}
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        preference:
-                          form.preference === preference.id
-                            ? ""
-                            : preference.id,
-                      })
-                    }
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium ${
-                      form.preference === preference.id
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-accent"
-                    }`}
-                  >
-                    {preference.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Textarea
-              placeholder={t.reservations.notesPlaceholder}
-              value={form.notes}
-              onChange={(event) =>
-                setForm({ ...form, notes: event.target.value })
-              }
-              rows={2}
-              dir="auto"
-            />
-            <Button
-              onClick={submit}
-              disabled={submitting}
-              className="w-full h-12 text-base gap-2"
-            >
-              <CalendarDays className="size-5" />
+            <Textarea placeholder={t.reservations.notesPlaceholder} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} rows={2} dir="auto" />
+            <Button onClick={submit} disabled={submitting || availabilityQuery.isFetching || !form.time} className="w-full h-12 text-base gap-2">
+              {submitting ? <Loader2 className="size-5 animate-spin" /> : <CalendarDays className="size-5" />}
               {submitting ? "..." : t.reservations.book}
             </Button>
           </CardContent>
@@ -389,93 +388,48 @@ export function ReservationsSection() {
 
         <div>
           <div className="flex items-center justify-between gap-2 mb-3">
-            <h2 className="font-bold text-lg">
-              {t.reservations.yourReservations}
-            </h2>
+            <h2 className="font-bold text-lg">{t.reservations.yourReservations}</h2>
             <span className="text-[11px] text-muted-foreground">
               {isRTL ? "محفوظة بأمان على هذا الجهاز" : "Securely saved on this device"}
             </span>
           </div>
 
           {reservationsQuery.isError && (
-            <Card className="mb-3">
-              <CardContent className="p-4 text-sm text-destructive">
-                {reservationsQuery.error instanceof Error
-                  ? reservationsQuery.error.message
-                  : t.common.error}
-              </CardContent>
-            </Card>
+            <Card className="mb-3"><CardContent className="p-4 text-sm text-destructive">{reservationsQuery.error.message}</CardContent></Card>
           )}
 
           {reservations.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="p-8 text-center text-muted-foreground">
-                <CalendarDays className="size-10 mx-auto mb-2 opacity-30" />
-                {t.reservations.noReservations}
-              </CardContent>
-            </Card>
+            <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground"><CalendarDays className="size-10 mx-auto mb-2 opacity-30" />{t.reservations.noReservations}</CardContent></Card>
           ) : (
             <div className="space-y-2">
               {reservations.map((reservation, index) => (
-                <motion.div
-                  key={reservation.id}
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
+                <motion.div key={reservation.id} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.05 }}>
                   <Card>
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-bold">
-                              {fmtDate(reservation.dateTime)}
-                            </span>
-                            <span className="text-sm text-muted-foreground">
-                              {fmtTime(reservation.dateTime)}
-                            </span>
+                            <span className="font-bold">{reservation.localDate || fmtDate(reservation.dateTime)}</span>
+                            <span className="text-sm text-muted-foreground">{reservation.localTime || fmtTime(reservation.dateTime)}–{reservation.localEndTime || fmtTime(reservation.endsAt)}</span>
                           </div>
                           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
-                            <Users className="size-3" />
-                            {reservation.partySize} {t.reservations.guests}
-                            {reservation.table && (
-                              <span>· {t.orders.table} {reservation.table.number}</span>
-                            )}
-                            {reservation.occasion && (
-                              <span>· {reservation.occasion}</span>
-                            )}
+                            <Users className="size-3" />{reservation.partySize} {t.reservations.guests}
+                            {reservation.table && <span>· {t.orders.table} {reservation.table.number}</span>}
+                            {reservation.occasion && <span>· {reservation.occasion}</span>}
                           </p>
                         </div>
                         <Badge className={statusColors[reservation.status] || ""}>
-                          {(t.reservations as any)[
-                            `status${reservation.status.charAt(0).toUpperCase()}${reservation.status.slice(1)}`
-                          ] || reservation.status}
+                          {(t.reservations as any)[`status${reservation.status.charAt(0).toUpperCase()}${reservation.status.slice(1)}`] || reservation.status}
                         </Badge>
                       </div>
                       <div className="flex items-center gap-2">
                         {reservation.status === "confirmed" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => cancel(reservation.id)}
-                            className="text-destructive text-xs gap-1"
-                          >
-                            <X className="size-3" />
-                            {t.reservations.cancel}
+                          <Button size="sm" variant="ghost" onClick={() => cancel(reservation.id)} className="text-destructive text-xs gap-1">
+                            <X className="size-3" />{t.reservations.cancel}
                           </Button>
                         )}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label={
-                            isRTL ? "إزالة من الجهاز" : "Remove from this device"
-                          }
-                          onClick={() =>
-                            forgetReservationAccess(reservation.id)
-                          }
-                          className="ms-auto size-8 text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="size-3.5" />
+                        <Button size="sm" variant="ghost" className="text-xs gap-1 ms-auto" onClick={() => forgetReservationAccess(reservation.id)}>
+                          <Trash2 className="size-3" />{isRTL ? "إخفاء" : "Hide"}
                         </Button>
                       </div>
                     </CardContent>
@@ -488,4 +442,12 @@ export function ReservationsSection() {
       </div>
     </div>
   );
+}
+
+function Field({ label, icon, children }: { label: React.ReactNode; icon?: React.ReactNode; children: React.ReactNode }) {
+  return <div><label className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">{icon}{label}</label>{children}</div>;
+}
+
+function ChoiceGroup({ label, items, selected, onSelect }: { label: React.ReactNode; items: Array<{ id: string; label: string }>; selected: string; onSelect: (value: string) => void }) {
+  return <div><label className="text-xs font-semibold text-muted-foreground mb-1 block">{label}</label><div className="flex flex-wrap gap-1.5">{items.map((item) => <button key={item.id} type="button" onClick={() => onSelect(selected === item.id ? "" : item.id)} className={`px-3 py-1.5 rounded-full text-xs font-medium ${selected === item.id ? "bg-primary text-primary-foreground" : "bg-accent"}`}>{item.label}</button>)}</div></div>;
 }
