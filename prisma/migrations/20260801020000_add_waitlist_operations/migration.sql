@@ -37,29 +37,32 @@ ALTER TABLE "WaitlistEntry"
   ADD COLUMN "cancelledAt" TIMESTAMPTZ(3),
   ADD COLUMN "noShowAt" TIMESTAMPTZ(3);
 
+-- The legacy model did not store table holds. A legacy `notified` row is
+-- therefore returned to `waiting` and recalculated rather than inventing a
+-- physical table assignment during migration.
 UPDATE "WaitlistEntry" AS entry
 SET
+  "status" = CASE
+    WHEN entry."status" = 'notified'
+      THEN 'waiting'::"WaitlistStatus"
+    ELSE entry."status"
+  END,
   "source" = 'import'::"ReservationSource",
   "estimatedSeatAt" =
     entry."createdAt" AT TIME ZONE 'UTC' +
     make_interval(mins => GREATEST(entry."estimatedWait", 0)),
   "estimateCalculatedAt" = entry."updatedAt" AT TIME ZONE 'UTC',
+  "seatedAt" = CASE
+    WHEN entry."status" = 'seated'
+      THEN COALESCE(entry."seatedAt", entry."updatedAt" AT TIME ZONE 'UTC')
+    ELSE entry."seatedAt"
+  END,
   "notifiedAt" = CASE
-    WHEN entry."status" = 'notified'
-      THEN COALESCE(entry."notifiedAt", entry."updatedAt" AT TIME ZONE 'UTC')
+    WHEN entry."status" = 'notified' THEN NULL
     ELSE entry."notifiedAt"
   END,
-  "notificationExpiresAt" = CASE
-    WHEN entry."status" = 'notified'
-      THEN COALESCE(entry."notifiedAt", entry."updatedAt" AT TIME ZONE 'UTC') +
-        make_interval(mins => settings."waitlistNotificationExpiryMinutes")
-    ELSE NULL
-  END,
-  "notificationConfirmedAt" = CASE
-    WHEN entry."status" = 'notified'
-      THEN COALESCE(entry."notifiedAt", entry."updatedAt" AT TIME ZONE 'UTC')
-    ELSE NULL
-  END,
+  "notificationExpiresAt" = NULL,
+  "notificationConfirmedAt" = NULL,
   "cancelledAt" = CASE
     WHEN entry."status" = 'cancelled'
       THEN entry."updatedAt" AT TIME ZONE 'UTC'
@@ -120,7 +123,10 @@ ALTER TABLE "WaitlistEntry"
       )
       AND (
         "status" <> 'seated'
-        OR ("tableId" IS NOT NULL AND "seatedAt" IS NOT NULL)
+        OR (
+          "seatedAt" IS NOT NULL
+          AND ("tableId" IS NOT NULL OR "source" = 'import')
+        )
       )
       AND ("status" <> 'cancelled' OR "cancelledAt" IS NOT NULL)
       AND ("status" <> 'no_show' OR "noShowAt" IS NOT NULL)
