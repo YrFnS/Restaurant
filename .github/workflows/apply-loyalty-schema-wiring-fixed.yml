@@ -1,0 +1,88 @@
+name: Apply fixed loyalty schema wiring
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-loyalty-schema-wiring-fixed
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ github.event.pull_request.head.ref == 'agent/p1-loyalty-gift-cards' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-loyalty-gift-cards
+          fetch-depth: 0
+
+      - name: Apply the corrected reviewed wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source_path = Path('.github/workflows/apply-loyalty-schema-wiring.yml')
+          source = source_path.read_text()
+          pattern = re.compile(
+              r"          schema = replace_once\(\n"
+              r"              schema,\n"
+              r"              '''  reversals         PaymentEvent\[\].*?"
+              r"              'payment event relations',\n"
+              r"          \)",
+              re.S,
+          )
+          replacement = '''          schema = replace_once(
+              schema,
+              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+\'\'\',
+              \'\'\'  reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+  loyaltyEvents    LoyaltyPointEvent[]
+  giftCardTransactions GiftCardTransaction[]
+\'\'\',
+              'payment event relations',
+          )'''
+          source, count = pattern.subn(replacement, source, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected one payment relation block, found {count}')
+          source_path.write_text(source)
+
+          lines = source.splitlines()
+          start = next(i for i, line in enumerate(lines) if "python3 - <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in lines[start:end]
+          ) + '\n'
+          Path('/tmp/apply-loyalty-schema-wiring.py').write_text(script)
+          PY
+
+          python3 /tmp/apply-loyalty-schema-wiring.py
+          rm -f \
+            .github/workflows/apply-loyalty-schema-wiring.yml \
+            .github/workflows/apply-loyalty-schema-wiring-pr.yml \
+            .github/workflows/apply-loyalty-schema-wiring-fixed.yml
+
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            prisma/schema.prisma \
+            prisma/seed.ts \
+            src/lib/db.ts \
+            src/lib/auth/roles.ts \
+            src/lib/auth/guard.ts \
+            src/app/api/settings/route.ts \
+            src/components/admin/tabs/SettingsTab.tsx \
+            .github/workflows/apply-loyalty-schema-wiring.yml \
+            .github/workflows/apply-loyalty-schema-wiring-pr.yml \
+            .github/workflows/apply-loyalty-schema-wiring-fixed.yml
+          git commit -m "feat: wire loyalty and gift-card schema"
+          git push origin HEAD:agent/p1-loyalty-gift-cards
