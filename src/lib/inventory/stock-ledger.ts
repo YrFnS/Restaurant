@@ -89,18 +89,36 @@ export function inventoryLedgerErrorFromDatabase(
   if (mapped) return mapped;
 
   const details = databaseErrorDetails(error);
+  const lowerDetails = details.toLowerCase();
   const duplicateReversal =
     details.includes("StockMovement_one_reversal_per_movement_idx") ||
-    details.includes("reversalOfId") &&
+    (details.includes("reversalOfId") &&
       (details.includes("23505") ||
         details.includes("P2010") ||
-        details.toLowerCase().includes("unique constraint"));
+        lowerDetails.includes("unique constraint")));
 
   if (duplicateReversal) {
     return new implementation.InventoryLedgerError(
       "This stock movement was already reversed",
       "STOCK_MOVEMENT_ALREADY_REVERSED",
       409
+    );
+  }
+
+  const retriableTransactionConflict =
+    details.includes("40P01") ||
+    details.includes("40001") ||
+    details.includes("P2034") ||
+    lowerDetails.includes("deadlock detected") ||
+    lowerDetails.includes("write conflict") ||
+    lowerDetails.includes("serialization failure");
+
+  if (retriableTransactionConflict) {
+    return new implementation.InventoryLedgerError(
+      "Stock changed concurrently; retry the movement",
+      "STOCK_TRANSACTION_RETRY_REQUIRED",
+      409,
+      { retryable: true }
     );
   }
 
