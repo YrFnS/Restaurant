@@ -11,56 +11,13 @@ on:
       - agent/p1-data-integrity
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: p0-validation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  apply-loyalty-wiring:
-    name: Apply reviewed loyalty wiring
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/p1-loyalty-gift-cards' }}
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out loyalty branch
-        uses: actions/checkout@v4
-        with:
-          ref: agent/p1-loyalty-gift-cards
-          fetch-depth: 0
-
-      - name: Apply permanent wiring and restore CI workflow
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/apply-loyalty-wiring-wrapper.py
-          git show origin/main:.github/workflows/p0-validation.yml > .github/workflows/p0-validation.yml
-          rm -f \
-            .github/workflows/apply-loyalty-schema-wiring.yml \
-            .github/workflows/apply-loyalty-schema-wiring-pr.yml \
-            .github/workflows/apply-loyalty-schema-wiring-fixed.yml \
-            docs/.loyalty-wiring-trigger \
-            scripts/apply-loyalty-wiring-wrapper.py
-
-          git config user.name "OpenAI Agent"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            prisma/schema.prisma \
-            prisma/seed.ts \
-            src/lib/db.ts \
-            src/lib/auth/roles.ts \
-            src/lib/auth/guard.ts \
-            src/app/api/settings/route.ts \
-            src/components/admin/tabs/SettingsTab.tsx \
-            .github/workflows/p0-validation.yml \
-            .github/workflows/apply-loyalty-schema-wiring.yml \
-            .github/workflows/apply-loyalty-schema-wiring-pr.yml \
-            .github/workflows/apply-loyalty-schema-wiring-fixed.yml \
-            docs/.loyalty-wiring-trigger \
-            scripts/apply-loyalty-wiring-wrapper.py
-          git commit -m "feat: wire loyalty and gift-card schema"
-          git push origin HEAD:agent/p1-loyalty-gift-cards
-
   validate:
     name: Typecheck, tests, lint, and build
     runs-on: ubuntu-latest

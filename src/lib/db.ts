@@ -32,6 +32,10 @@ export const exactFinancialFieldOmit = {
     amountMinor: true,
     balanceMinor: true,
   },
+  giftCardTransaction: {
+    amountMinor: true,
+    balanceAfterMinor: true,
+  },
   employee: { hourlyWageMinor: true },
   employeeShift: {
     hourlyWageMinor: true,

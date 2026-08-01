@@ -1,6 +1,9 @@
 import {
   CashMovementType,
   DynamicPricingType,
+  GiftCardStatus,
+  GiftCardTransactionType,
+  LoyaltyPointEventType,
   KdsLayoutType,
   KdsScreenType,
   OrderItemStatus,
@@ -17,7 +20,7 @@ import {
   TableStatus,
   WaitlistStatus,
 } from "@prisma/client";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
 const db = new PrismaClient();
 
@@ -32,7 +35,7 @@ async function main() {
   console.log("🌱 Seeding database...");
 
   const tables = [
-    "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",
+    "LoyaltyPointEvent", "GiftCardTransaction", "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",
     "PurchaseReceiptLine", "PurchaseReceipt", "PurchaseOrderLine",
     "ReservationClosure", "ReservationServicePeriod",
     "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",
@@ -268,7 +271,28 @@ async function main() {
     { name: "Yusuf Ibrahim", phone: "+9647505555555", email: "yusuf@email.com", loyaltyPoints: 150, totalSpent: 75, visits: 3, notes: "First-time visitor" },
   ];
   const custMap: Record<string, string> = {};
-  for (const c of custs) { const r = await db.customer.create({ data: c }); custMap[c.phone] = r.id; }
+  for (const c of custs) {
+    const r = await db.customer.create({
+      data: { ...c, loyaltyPoints: 0 },
+    });
+    custMap[c.phone] = r.id;
+    if (c.loyaltyPoints > 0) {
+      await db.loyaltyPointEvent.create({
+        data: {
+id: `seed_loyalty_${uid()}`,
+idempotencyKey: `seed-loyalty-opening:${r.id}`,
+customerId: r.id,
+eventType: LoyaltyPointEventType.opening_balance,
+pointsDelta: c.loyaltyPoints,
+actorName: "Seed",
+actorRole: "system",
+reasonCode: "seed_opening_balance",
+reason: "Seeded opening loyalty balance",
+metadata: { seed: true },
+        },
+      });
+    }
+  }
   console.log(`  ✓ ${custs.length} customers`);
 
   // ── 9. RESERVATIONS ──
@@ -431,12 +455,48 @@ async function main() {
 
   // ── 15. GIFT CARDS ──
   const gcData = [
-    { code: `GC-${uid()}`, amount: 50, balance: 50, purchaserName: "Ahmed Khalil", recipientName: "Fatima Ali", message: "Happy Birthday!", template: "birthday" },
-    { code: `GC-${uid()}`, amount: 100, balance: 75, purchaserName: "Omar Hassan", recipientName: "Layla Mahmoud", message: "Thank you for your business", template: "thank_you" },
-    { code: `GC-${uid()}`, amount: 25, balance: 25, purchaserName: "John Smith", recipientName: "Sara Nabil", message: "", template: "classic" },
+    { reference: `GC-${uid()}`, secret: `SEED-${uid()}-A1`, amount: 50, purchaserName: "Ahmed Khalil", recipientName: "Fatima Ali", message: "Happy Birthday!", template: "birthday" },
+    { reference: `GC-${uid()}`, secret: `SEED-${uid()}-B2`, amount: 100, purchaserName: "Omar Hassan", recipientName: "Layla Mahmoud", message: "Thank you for your business", template: "thank_you" },
+    { reference: `GC-${uid()}`, secret: `SEED-${uid()}-C3`, amount: 25, purchaserName: "John Smith", recipientName: "Sara Nabil", message: "", template: "classic" },
   ];
-  for (const g of gcData) { await db.giftCard.create({ data: { ...g, isRedeemed: false } }); }
-  console.log(`  ✓ ${gcData.length} gift cards`);
+  for (const g of gcData) {
+    const normalized = g.secret.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    const card = await db.giftCard.create({
+      data: {
+        code: g.reference,
+        redemptionCodeHash: createHash("sha256").update(normalized).digest("hex"),
+        redemptionCodeLast4: normalized.slice(-4),
+        amount: g.amount,
+        amountMinor: minor(g.amount),
+        balance: 0,
+        balanceMinor: 0n,
+        purchaserName: g.purchaserName,
+        recipientName: g.recipientName,
+        message: g.message,
+        template: g.template,
+        status: GiftCardStatus.active,
+        currency: "USD",
+        isRedeemed: false,
+        issuedAt: new Date(),
+        issuedByName: "Seed",
+      },
+    });
+    await db.giftCardTransaction.create({
+      data: {
+        id: `seed_gift_tx_${uid()}`,
+        idempotencyKey: `seed-gift-card-issue:${card.id}`,
+        giftCardId: card.id,
+        transactionType: GiftCardTransactionType.issue,
+        amountMinor: minor(g.amount),
+        actorName: "Seed",
+        actorRole: "system",
+        reasonCode: "seed_issue",
+        reason: "Seeded gift-card issue",
+        metadata: { seed: true },
+      },
+    });
+  }
+  console.log(`  ✓ ${gcData.length} gift cards with immutable issue transactions`);
 
   // ── 16. TESTIMONIALS ──
   const testimonials = [
