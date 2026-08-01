@@ -148,7 +148,8 @@ describe("employee timekeeping source inventory", () => {
   test("keeps permanent integration and roadmap evidence", () => {
     expect(packageJson).toContain("bun tests/integration/p1-employee-timekeeping.ts");
     expect(roadmap).toContain("P1-B02 Employee timekeeping");
-    expect(roadmap).toContain("agent/p1-employee-timekeeping");
+    expect(roadmap).toContain("P1_EMPLOYEE_TIMEKEEPING.md");
+    expect(roadmap).toContain("P1 immutable employee timekeeping");
     expect(design).toContain("append-only");
     expect(design).toContain("operational-day boundary");
     expect(design).toContain("signed time adjustments");
