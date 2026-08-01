@@ -67,7 +67,34 @@ export async function GET(req: NextRequest) {
 
   try {
     const availability = await listReservationAvailability(parsed.data);
-    return NextResponse.json(availability, {
+    const publicAvailability = {
+      date: availability.date,
+      partySize: availability.partySize,
+      timezone: availability.timezone,
+      policy: {
+        minNoticeMinutes: availability.policy.minNoticeMinutes,
+        maxAdvanceDays: availability.policy.maxAdvanceDays,
+        defaultDurationMinutes: availability.policy.defaultDurationMinutes,
+        turnoverMinutes: availability.policy.turnoverMinutes,
+        slotIntervalMinutes: availability.policy.slotIntervalMinutes,
+        minPartySize: availability.policy.minPartySize,
+        maxPartySize: availability.policy.maxPartySize,
+        customerCancelCutoffMinutes:
+          availability.policy.customerCancelCutoffMinutes,
+        earliestDate: availability.policy.earliestDate,
+        latestDate: availability.policy.latestDate,
+      },
+      slots: availability.slots.map((slot) => ({
+        date: slot.date,
+        time: slot.time,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        releaseAt: slot.releaseAt,
+        availableTableCount: slot.availableTableCount,
+        bestCapacity: slot.bestCapacity,
+      })),
+    };
+    return NextResponse.json(publicAvailability, {
       headers: rateLimitHeaders(availabilityLimit),
     });
   } catch (error) {
