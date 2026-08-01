@@ -75,8 +75,19 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const card = await lookupGiftCard(db, parsed.code);
     return noStore(
-      { card: await lookupGiftCard(db, parsed.code) },
+      {
+        card: {
+          reference: card.reference,
+          codeLast4: card.codeLast4,
+          maskedCode: card.maskedCode,
+          balance: card.balance,
+          status: card.status,
+          currency: card.currency,
+          expiresAt: card.expiresAt,
+        },
+      },
       200,
       rateLimitHeaders(limit)
     );
