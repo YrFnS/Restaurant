@@ -9,6 +9,9 @@ function source(path: string): string {
 const migration = source(
   "prisma/migrations/20260801030000_add_loyalty_gift_card_ledgers/migration.sql"
 );
+const guardMigration = source(
+  "prisma/migrations/20260801030001_guard_loyalty_customer_cache/migration.sql"
+);
 const schema = source("prisma/schema.prisma");
 const dbSource = source("src/lib/db.ts");
 const roles = source("src/lib/auth/roles.ts");
@@ -29,13 +32,23 @@ describe("loyalty and gift-card source inventory", () => {
       'CREATE TYPE "GiftCardTransactionType"',
       'CREATE TABLE "LoyaltyPointEvent"',
       'CREATE TABLE "GiftCardTransaction"',
-      '"redemptionCodeHash" TEXT NOT NULL',
-      'protect_loyalty_point_event_ledger',
-      'protect_gift_card_transaction_ledger',
-      'guard_customer_loyalty_cache',
-      'validate_gift_card_transaction',
+      'ALTER COLUMN "redemptionCodeHash" SET NOT NULL',
+      'apply_loyalty_point_event_insert',
+      'protect_loyalty_point_event',
+      'apply_gift_card_transaction_insert',
+      'protect_gift_card_transaction',
+      'protect_gift_card_financial_fields',
     ]) {
       expect(migration).toContain(marker);
+    }
+
+    for (const marker of [
+      'guard_customer_loyalty_cache',
+      'Customer_loyalty_cache_guard',
+      "app.loyalty_ledger_write",
+      "Customer loyalty balance is ledger-controlled",
+    ]) {
+      expect(guardMigration).toContain(marker);
     }
   });
 
@@ -119,7 +132,7 @@ describe("loyalty and gift-card source inventory", () => {
     expect(design).toContain("append-only");
     expect(design).toContain("negative");
     expect(design).toContain("SHA-256");
-    expect(design).toContain("Split tender");
+    expect(design).toContain("gift-card-plus-cash checkout");
     expect(design).toContain("representative existing-data adoption");
   });
 });
