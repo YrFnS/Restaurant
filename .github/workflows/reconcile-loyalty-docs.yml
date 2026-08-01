@@ -1,0 +1,127 @@
+name: Reconcile validated loyalty milestone
+
+on:
+  push:
+    branches:
+      - agent/p1-loyalty-gift-cards
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reconcile-validated-loyalty-docs
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: ${{ github.event.head_commit.message != 'docs: reconcile validated loyalty milestone' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-loyalty-gift-cards
+          fetch-depth: 0
+
+      - name: Update permanent milestone evidence and remove this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one marker, found {count}")
+              return text.replace(old, new, 1)
+
+          design_path = Path('docs/P1_LOYALTY_GIFT_CARDS.md')
+          design = design_path.read_text()
+          design = replace_once(
+              design,
+              '> **Status:** implementation in progress  ',
+              '> **Status:** completed and validated  ',
+              'design status',
+          )
+          design = replace_once(
+              design,
+              '> **Scope:** trusted earning, checkout redemption, refund reconciliation, immutable loyalty history, exact gift-card balances, private redemption credentials, and bilingual operations\n',
+              '> **Scope:** trusted earning, checkout redemption, refund reconciliation, immutable loyalty history, exact gift-card balances, private redemption credentials, and bilingual operations  \n> **Validated implementation head:** `ec659035f51598c36d1aebb041096e9c1328c05b`  \n> **Evidence:** P0 Validation #1084 and P0 Integration #930\n',
+              'design evidence',
+          )
+          design = replace_once(
+              design,
+              '## Validation gate\n\nThis slice is complete only when all of the following pass:',
+              '## Validation result\n\nThe implementation checkpoint `ec659035f51598c36d1aebb041096e9c1328c05b` passed P0 Validation #1084 and P0 Integration #930. The permanent gates covered locked installation, Prisma validation and generation, strict TypeScript, source/security inventories, ESLint, production build, clean PostgreSQL deployment, complete P0/P1 regression, the dedicated loyalty/gift-card suite, and representative existing-data adoption.\n\nCompleted evidence:',
+              'design validation heading',
+          )
+          design_path.write_text(design)
+
+          roadmap_path = Path('docs/REMEDIATION_PLAN.md')
+          roadmap = roadmap_path.read_text()
+          roadmap = replace_once(
+              roadmap,
+              '> **Tracking branch:** `agent/p1-waitlist-capacity`  ',
+              '> **Tracking branch:** `agent/p1-loyalty-gift-cards`  ',
+              'roadmap branch',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '> **Base:** consolidated `main` at `9c6ccb3e02896f47a3ae04b2ad8cbf6579e9f4b8`  ',
+              '> **Base:** consolidated `main` at waitlist merge `cb65546b9b2216b7dd82ce20a0cf170a1d7e387a`  ',
+              'roadmap base',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '> **Current milestone:** P1 loyalty, gift cards, and remaining operational workflows  ',
+              '> **Current milestone:** P1 revenue analytics and remaining operational workflows  ',
+              'roadmap milestone',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '- [`P1_WAITLIST_OPERATIONS.md`](./P1_WAITLIST_OPERATIONS.md)\n',
+              '- [`P1_WAITLIST_OPERATIONS.md`](./P1_WAITLIST_OPERATIONS.md)\n- [`P1_LOYALTY_GIFT_CARDS.md`](./P1_LOYALTY_GIFT_CARDS.md)\n',
+              'roadmap design link',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '| P1-B08 | Loyalty and gift-card ledgers | Open — recommended next slice |',
+              '| P1-B08 | Loyalty and gift-card ledgers | Completed and validated |',
+              'roadmap summary',
+          )
+          roadmap = replace_once(
+              roadmap,
+              'PRs #1–#8 were merged into `main` in dependency order. The waitlist slice branches directly from the merged reservation foundation:\n\n```text\nmain @ 9c6ccb3e02896f47a3ae04b2ad8cbf6579e9f4b8\n└── agent/p1-waitlist-capacity  (PR #10)\n```',
+              'PRs #1–#10 were merged into `main` in dependency order. The loyalty and gift-card slice branches directly from the merged waitlist foundation:\n\n```text\nmain @ cb65546b9b2216b7dd82ce20a0cf170a1d7e387a\n└── agent/p1-loyalty-gift-cards  (PR #12)\n```',
+              'roadmap branch history',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '| P1 capacity-aware waitlist operations | PR #10 final head | Permanent P0 Validation and P0 Integration gates |\n',
+              '| P1 capacity-aware waitlist operations | merged through PR #10 | P0 Validation #929 and P0 Integration #759 |\n| P1 loyalty and gift-card ledgers | `ec659035f51598c36d1aebb041096e9c1328c05b` | P0 Validation #1084 and P0 Integration #930 |\n',
+              'roadmap checkpoint',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '- [ ] Resolve gift cards, combo meals, customer lifetime spend, special offers, promo administration, and remaining analytics reads before contract migration.\n- [ ] Add loyalty and gift-card domain constraints together with their complete ledgers.',
+              '- [ ] Resolve combo meals, remaining customer lifetime-spend compatibility, special offers, promo administration, and remaining analytics reads before contract migration.\n- [x] Add loyalty and gift-card domain constraints together with complete append-only ledgers.',
+              'roadmap contract work',
+          )
+          roadmap = replace_once(
+              roadmap,
+              '## P1-B08 Loyalty and gift cards — recommended next slice\n\n- [ ] Define earning, expiration, adjustment, and reversal policy from trusted payment events.\n- [ ] Add immutable loyalty-point transactions with idempotency and concurrency safety.\n- [ ] Reconcile points on refunds and voids without rewriting history.\n- [ ] Add concurrency-safe gift-card issue, redemption, refund, void, and adjustment ledger.\n- [ ] Add exact balances, audit evidence, ownership/lookup privacy, bilingual operator/customer workflows, and full database tests.',
+              '## P1-B08 Loyalty and gift cards\n\n- [x] Define trusted earning, redemption, adjustment, and reversal policy from successful payment events.\n- [x] Add immutable loyalty-point transactions with idempotency, payload binding, and concurrency safety.\n- [x] Reconcile earned and redeemed points on refunds and voids without rewriting history.\n- [x] Add concurrency-safe gift-card issue, redemption, refund, void, and adjustment transactions.\n- [x] Store exact balances and hash-only redemption credentials with one-time secret return.\n- [x] Support gift-card-only and gift-card-plus-cash checkout with tender-aware reversals.\n- [x] Add manager authorization, audit evidence, privacy-safe public lookup, and bilingual operator/customer workflows.\n- [x] Add additive migrations, permanent source inventories, dedicated database integration, and existing-data adoption.\n\nDeferred:\n\n- [ ] Loyalty expiration buckets, promotional multipliers, and automated tier progression.\n- [ ] Online processor-funded gift-card purchase, transfer/replacement, offline redemption, and provider delivery.\n- [ ] Item-level refund allocation and broader card-processor or multi-card split tender.\n- [ ] Multi-branch liability scoping and destructive removal of compatibility balance fields.',
+              'roadmap loyalty section',
+          )
+          roadmap_path.write_text(roadmap)
+          PY
+
+          rm .github/workflows/reconcile-loyalty-docs.yml
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            docs/P1_LOYALTY_GIFT_CARDS.md \
+            docs/REMEDIATION_PLAN.md \
+            .github/workflows/reconcile-loyalty-docs.yml
+          git commit -m "docs: reconcile validated loyalty milestone"
+          git push origin HEAD:agent/p1-loyalty-gift-cards
