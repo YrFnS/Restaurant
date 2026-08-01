@@ -99,6 +99,21 @@ const SPECIAL_READ_POLICIES: Record<string, ReadPolicy> = {
     markers: ["isActive: true", "select: {"],
     forbidden: [/\bcustomer\b/i, /\bemail\b/i, /\bphone\b/i],
   },
+  "GET /api/reservations/availability": {
+    markers: [
+      "availabilityQuerySchema",
+      "reservation-availability",
+      "consumeRateLimit",
+      "listReservationAvailability",
+      "availableTableCount",
+    ],
+    forbidden: [
+      /\bcustomerPhone\b/i,
+      /\bcustomerEmail\b/i,
+      /\btableId\b/i,
+      /\btokenHash\b/i,
+    ],
+  },
   "GET /api/settings": {
     markers: ["restaurantSettings.findFirst", 'where: { id: "1" }'],
     forbidden: [/process\.env/i, /\bpin(?:Hash|Verifier)?\b/i, /\btokenHash\b/i],
