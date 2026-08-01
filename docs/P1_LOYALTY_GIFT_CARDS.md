@@ -3,8 +3,10 @@
 > **Repository:** `YrFnS/Restaurant`  
 > **Branch:** `agent/p1-loyalty-gift-cards`  
 > **Base:** merged waitlist foundation on `main`  
-> **Status:** implementation in progress  
-> **Scope:** trusted earning, checkout redemption, refund reconciliation, immutable loyalty history, exact gift-card balances, private redemption credentials, and bilingual operations
+> **Status:** completed and validated  
+> **Scope:** trusted earning, checkout redemption, refund reconciliation, immutable loyalty history, exact gift-card balances, private redemption credentials, and bilingual operations  
+> **Validated implementation head:** `ec659035f51598c36d1aebb041096e9c1328c05b`  
+> **Evidence:** P0 Validation #1084 and P0 Integration #930
 
 ## Purpose
 
@@ -181,9 +183,11 @@ The POS payment dialog provides:
 - recalculated amount due, cash tender, and change;
 - receipt summary for loyalty and gift-card effects.
 
-## Validation gate
+## Validation result
 
-This slice is complete only when all of the following pass:
+The implementation checkpoint `ec659035f51598c36d1aebb041096e9c1328c05b` passed P0 Validation #1084 and P0 Integration #930. The permanent gates covered locked installation, Prisma validation and generation, strict TypeScript, source/security inventories, ESLint, production build, clean PostgreSQL deployment, complete P0/P1 regression, the dedicated loyalty/gift-card suite, and representative existing-data adoption.
+
+Completed evidence:
 
 - clean migration deployment and representative existing-data adoption;
 - Prisma mappings and BigInt omission policy;
