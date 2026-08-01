@@ -111,11 +111,18 @@ describe("cash-register session source inventory", () => {
       "registerSessionId",
     ]) {
       expect(cashRoute).toContain(marker);
+    }
+
+    for (const marker of [
+      "lockOpenRegisterSession",
+      "if (plan.cashAmountMinor > 0n)",
+      "amountMinor: plan.cashAmountMinor",
+      "registerSessionId: registerContext.session.id",
+    ]) {
       expect(checkoutRoute).toContain(marker);
     }
-    expect(checkoutRoute).toContain(
-      "registerSessionId: registerContext.session.id"
-    );
+
+    expect(checkoutRoute).not.toContain("linkCashEntryToSession");
     expect(checkoutRoute).not.toContain("linkPaymentEventToSession");
     expect(checkoutRoute).toContain("allowLegacyFallback: true");
     expect(cashRoute).not.toContain("allowLegacyFallback: true");
