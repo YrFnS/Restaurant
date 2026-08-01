@@ -70,7 +70,7 @@ async function main() {
 
   const auditCount = await db.auditEvent.count({
     where: {
-      action: "payment.cash.capture",
+      action: "order.payment.capture",
       entityType: "PaymentEvent",
       entityId: latest.id,
     },

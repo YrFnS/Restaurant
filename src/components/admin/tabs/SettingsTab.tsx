@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import {
   Store, Phone, Mail, MapPin, Clock, DollarSign, Image as ImageIcon,
   Share2, BarChart3, ChefHat, Save, Loader2, Volume2, Facebook,
-  Instagram, Twitter, MessageCircle,
+  Instagram, Twitter, MessageCircle, Gift,
 } from "lucide-react";
 
 function minutesToClock(value: unknown): string {
@@ -83,7 +83,8 @@ function SettingsForm({ initial }: { initial: any }) {
           <TabsTrigger value="contact" className="gap-1.5"><Phone className="size-3.5" />{isRTL ? "اتصال" : "Contact"}</TabsTrigger>
           <TabsTrigger value="hours" className="gap-1.5"><Clock className="size-3.5" />{isRTL ? "ساعات" : "Hours"}</TabsTrigger>
           <TabsTrigger value="fees" className="gap-1.5"><DollarSign className="size-3.5" />{isRTL ? "رسوم" : "Fees"}</TabsTrigger>
-          <TabsTrigger value="social" className="gap-1.5"><Share2 className="size-3.5" />{isRTL ? "تواصل" : "Social"}</TabsTrigger>
+          <TabsTrigger value="loyalty" className="gap-1.5"><Gift className="size-3.5" />{isRTL ? "الولاء" : "Loyalty"}</TabsTrigger>
+<TabsTrigger value="social" className="gap-1.5"><Share2 className="size-3.5" />{isRTL ? "تواصل" : "Social"}</TabsTrigger>
           <TabsTrigger value="stats" className="gap-1.5"><BarChart3 className="size-3.5" />{isRTL ? "إحصاءات" : "Stats"}</TabsTrigger>
           <TabsTrigger value="kds" className="gap-1.5"><ChefHat className="size-3.5" />{isRTL ? "المطبخ" : "KDS"}</TabsTrigger>
         </TabsList>
@@ -164,6 +165,35 @@ function SettingsForm({ initial }: { initial: any }) {
               <Field label={isRTL ? "مبالغ بطاقات الهدايا" : "Gift Card Amounts"} value={form.giftCardAmounts} onChange={(v) => set("giftCardAmounts", v)} dir="ltr" />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        
+        {/* LOYALTY & GIFT CARDS */}
+        <TabsContent value="loyalty" className="mt-4">
+<Card className="border-border/60">
+  <CardHeader><CardTitle className="text-base flex items-center gap-2"><Gift className="size-4 text-primary" />{isRTL ? "سياسة الولاء وبطاقات الهدايا" : "Loyalty & Gift-Card Policy"}</CardTitle></CardHeader>
+  <CardContent className="space-y-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border p-3">
+      <ToggleRow label={isRTL ? "تفعيل برنامج الولاء" : "Enable loyalty program"} checked={Boolean(form.loyaltyEnabled)} onChange={(v) => set("loyaltyEnabled", v)} />
+      <ToggleRow label={isRTL ? "تفعيل بطاقات الهدايا" : "Enable gift cards"} checked={Boolean(form.giftCardEnabled)} onChange={(v) => set("giftCardEnabled", v)} />
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      <Field label={isRTL ? "نقاط لكل وحدة عملة" : "Points per currency unit"} value={String(form.loyaltyPointsPerCurrencyUnit ?? 1)} onChange={(v) => set("loyaltyPointsPerCurrencyUnit", parseInt(v) || 0)} dir="ltr" type="number" />
+      <Field label={isRTL ? "نقاط مقابل وحدة خصم" : "Points per redeemed currency unit"} value={String(form.loyaltyRedemptionPointsPerCurrencyUnit ?? 100)} onChange={(v) => set("loyaltyRedemptionPointsPerCurrencyUnit", parseInt(v) || 1)} dir="ltr" type="number" />
+      <Field label={isRTL ? "خطوة الاستبدال بالنقاط" : "Redemption point increment"} value={String(form.loyaltyRedemptionIncrementPoints ?? 100)} onChange={(v) => set("loyaltyRedemptionIncrementPoints", parseInt(v) || 1)} dir="ltr" type="number" />
+      <Field label={isRTL ? "أقصى نسبة استبدال" : "Maximum redemption percent"} value={String(form.loyaltyMaxRedemptionPercent ?? 100)} onChange={(v) => set("loyaltyMaxRedemptionPercent", parseInt(v) || 1)} dir="ltr" type="number" />
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <Field label={isRTL ? "انتهاء البطاقة الافتراضي بالأيام (0 = بدون انتهاء)" : "Default gift-card expiry days (0 = none)"} value={String(form.giftCardDefaultExpiryDays ?? 0)} onChange={(v) => set("giftCardDefaultExpiryDays", parseInt(v) || 0)} dir="ltr" type="number" />
+      <Field label={isRTL ? "قيم إصدار البطاقات المقترحة" : "Suggested gift-card issue amounts"} value={form.giftCardAmounts} onChange={(v) => set("giftCardAmounts", v)} dir="ltr" />
+    </div>
+    <p className="text-xs text-muted-foreground">
+      {isRTL
+        ? "تُحتسب النقاط من المبلغ المؤهل بعد الخصم فقط. الضرائب والتوصيل والإكرامية لا تمنح نقاطاً. عمليات الاسترجاع تضيف حركات عكسية ولا تعيد كتابة السجل."
+        : "Points are earned from eligible merchandise after discounts. Tax, delivery, and tips do not earn points. Refunds append reversal events instead of rewriting history."}
+    </p>
+  </CardContent>
+</Card>
         </TabsContent>
 
         {/* FEES */}
@@ -372,6 +402,24 @@ function FieldArea({
           className={icon ? "ps-8" : ""}
         />
       </div>
+    </div>
+  );
+}
+
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/20 px-3 py-2.5">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
 }

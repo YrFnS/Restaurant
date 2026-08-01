@@ -1,11 +1,11 @@
 # Restaurant Production Remediation Plan
 
 > **Repository:** `YrFnS/Restaurant`  
-> **Tracking branch:** `agent/p1-waitlist-capacity`  
-> **Base:** consolidated `main` at `9c6ccb3e02896f47a3ae04b2ad8cbf6579e9f4b8`  
+> **Tracking branch:** `agent/p1-loyalty-gift-cards`  
+> **Base:** consolidated `main` at waitlist merge `cb65546b9b2216b7dd82ce20a0cf170a1d7e387a`  
 > **Created:** 2026-07-30  
-> **Last reconciled:** 2026-08-01  
-> **Current milestone:** P1 loyalty, gift cards, and remaining operational workflows  
+> **Last reconciled:** 2026-08-02  
+> **Current milestone:** P1 revenue analytics and remaining operational workflows  
 > **Automated/source gate:** **Complete for all implemented P0 and P1 slices**  
 > **Production release:** **Blocked by real-environment rehearsal, production configuration, independent review, and deployment smoke gates.**
 
@@ -21,6 +21,7 @@ This file is the current master status. Detailed design, policy, migration, and 
 - [`P1_EMPLOYEE_TIMEKEEPING.md`](./P1_EMPLOYEE_TIMEKEEPING.md)
 - [`P1_RESERVATION_AVAILABILITY.md`](./P1_RESERVATION_AVAILABILITY.md)
 - [`P1_WAITLIST_OPERATIONS.md`](./P1_WAITLIST_OPERATIONS.md)
+- [`P1_LOYALTY_GIFT_CARDS.md`](./P1_LOYALTY_GIFT_CARDS.md)
 
 ## Status notation
 
@@ -48,7 +49,7 @@ This file is the current master status. Detailed design, policy, migration, and 
 | P1-B05 | Waste through immutable stock movements | Core path complete; reporting and approvals open |
 | P1-B06 | Restaurant-local reservations and safe table allocation | Completed and validated |
 | P1-B07 | Capacity-aware waitlist, table holds, and guest lifecycle | Completed and validated |
-| P1-B08 | Loyalty and gift-card ledgers | Open — recommended next slice |
+| P1-B08 | Loyalty and gift-card ledgers | Completed and validated |
 | P1-C | KDS topology, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
 | P2 | UX, accessibility, SEO, observability, performance | Not started as a coordinated phase |
 
@@ -56,11 +57,11 @@ This file is the current master status. Detailed design, policy, migration, and 
 
 # Consolidated branch history
 
-PRs #1–#8 were merged into `main` in dependency order. The waitlist slice branches directly from the merged reservation foundation:
+PRs #1–#10 were merged into `main` in dependency order. The loyalty and gift-card slice branches directly from the merged waitlist foundation:
 
 ```text
-main @ 9c6ccb3e02896f47a3ae04b2ad8cbf6579e9f4b8
-└── agent/p1-waitlist-capacity  (PR #10)
+main @ cb65546b9b2216b7dd82ce20a0cf170a1d7e387a
+└── agent/p1-loyalty-gift-cards  (PR #12)
 ```
 
 Validated checkpoints:
@@ -75,7 +76,8 @@ Validated checkpoints:
 | P1 suppliers, purchase orders, and partial receiving | `0e0eab253ed43a42e2d0beb88da97ba8e9a3b633` | P1 Stacked Validation #53 |
 | P1 immutable employee timekeeping | `054b096a600782897ef1b6eaf6591326b50fbe58` | P1 Stacked Validation #83 |
 | P1 reservation availability and allocation | merged through PR #8 | P0 Validation #793 and P0 Integration #623 |
-| P1 capacity-aware waitlist operations | PR #10 final head | Permanent P0 Validation and P0 Integration gates |
+| P1 capacity-aware waitlist operations | merged through PR #10 | P0 Validation #929 and P0 Integration #759 |
+| P1 loyalty and gift-card ledgers | `ec659035f51598c36d1aebb041096e9c1328c05b` | P0 Validation #1084 and P0 Integration #930 |
 
 ---
 
@@ -126,11 +128,11 @@ Completed source criteria:
 
 ## Open contract work
 
-- [ ] Resolve gift cards, combo meals, customer lifetime spend, special offers, promo administration, and remaining analytics reads before contract migration.
-- [ ] Add loyalty and gift-card domain constraints together with their complete ledgers.
+- [ ] Resolve combo meals, remaining customer lifetime-spend compatibility, special offers, promo administration, and remaining analytics reads before contract migration.
+- [x] Add loyalty and gift-card domain constraints together with complete append-only ledgers.
 - [ ] Rehearse destructive contract migration against a protected production-like database copy.
 - [ ] Remove synchronization triggers and legacy financial `Float` columns only after all runtime dependencies are gone.
-- [ ] Define retention and anonymization policy for customer, session, rate-limit, outbox, payment, inventory, timekeeping, waitlist, and audit data.
+- [ ] Define retention and anonymization policy for customer, session, rate-limit, outbox, payment, inventory, timekeeping, waitlist, loyalty, gift-card, and audit data.
 - [ ] Decide whether multi-branch support is required and add scoping before expanding beyond one restaurant.
 
 ---
@@ -219,13 +221,23 @@ Deferred:
 - [ ] Customer party-size/preference editing after join.
 - [ ] Predictive machine-learning estimates, deposits, offline host synchronization, and multi-branch queues.
 
-## P1-B08 Loyalty and gift cards — recommended next slice
+## P1-B08 Loyalty and gift cards
 
-- [ ] Define earning, expiration, adjustment, and reversal policy from trusted payment events.
-- [ ] Add immutable loyalty-point transactions with idempotency and concurrency safety.
-- [ ] Reconcile points on refunds and voids without rewriting history.
-- [ ] Add concurrency-safe gift-card issue, redemption, refund, void, and adjustment ledger.
-- [ ] Add exact balances, audit evidence, ownership/lookup privacy, bilingual operator/customer workflows, and full database tests.
+- [x] Define trusted earning, redemption, adjustment, and reversal policy from successful payment events.
+- [x] Add immutable loyalty-point transactions with idempotency, payload binding, and concurrency safety.
+- [x] Reconcile earned and redeemed points on refunds and voids without rewriting history.
+- [x] Add concurrency-safe gift-card issue, redemption, refund, void, and adjustment transactions.
+- [x] Store exact balances and hash-only redemption credentials with one-time secret return.
+- [x] Support gift-card-only and gift-card-plus-cash checkout with tender-aware reversals.
+- [x] Add manager authorization, audit evidence, privacy-safe public lookup, and bilingual operator/customer workflows.
+- [x] Add additive migrations, permanent source inventories, dedicated database integration, and existing-data adoption.
+
+Deferred:
+
+- [ ] Loyalty expiration buckets, promotional multipliers, and automated tier progression.
+- [ ] Online processor-funded gift-card purchase, transfer/replacement, offline redemption, and provider delivery.
+- [ ] Item-level refund allocation and broader card-processor or multi-card split tender.
+- [ ] Multi-branch liability scoping and destructive removal of compatibility balance fields.
 
 ---
 
@@ -300,8 +312,9 @@ Deferred:
 - [x] Public reservation availability is aggregate-only; customer cancellation is ownership-token scoped and cutoff-controlled.
 - [x] Waitlist estimates simulate compatible table capacity, occupancy, reservation ranges, turnover, active holds, and parties ahead.
 - [x] A notified waitlist party receives one expiring compatible-table hold; confirmation, seating, cancellation, no-show, and expiry are transactional and audited.
+- [x] Loyalty earning, redemption, adjustment, and reversal are driven by successful payment events; expiration remains deferred until explicit FIFO buckets exist.
+- [x] Gift-card value is an exact append-only liability ledger with hash-only redemption credentials and tender-aware refunds.
 - [ ] Revenue-recognition policy.
-- [ ] Loyalty earning, expiration, and reversal policy.
 - [ ] Multi-branch requirement.
 - [ ] Final realtime topology and notification providers.
 - [ ] Production backup, restore, point-in-time recovery, and alert targets.
@@ -318,4 +331,5 @@ Deferred:
 | 2026-07-31 | Added exact inventory, versioned recipes, immutable stock movements, purchasing, receiving, and reviewed corrections. | P1 Stacked Validation #32 and #53 green. |
 | 2026-08-01 | Added immutable employee shifts, breaks, labor snapshots, corrections, and operational-day policy. | P1 Stacked Validation #83 green. |
 | 2026-08-01 | Added restaurant-local reservation policy, service periods, closures, safe availability, transactional allocation, lifecycle controls, and bilingual workflows. | P0 Validation #793 and P0 Integration #623 green. |
-| 2026-08-01 | Added capacity-aware wait estimates, expiring table holds, customer confirmation, transactional seating/release, bilingual customer/host workflows, authenticated expiry processing, privacy controls, and full regression coverage. | Permanent P0 Validation and P0 Integration gates green on PR #10. |
+| 2026-08-01 | Added capacity-aware wait estimates, expiring table holds, customer confirmation, transactional seating/release, bilingual customer/host workflows, authenticated expiry processing, privacy controls, and full regression coverage. | P0 Validation #929 and P0 Integration #759 green on PR #10. |
+| 2026-08-01 | Added immutable loyalty events, exact gift-card transactions, stored-value checkout, tender-aware reversals, privacy-safe lookup, and bilingual management/customer workflows. | P0 Validation #1084 and P0 Integration #930 green at `ec659035`. |

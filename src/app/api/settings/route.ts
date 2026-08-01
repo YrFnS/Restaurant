@@ -59,6 +59,13 @@ const settingsSchema = z
     twitterUrl: optionalLinkSchema,
     whatsappUrl: optionalLinkSchema,
     giftCardAmounts: z.string().trim().max(240),
+    loyaltyEnabled: z.boolean(),
+    loyaltyPointsPerCurrencyUnit: z.number().int().min(0).max(1_000_000),
+    loyaltyRedemptionPointsPerCurrencyUnit: z.number().int().min(1).max(1_000_000_000),
+    loyaltyRedemptionIncrementPoints: z.number().int().min(1).max(1_000_000_000),
+    loyaltyMaxRedemptionPercent: z.number().int().min(1).max(100),
+    giftCardEnabled: z.boolean(),
+    giftCardDefaultExpiryDays: z.number().int().min(0).max(36_500),
     statsOrdersServed: z.number().int().min(0).max(2_147_483_647),
     statsHappyCustomers: z.number().int().min(0).max(2_147_483_647),
     statsYearsService: z.number().int().min(0).max(1_000),
@@ -179,7 +186,18 @@ export async function PUT(req: NextRequest) {
           closeTime: saved.closeTime,
           timezone: saved.timezone,
           operationalDayStartMinutes: saved.operationalDayStartMinutes,
-          kdsThresholds: {
+          loyaltyPolicy: {
+  enabled: saved.loyaltyEnabled,
+  pointsPerCurrencyUnit: saved.loyaltyPointsPerCurrencyUnit,
+  redemptionPointsPerCurrencyUnit: saved.loyaltyRedemptionPointsPerCurrencyUnit,
+  redemptionIncrementPoints: saved.loyaltyRedemptionIncrementPoints,
+  maxRedemptionPercent: saved.loyaltyMaxRedemptionPercent,
+},
+giftCardPolicy: {
+  enabled: saved.giftCardEnabled,
+  defaultExpiryDays: saved.giftCardDefaultExpiryDays,
+},
+kdsThresholds: {
             green: saved.kdsGreenMin,
             yellow: saved.kdsYellowMin,
             red: saved.kdsRedMin,

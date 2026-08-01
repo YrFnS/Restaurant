@@ -208,22 +208,29 @@ async function main() {
         exactOrder.tipAmountMinor
     );
 
+    const exactTender = Number(exactOrder.totalMinor) / 100;
     const checkout = await request("/api/pos/checkout", {
       method: "POST",
-      headers: { cookie: adminCookie },
+      headers: {
+        cookie: adminCookie,
+        "idempotency-key": `p1-exact-checkout-${suffix}`,
+      },
       body: JSON.stringify({
         orderId,
         paymentMethod: "cash",
+        tendered: exactTender,
       }),
     });
-    expectStatus(checkout, 200, "Exact cash checkout without explicit tender");
+    expectStatus(checkout, 200, "Exact cash checkout with exact tender");
     assertNoExactKeys(checkout.data);
     assert.equal(checkout.data?.payment?.change, 0);
     assert.equal(
       checkout.data?.payment?.tendered,
-      checkout.data?.payment?.total,
-      "Omitted tender must default to the exact stored total"
+      exactTender,
+      "Cash tender must preserve the exact stored total"
     );
+    assert.equal(checkout.data?.payment?.captured, exactTender);
+    assert.equal(checkout.data?.payment?.cashAmount, exactTender);
 
     const payment = await db.paymentEvent.findFirst({
       where: { orderId, eventType: "capture", status: "succeeded" },

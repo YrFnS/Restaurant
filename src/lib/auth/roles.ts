@@ -64,6 +64,17 @@ export const TABLE_OPERATION_ROLES = [
   "server",
   "host",
 ] as const;
+export const LOYALTY_READ_ROLES = [
+  "owner",
+  "admin",
+  "manager",
+  "cashier",
+] as const;
+export const LOYALTY_MANAGEMENT_ROLES = [
+  "owner",
+  "admin",
+  "manager",
+] as const;
 
 export function roleIsAllowed(
   role: string,

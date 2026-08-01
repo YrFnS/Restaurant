@@ -38,6 +38,7 @@ enum PaymentMethod {
   cash
   card
   split
+  gift_card
 }
 
 enum PaymentStatus {
@@ -140,6 +141,32 @@ enum PaymentEventStatus {
   succeeded
   failed
   voided
+}
+
+enum LoyaltyPointEventType {
+  opening_balance
+  earn
+  redeem
+  earn_reversal
+  redeem_restore
+  adjustment
+}
+
+enum GiftCardStatus {
+  active
+  exhausted
+  voided
+  expired
+}
+
+enum GiftCardTransactionType {
+  opening_balance
+  issue
+  redeem
+  refund
+  adjustment
+  void
+  expiration
 }
 
 enum CashRegisterSessionStatus {
@@ -252,6 +279,13 @@ model RestaurantSettings {
   twitterUrl                 String   @default("")
   whatsappUrl                String   @default("")
   giftCardAmounts            String   @default("25,50,75,100")
+  loyaltyEnabled                         Boolean  @default(true)
+  loyaltyPointsPerCurrencyUnit           Int      @default(1)
+  loyaltyRedemptionPointsPerCurrencyUnit Int      @default(100)
+  loyaltyRedemptionIncrementPoints       Int      @default(100)
+  loyaltyMaxRedemptionPercent            Int      @default(100)
+  giftCardEnabled                        Boolean  @default(true)
+  giftCardDefaultExpiryDays              Int      @default(0)
   statsOrdersServed          Int      @default(0)
   statsHappyCustomers        Int      @default(0)
   statsYearsService          Int      @default(0)
@@ -355,6 +389,7 @@ model Customer {
   orders           Order[]
   reservations     Reservation[]
   waitlistEntries  WaitlistEntry[]
+  loyaltyEvents    LoyaltyPointEvent[]
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 }
@@ -391,6 +426,8 @@ model Order {
   customer            Customer?        @relation(fields: [customerId], references: [id])
   items               OrderItem[]
   paymentEvents       PaymentEvent[]
+  loyaltyEvents       LoyaltyPointEvent[]
+  giftCardTransactions GiftCardTransaction[]
   estimatedReady      DateTime?
   completedAt         DateTime?
   createdAt           DateTime         @default(now())
@@ -591,20 +628,94 @@ model RewardTier {
 }
 
 model GiftCard {
-  id            String    @id @default(cuid())
-  code          String    @unique
-  amount        Float
-  amountMinor   BigInt    @default(0)
-  balance       Float
-  balanceMinor  BigInt    @default(0)
-  purchaserName String
-  recipientName String
-  message       String?
-  template      String    @default("birthday")
-  isRedeemed    Boolean   @default(false)
-  redeemedAt    DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                    String                @id @default(cuid())
+  code                  String                @unique
+  redemptionCodeHash    String                @unique(map: "GiftCard_redemptionCodeHash_key")
+  redemptionCodeLast4   String
+  amount                Float
+  amountMinor           BigInt                @default(0)
+  balance               Float
+  balanceMinor          BigInt                @default(0)
+  purchaserName         String
+  recipientName         String
+  message               String?
+  template              String                @default("birthday")
+  status                GiftCardStatus        @default(active)
+  currency              String                @default("USD")
+  isRedeemed            Boolean               @default(false)
+  redeemedAt            DateTime?             @db.Timestamptz(3)
+  issuedAt              DateTime              @default(now()) @db.Timestamptz(3)
+  expiresAt             DateTime?             @db.Timestamptz(3)
+  voidedAt              DateTime?             @db.Timestamptz(3)
+  issuedById            String?
+  issuedByName          String                @default("")
+  transactions          GiftCardTransaction[]
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([status, createdAt(sort: Desc)], map: "GiftCard_status_createdAt_idx")
+  @@index([redemptionCodeLast4, createdAt(sort: Desc)], map: "GiftCard_last4_createdAt_idx")
+  @@index([expiresAt], map: "GiftCard_expiresAt_idx")
+}
+
+model LoyaltyPointEvent {
+  id             String                @id
+  idempotencyKey String                @unique(map: "LoyaltyPointEvent_idempotencyKey_key")
+  customerId     String
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  eventType      LoyaltyPointEventType
+  pointsDelta    Int
+  balanceAfter   Int                   @default(0)
+  orderId        String?
+  order          Order?                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentEventId String?
+  paymentEvent   PaymentEvent?         @relation(fields: [paymentEventId], references: [id], onDelete: Restrict)
+  parentEventId  String?
+  parentEvent    LoyaltyPointEvent?    @relation("LoyaltyPointEventReversals", fields: [parentEventId], references: [id], onDelete: Restrict)
+  reversals      LoyaltyPointEvent[]   @relation("LoyaltyPointEventReversals")
+  actorId        String?
+  actorName      String                @default("")
+  actorRole      String                @default("")
+  reasonCode     String                @default("")
+  reason         String?
+  metadata       Json?
+  occurredAt     DateTime              @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+
+  @@index([customerId, createdAt(sort: Desc)], map: "LoyaltyPointEvent_customer_createdAt_idx")
+  @@index([orderId, createdAt(sort: Desc)], map: "LoyaltyPointEvent_order_createdAt_idx")
+  @@index([paymentEventId, eventType, createdAt(sort: Desc)], map: "LoyaltyPointEvent_payment_type_idx")
+  @@index([parentEventId, createdAt(sort: Desc)], map: "LoyaltyPointEvent_parent_createdAt_idx")
+}
+
+model GiftCardTransaction {
+  id                  String                  @id
+  idempotencyKey      String                  @unique(map: "GiftCardTransaction_idempotencyKey_key")
+  giftCardId          String
+  giftCard            GiftCard                @relation(fields: [giftCardId], references: [id], onDelete: Restrict)
+  transactionType     GiftCardTransactionType
+  amountMinor         BigInt
+  balanceAfterMinor   BigInt                  @default(0)
+  orderId             String?
+  order               Order?                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentEventId      String?
+  paymentEvent        PaymentEvent?           @relation(fields: [paymentEventId], references: [id], onDelete: Restrict)
+  parentTransactionId String?
+  parentTransaction   GiftCardTransaction?    @relation("GiftCardTransactionReversals", fields: [parentTransactionId], references: [id], onDelete: Restrict)
+  reversals           GiftCardTransaction[]   @relation("GiftCardTransactionReversals")
+  actorId             String?
+  actorName           String                  @default("")
+  actorRole           String                  @default("")
+  reasonCode          String                  @default("")
+  reason              String?
+  metadata            Json?
+  occurredAt          DateTime                @default(now()) @db.Timestamptz(3)
+  createdAt           DateTime                @default(now()) @db.Timestamptz(3)
+
+  @@index([giftCardId, createdAt(sort: Desc)], map: "GiftCardTransaction_card_createdAt_idx")
+  @@index([orderId, createdAt(sort: Desc)], map: "GiftCardTransaction_order_createdAt_idx")
+  @@index([paymentEventId, transactionType, createdAt(sort: Desc)], map: "GiftCardTransaction_payment_type_idx")
+  @@index([parentTransactionId, createdAt(sort: Desc)], map: "GiftCardTransaction_parent_createdAt_idx")
 }
 
 // ─── Feedback / Testimonials / Newsletter ───
@@ -1254,6 +1365,8 @@ model PaymentEvent {
   parentEventId     String?
   parentEvent       PaymentEvent?        @relation("PaymentEventReversals", fields: [parentEventId], references: [id], onDelete: Restrict)
   reversals         PaymentEvent[]       @relation("PaymentEventReversals")
+  loyaltyEvents    LoyaltyPointEvent[]
+  giftCardTransactions GiftCardTransaction[]
   reasonCode        String               @default("")
   reason            String?
   createdAt         DateTime             @default(now())

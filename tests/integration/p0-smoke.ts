@@ -290,19 +290,26 @@ async function main() {
   logStep("cash checkout is authorized, atomic, and replay-safe");
   const insufficientTender = await api<any>("/api/pos/checkout", {
     method: "POST",
-    headers: { cookie: sessionCookie },
+    headers: {
+      cookie: sessionCookie,
+      "idempotency-key": `p0-smoke-insufficient-${crypto.randomUUID()}`,
+    },
     body: JSON.stringify({
       orderId: firstOrder.data.order.id,
       paymentMethod: "cash",
       tendered: 0,
     }),
   });
-  assertStatus(insufficientTender.response, 400, "Insufficient cash tender");
+  assertStatus(insufficientTender.response, 409, "Insufficient cash tender");
   assert.equal(insufficientTender.data?.code, "INSUFFICIENT_TENDER");
 
+  const checkoutKey = `p0-smoke-checkout-${crypto.randomUUID()}`;
   const checkout = await api<any>("/api/pos/checkout", {
     method: "POST",
-    headers: { cookie: sessionCookie },
+    headers: {
+      cookie: sessionCookie,
+      "idempotency-key": checkoutKey,
+    },
     body: JSON.stringify({
       orderId: firstOrder.data.order.id,
       paymentMethod: "cash",
@@ -315,7 +322,10 @@ async function main() {
 
   const checkoutReplay = await api<any>("/api/pos/checkout", {
     method: "POST",
-    headers: { cookie: sessionCookie },
+    headers: {
+      cookie: sessionCookie,
+      "idempotency-key": checkoutKey,
+    },
     body: JSON.stringify({
       orderId: firstOrder.data.order.id,
       paymentMethod: "cash",

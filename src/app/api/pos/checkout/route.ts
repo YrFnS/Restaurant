@@ -1,390 +1,451 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  PaymentEventStatus,
+  PaymentEventType,
+  PaymentMethod,
+  Prisma,
+} from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
-  CASH_MANAGEMENT_ROLES,
   requireStaffSession,
+  CASH_MANAGEMENT_ROLES,
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 import {
   CashRegisterError,
-  linkCashEntryToSession,
   lockOpenRegisterSession,
-  readCurrentRegisterSession,
   readPaymentRegisterLink,
   registerIdentityFromRequest,
   serializeRegister,
   serializeSession,
 } from "@/lib/cash/register-session";
 import {
-  exactMinorToCents,
-  exactMinorToNumber,
-  readExactOrderTotalMinor,
-} from "@/lib/money/exact-store";
-import {
-  CURRENCY_MINOR_DIGITS,
-  parseNonNegativeDecimalToScaledInteger,
-} from "@/lib/money/scaled-integer";
+  appendCheckoutLedgers,
+  checkoutFingerprintFromRequest,
+  loyaltyLedgerErrorResponse,
+  minorToNumber,
+  parseMoneyToMinor,
+  parseStoredValueCaptureMetadata,
+  prepareCheckoutCredits,
+  storedValueCaptureMetadata,
+} from "@/lib/loyalty/ledger";
 
 const checkoutSchema = z
   .object({
     orderId: z.string().trim().min(1).max(191),
-    paymentMethod: z.enum(["cash", "card"]),
-    tendered: z.number().finite().min(0).max(1_000_000).optional(),
+    paymentMethod: z.literal("cash"),
+    tendered: z.number().finite().nonnegative().max(1_000_000).optional(),
+    loyaltyPoints: z.number().int().min(0).max(1_000_000_000).default(0),
+    giftCardCode: z.string().trim().min(6).max(128).optional(),
+    giftCardAmount: z.number().finite().positive().max(1_000_000).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.giftCardAmount !== undefined && !value.giftCardCode) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["giftCardCode"],
+        message: "Gift-card code is required when an amount is supplied",
+      });
+    }
+  });
 
-const checkoutOrderInclude = {
-  items: { include: { menuItem: true } },
-  table: true,
-} as const;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,191}$/;
 
-const paymentEventSelect = {
-  id: true,
-  eventType: true,
-  method: true,
-  status: true,
-  amountCents: true,
-  tenderedCents: true,
-  changeCents: true,
-  currency: true,
-  createdAt: true,
-} as const;
-
-function inputToCents(value: number): number {
-  return exactMinorToCents(
-    parseNonNegativeDecimalToScaledInteger(
-      String(value),
-      CURRENCY_MINOR_DIGITS,
-      BigInt(Number.MAX_SAFE_INTEGER)
-    )
-  );
-}
-
-function fromCents(value: number | null): number | null {
-  return value === null ? null : value / 100;
-}
-
-function captureKey(orderId: string): string {
-  return `cash-capture:${orderId}`;
+function noStore(data: unknown, status = 200) {
+  return NextResponse.json(data, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 function registerErrorResponse(error: CashRegisterError) {
-  return NextResponse.json(
+  return noStore(
     { error: error.message, code: error.code, details: error.details },
-    { status: error.status, headers: { "Cache-Control": "no-store" } }
+    error.status
   );
+}
+
+function requestKey(req: NextRequest): string | null {
+  const key = req.headers.get("idempotency-key")?.trim() || "";
+  return IDEMPOTENCY_KEY_PATTERN.test(key) ? key : null;
+}
+
+function cents(value: bigint): number {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new CashRegisterError(
+      "Stored payment amount cannot be represented safely",
+      "UNSAFE_PAYMENT_VALUE",
+      500
+    );
+  }
+  return Number(value);
 }
 
 export async function POST(req: NextRequest) {
   const auth = await requireStaffSession(CASH_MANAGEMENT_ROLES);
   if ("response" in auth) return auth.response;
 
-  let input: z.infer<typeof checkoutSchema>;
+  let parsed: z.infer<typeof checkoutSchema>;
   try {
-    const parsed = checkoutSchema.safeParse(await req.json());
-    if (!parsed.success) {
-      return NextResponse.json(
+    const result = checkoutSchema.safeParse(await req.json());
+    if (!result.success) {
+      return noStore(
         {
           error: "Invalid checkout request",
           code: "VALIDATION_ERROR",
-          details: parsed.error.flatten().fieldErrors,
+          details: result.error.flatten().fieldErrors,
         },
-        { status: 400 }
+        400
       );
     }
-    input = parsed.data;
+    parsed = result.data;
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body", code: "INVALID_JSON" },
-      { status: 400 }
+    return noStore({ error: "Invalid JSON body", code: "INVALID_JSON" }, 400);
+  }
+
+  const key = requestKey(req);
+  if (!key) {
+    return noStore(
+      {
+        error: "A valid Idempotency-Key header is required",
+        code: "IDEMPOTENCY_KEY_REQUIRED",
+      },
+      400
     );
   }
 
-  if (input.paymentMethod === "card") {
-    return NextResponse.json(
-      {
-        error: "Card checkout is disabled until a payment processor is configured",
-        code: "CARD_PROCESSOR_NOT_CONFIGURED",
-      },
-      { status: 501 }
-    );
-  }
+  const identity = registerIdentityFromRequest(req);
+  const context = auditContextFromRequest(req);
 
   try {
-    const identity = registerIdentityFromRequest(req);
-    const [existing, exactTotalMinor] = await Promise.all([
-      db.order.findUnique({
-        where: { id: input.orderId },
-        include: checkoutOrderInclude,
-      }),
-      readExactOrderTotalMinor(db, input.orderId),
-    ]);
-    if (!existing || exactTotalMinor === null) {
-      return NextResponse.json(
-        { error: "Order not found", code: "ORDER_NOT_FOUND" },
-        { status: 404 }
-      );
-    }
-    if (existing.status === "cancelled") {
-      return NextResponse.json(
-        { error: "Cancelled orders cannot be paid", code: "ORDER_CANCELLED" },
-        { status: 409 }
-      );
-    }
+    const result = await db.$transaction(
+      async (tx) => {
+        const registerContext = await lockOpenRegisterSession(tx, {
+          identity,
+          actor: auth.session,
+          allowLegacyFallback: true,
+        });
 
-    const totalCents = exactMinorToCents(exactTotalMinor);
-    const exactTotal = exactMinorToNumber(exactTotalMinor);
-    const tenderedCents =
-      input.tendered === undefined ? totalCents : inputToCents(input.tendered);
-    if (tenderedCents < totalCents) {
-      return NextResponse.json(
-        {
-          error: "Tendered cash is less than the order total",
-          code: "INSUFFICIENT_TENDER",
-          total: exactTotal,
-        },
-        { status: 400 }
-      );
-    }
-
-    const tendered = tenderedCents / 100;
-    const changeCents = tenderedCents - totalCents;
-    const change = changeCents / 100;
-
-    if (existing.paymentStatus === "paid") {
-      const paymentEvent = await db.paymentEvent.findUnique({
-        where: { idempotencyKey: captureKey(existing.id) },
-        select: paymentEventSelect,
-      });
-      const paymentLink = paymentEvent
-        ? await readPaymentRegisterLink(db, paymentEvent.id)
-        : null;
-
-      if (identity.registerId || identity.deviceId) {
-        if (!identity.registerId || !identity.deviceId) {
-          throw new CashRegisterError(
-            "Register and device headers are required",
-            "REGISTER_IDENTITY_REQUIRED",
-            400
-          );
+        if (registerContext.autoOpened) {
+          await writeAuditEvent(tx, {
+            actor: auth.session,
+            action: "cash.session.auto-open",
+            entityType: "CashRegisterSession",
+            entityId: registerContext.session.id,
+            context,
+            metadata: {
+              registerId: registerContext.register.id,
+              registerCode: registerContext.register.code,
+              compatibilityFallback: true,
+              openingFloatMinor: "0",
+            },
+          });
         }
-        await readCurrentRegisterSession(
-          db,
-          identity.registerId,
-          identity.deviceId
-        );
-        if (!paymentLink || paymentLink.registerId !== identity.registerId) {
+
+        const existingOrder = await tx.order.findUnique({
+          where: { id: parsed.orderId },
+          select: {
+            id: true,
+            orderNumber: true,
+            status: true,
+            paymentStatus: true,
+            totalMinor: true,
+            tableId: true,
+          },
+        });
+        if (!existingOrder) {
+          throw new CashRegisterError("Order not found", "ORDER_NOT_FOUND", 404);
+        }
+        if (existingOrder.status === "cancelled") {
           throw new CashRegisterError(
-            "This payment belongs to a different register",
-            "PAYMENT_REGISTER_MISMATCH",
+            "Cancelled orders cannot be paid",
+            "ORDER_CANCELLED",
             409
           );
         }
-      }
 
-      return NextResponse.json(
-        {
-          order: existing,
-          payment: {
-            eventId: paymentEvent?.id || null,
-            method: paymentEvent?.method || existing.paymentMethod,
-            status: paymentEvent?.status || "succeeded",
-            currency: paymentEvent?.currency || null,
-            total: paymentEvent ? paymentEvent.amountCents / 100 : exactTotal,
-            tendered:
-              fromCents(paymentEvent?.tenderedCents ?? null) ?? tendered,
-            change: fromCents(paymentEvent?.changeCents ?? null) ?? change,
-            registerSessionId: paymentLink?.registerSessionId || null,
+        const existingCapture = await tx.paymentEvent.findFirst({
+          where: {
+            orderId: parsed.orderId,
+            eventType: PaymentEventType.capture,
+            status: PaymentEventStatus.succeeded,
           },
-          replayed: true,
-        },
-        { headers: { "Cache-Control": "no-store" } }
-      );
-    }
+          orderBy: { createdAt: "asc" },
+        });
 
-    const context = auditContextFromRequest(req);
-    const result = await db.$transaction(async (tx) => {
-      const registerContext = await lockOpenRegisterSession(tx, {
-        identity,
-        actor: auth.session,
-        allowLegacyFallback: true,
-      });
+        if (existingCapture) {
+          const paymentLink = await readPaymentRegisterLink(tx, existingCapture.id);
+          if (
+            paymentLink &&
+            paymentLink.registerId !== registerContext.register.id
+          ) {
+            throw new CashRegisterError(
+              "This payment belongs to another register",
+              "PAYMENT_REGISTER_MISMATCH",
+              409
+            );
+          }
+          const metadata = parseStoredValueCaptureMetadata(existingCapture.metadata);
+          const fingerprint = checkoutFingerprintFromRequest({
+            orderId: parsed.orderId,
+            loyaltyPoints: parsed.loyaltyPoints,
+            giftCardCode: parsed.giftCardCode,
+            giftCardAmount: parsed.giftCardAmount,
+            captureAmountMinor: existingOrder.totalMinor,
+          });
+          if (
+            metadata.checkoutFingerprint &&
+            metadata.checkoutFingerprint !== fingerprint
+          ) {
+            throw new CashRegisterError(
+              "Checkout was already completed with another stored-value payload",
+              "CHECKOUT_IDEMPOTENCY_CONFLICT",
+              409
+            );
+          }
+          return {
+            replayed: true,
+            order: {
+              id: existingOrder.id,
+              orderNumber: existingOrder.orderNumber,
+              paymentStatus: existingOrder.paymentStatus,
+              total: minorToNumber(existingOrder.totalMinor),
+            },
+            payment: {
+              eventId: existingCapture.id,
+              method: existingCapture.method,
+              status: existingCapture.status,
+              currency: existingCapture.currency,
+              captured: existingCapture.amountCents / 100,
+              cashAmount: metadata.cashAmountCents / 100,
+              giftCardAmount: metadata.giftCardAmountCents / 100,
+              giftCardLast4: metadata.giftCardLast4,
+              loyaltyRedeemedPoints: metadata.loyaltyRedeemedPoints,
+              loyaltyRedemptionValue:
+                metadata.loyaltyRedemptionValueCents / 100,
+              loyaltyEarnedPoints: metadata.loyaltyEarnedPoints,
+              tendered:
+                existingCapture.tenderedCents !== null
+                  ? existingCapture.tenderedCents / 100
+                  : metadata.cashAmountCents / 100,
+              change:
+                existingCapture.changeCents !== null
+                  ? existingCapture.changeCents / 100
+                  : 0,
+              registerSessionId: existingCapture.registerSessionId,
+            },
+            register: serializeRegister(registerContext.register),
+            session: serializeSession(registerContext.session),
+          };
+        }
 
-      if (registerContext.autoOpened) {
+        if (existingOrder.paymentStatus !== "unpaid") {
+          throw new CashRegisterError(
+            "Order has already been paid or reversed",
+            "ORDER_ALREADY_PAID",
+            409
+          );
+        }
+
+        const plan = await prepareCheckoutCredits(tx, {
+          orderId: parsed.orderId,
+          loyaltyPoints: parsed.loyaltyPoints,
+          giftCardCode: parsed.giftCardCode,
+          giftCardAmount: parsed.giftCardAmount,
+        });
+        if (plan.captureAmountMinor <= 0n) {
+          throw new CashRegisterError(
+            "A checkout capture must be greater than zero",
+            "CHECKOUT_AMOUNT_REQUIRED",
+            409
+          );
+        }
+
+        let tenderedMinor = plan.cashAmountMinor;
+        let changeMinor = 0n;
+        if (plan.cashAmountMinor > 0n) {
+          if (parsed.tendered === undefined) {
+            throw new CashRegisterError(
+              "Cash tendered is required for the remaining amount",
+              "CASH_TENDER_REQUIRED",
+              400,
+              { amountDue: minorToNumber(plan.cashAmountMinor) }
+            );
+          }
+          tenderedMinor = parseMoneyToMinor(parsed.tendered);
+          if (tenderedMinor < plan.cashAmountMinor) {
+            throw new CashRegisterError(
+              "Cash tendered is less than the remaining amount due",
+              "INSUFFICIENT_TENDER",
+              409,
+              {
+                amountDue: minorToNumber(plan.cashAmountMinor),
+                tendered: minorToNumber(tenderedMinor),
+              }
+            );
+          }
+          changeMinor = tenderedMinor - plan.cashAmountMinor;
+        }
+
+        const paymentMethod = plan.paymentMethod as PaymentMethod;
+        const order = await tx.order.update({
+          where: { id: plan.order.id },
+          data: {
+            paymentMethod,
+            paymentStatus: "paid",
+            serverName: auth.session.name,
+          },
+          select: {
+            id: true,
+            orderNumber: true,
+            paymentStatus: true,
+            totalMinor: true,
+            tableId: true,
+          },
+        });
+
+        if (order.tableId) {
+          await tx.restaurantTable.update({
+            where: { id: order.tableId },
+            data: { status: "paid" },
+          });
+        }
+
+        let cashDrawerEntryId: string | null = null;
+        if (plan.cashAmountMinor > 0n) {
+          const drawer = await tx.cashDrawerEntry.create({
+            data: {
+              type: "sale",
+              amount: minorToNumber(plan.cashAmountMinor),
+              amountMinor: plan.cashAmountMinor,
+              note: `Sale ${order.orderNumber}`,
+              createdBy: auth.session.name,
+              registerSessionId: registerContext.session.id,
+            },
+          });
+          cashDrawerEntryId = drawer.id;
+        }
+
+        const storedValue = storedValueCaptureMetadata(plan);
+        const paymentEvent = await tx.paymentEvent.create({
+          data: {
+            id: plan.paymentEventId,
+            idempotencyKey: `payment-capture:${plan.order.id}`,
+            orderId: plan.order.id,
+            eventType: PaymentEventType.capture,
+            method: paymentMethod,
+            status: PaymentEventStatus.succeeded,
+            amountCents: cents(plan.captureAmountMinor),
+            tenderedCents:
+              paymentMethod === PaymentMethod.cash ? cents(tenderedMinor) : null,
+            changeCents:
+              paymentMethod === PaymentMethod.cash ? cents(changeMinor) : null,
+            currency: plan.policy.currency,
+            actorId: auth.session.id,
+            actorName: auth.session.name,
+            registerSessionId: registerContext.session.id,
+            metadata: {
+              orderNumber: order.orderNumber,
+              tableId: order.tableId,
+              cashDrawerEntryId,
+              registerId: registerContext.register.id,
+              registerCode: registerContext.register.code,
+              registerSessionId: registerContext.session.id,
+              requestId: context.requestId,
+              checkoutKey: key,
+              storedValue,
+            },
+          },
+        });
+
+        const ledgers = await appendCheckoutLedgers(tx, {
+          plan,
+          actor: auth.session,
+          context,
+        });
+
         await writeAuditEvent(tx, {
           actor: auth.session,
-          action: "cash.session.auto-open",
-          entityType: "CashRegisterSession",
-          entityId: registerContext.session.id,
+          action: "order.payment.capture",
+          entityType: "PaymentEvent",
+          entityId: paymentEvent.id,
           context,
           metadata: {
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            paymentMethod,
+            capturedAmountMinor: plan.captureAmountMinor.toString(),
+            cashAmountMinor: plan.cashAmountMinor.toString(),
+            giftCardAmountMinor: plan.giftCardAmountMinor.toString(),
+            loyaltyRedeemedPoints: plan.loyaltyRedeemedPoints,
+            loyaltyEarnedPoints: plan.loyaltyEarnedPoints,
             registerId: registerContext.register.id,
             registerCode: registerContext.register.code,
-            compatibilityFallback: true,
-            openingFloatMinor: "0",
-          },
-        });
-      }
-
-      const claimed = await tx.order.updateMany({
-        where: { id: input.orderId, paymentStatus: "unpaid" },
-        data: {
-          paymentStatus: "paid",
-          paymentMethod: "cash",
-          serverName: auth.session.name,
-        },
-      });
-
-      if (claimed.count === 0) {
-        const [order, paymentEvent] = await Promise.all([
-          tx.order.findUnique({
-            where: { id: input.orderId },
-            include: checkoutOrderInclude,
-          }),
-          tx.paymentEvent.findUnique({
-            where: { idempotencyKey: captureKey(input.orderId) },
-            select: paymentEventSelect,
-          }),
-        ]);
-        const paymentLink = paymentEvent
-          ? await readPaymentRegisterLink(tx, paymentEvent.id)
-          : null;
-        return {
-          order,
-          paymentEvent,
-          paymentLink,
-          register: registerContext.register,
-          session: registerContext.session,
-          replayed: true,
-        };
-      }
-
-      const drawerEntry = await tx.cashDrawerEntry.create({
-        data: {
-          type: "sale",
-          amount: exactTotal,
-          amountMinor: exactTotalMinor,
-          note: `Sale ${existing.orderNumber}${existing.table ? ` / Table ${existing.table.number}` : ""}`,
-          createdBy: auth.session.name,
-        },
-      });
-      await linkCashEntryToSession(
-        tx,
-        drawerEntry.id,
-        registerContext.session.id
-      );
-
-      const settings = await tx.restaurantSettings.findUnique({
-        where: { id: "1" },
-        select: { currency: true },
-      });
-
-      const paymentEvent = await tx.paymentEvent.create({
-        data: {
-          idempotencyKey: captureKey(existing.id),
-          orderId: existing.id,
-          eventType: "capture",
-          method: "cash",
-          status: "succeeded",
-          amountCents: totalCents,
-          tenderedCents,
-          changeCents,
-          currency: settings?.currency || "USD",
-          actorId: auth.session.id,
-          actorName: auth.session.name,
-          registerSessionId: registerContext.session.id,
-          metadata: {
-            orderNumber: existing.orderNumber,
-            tableId: existing.tableId,
-            cashDrawerEntryId: drawerEntry.id,
-            registerId: registerContext.register.id,
             registerSessionId: registerContext.session.id,
           },
-        },
-        select: paymentEventSelect,
-      });
-
-      if (existing.tableId) {
-        await tx.restaurantTable.update({
-          where: { id: existing.tableId },
-          data: { status: "paid" },
         });
-      }
 
-      await writeAuditEvent(tx, {
-        actor: auth.session,
-        action: "payment.cash.capture",
-        entityType: "PaymentEvent",
-        entityId: paymentEvent.id,
-        context,
-        metadata: {
-          orderId: existing.id,
-          orderNumber: existing.orderNumber,
-          totalCents,
-          tenderedCents,
-          changeCents,
-          currency: paymentEvent.currency,
-          cashDrawerEntryId: drawerEntry.id,
-          tableId: existing.tableId,
-          registerId: registerContext.register.id,
-          registerCode: registerContext.register.code,
-          registerSessionId: registerContext.session.id,
-        },
-      });
-
-      const order = await tx.order.findUnique({
-        where: { id: input.orderId },
-        include: checkoutOrderInclude,
-      });
-      return {
-        order,
-        paymentEvent,
-        paymentLink: {
-          registerSessionId: registerContext.session.id,
-          registerId: registerContext.register.id,
-        },
-        register: registerContext.register,
-        session: registerContext.session,
-        replayed: false,
-      };
-    });
-
-    if (!result.order) {
-      return NextResponse.json(
-        { error: "Unable to load paid order", code: "CHECKOUT_RESULT_MISSING" },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        order: result.order,
-        payment: {
-          eventId: result.paymentEvent?.id || null,
-          method: result.paymentEvent?.method || "cash",
-          status: result.paymentEvent?.status || "succeeded",
-          currency: result.paymentEvent?.currency || null,
-          total: result.paymentEvent
-            ? result.paymentEvent.amountCents / 100
-            : exactTotal,
-          tendered:
-            fromCents(result.paymentEvent?.tenderedCents ?? null) ?? tendered,
-          change: fromCents(result.paymentEvent?.changeCents ?? null) ?? change,
-          registerSessionId: result.paymentLink?.registerSessionId || null,
-        },
-        register: serializeRegister(result.register),
-        session: serializeSession(result.session),
-        replayed: result.replayed,
+        return {
+          replayed: false,
+          order: {
+            id: order.id,
+            orderNumber: order.orderNumber,
+            paymentStatus: order.paymentStatus,
+            total: minorToNumber(order.totalMinor),
+          },
+          payment: {
+            eventId: paymentEvent.id,
+            method: paymentEvent.method,
+            status: paymentEvent.status,
+            currency: paymentEvent.currency,
+            captured: minorToNumber(plan.captureAmountMinor),
+            cashAmount: minorToNumber(plan.cashAmountMinor),
+            giftCardAmount: minorToNumber(plan.giftCardAmountMinor),
+            giftCardLast4: plan.giftCard?.redemptionCodeLast4 || null,
+            loyaltyRedeemedPoints: plan.loyaltyRedeemedPoints,
+            loyaltyRedemptionValue: minorToNumber(
+              plan.loyaltyRedemptionValueMinor
+            ),
+            loyaltyEarnedPoints: plan.loyaltyEarnedPoints,
+            tendered: minorToNumber(tenderedMinor),
+            change: minorToNumber(changeMinor),
+            registerSessionId: registerContext.session.id,
+            ledgers,
+          },
+          register: serializeRegister(registerContext.register),
+          session: serializeSession(registerContext.session),
+        };
       },
-      { headers: { "Cache-Control": "no-store" } }
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 20_000,
+      }
     );
+
+    return noStore(result);
   } catch (error) {
     if (error instanceof CashRegisterError) return registerErrorResponse(error);
-    console.error("[pos/checkout] Checkout failed", error);
-    return NextResponse.json(
+    const loyaltyError = loyaltyLedgerErrorResponse(error);
+    if (loyaltyError) return noStore(loyaltyError.body, loyaltyError.status);
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return noStore(
+        {
+          error: "Checkout has already been recorded",
+          code: "CHECKOUT_ALREADY_RECORDED",
+        },
+        409
+      );
+    }
+    console.error("[pos/checkout] Failed to complete checkout", error);
+    return noStore(
       { error: "Unable to complete checkout", code: "CHECKOUT_FAILED" },
-      { status: 500 }
+      500
     );
   }
 }
