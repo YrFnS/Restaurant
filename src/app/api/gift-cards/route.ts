@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -8,8 +9,10 @@ import {
 } from "@/lib/auth/guard";
 import { auditContextFromRequest } from "@/lib/audit";
 import {
+  LoyaltyLedgerError,
   issueGiftCard,
   loyaltyLedgerErrorResponse,
+  parseMoneyToMinor,
   readGiftCardAccount,
   searchGiftCards,
 } from "@/lib/loyalty/ledger";
@@ -35,6 +38,15 @@ const issueSchema = z
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,191}$/;
 
+type ExistingIssueRow = {
+  amountMinor: bigint;
+  purchaserName: string;
+  recipientName: string;
+  message: string | null;
+  template: string;
+  expiresAt: Date | null;
+};
+
 function noStore(data: unknown, status = 200) {
   return NextResponse.json(data, {
     status,
@@ -45,6 +57,59 @@ function noStore(data: unknown, status = 200) {
 function readIdempotencyKey(req: NextRequest): string | null {
   const key = req.headers.get("idempotency-key")?.trim() || "";
   return IDEMPOTENCY_KEY_PATTERN.test(key) ? key : null;
+}
+
+async function assertIssueReplayMatches(
+  tx: Prisma.TransactionClient,
+  key: string,
+  input: z.infer<typeof issueSchema>
+) {
+  await tx.$queryRaw(Prisma.sql`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`gift-card-issue:${key}`}, 0)
+    )
+  `);
+
+  const rows = await tx.$queryRaw<ExistingIssueRow[]>(Prisma.sql`
+    SELECT
+      transaction."amountMinor",
+      card."purchaserName",
+      card."recipientName",
+      card."message",
+      card."template",
+      card."expiresAt"
+    FROM "GiftCardTransaction" AS transaction
+    JOIN "GiftCard" AS card ON card."id" = transaction."giftCardId"
+    WHERE transaction."idempotencyKey" = ${key}
+    LIMIT 1
+    FOR UPDATE OF transaction, card
+  `);
+  const existing = rows[0];
+  if (!existing) return;
+
+  const expectedMessage = input.message?.trim().slice(0, 2_000) || null;
+  const expectedTemplate = input.template.trim().slice(0, 80);
+  const explicitExpiry = input.expiresAt ? new Date(input.expiresAt) : null;
+  const expiryMatches =
+    !input.expiresAt ||
+    (existing.expiresAt !== null &&
+      explicitExpiry !== null &&
+      existing.expiresAt.getTime() === explicitExpiry.getTime());
+
+  if (
+    existing.amountMinor !== parseMoneyToMinor(input.amount) ||
+    existing.purchaserName !== input.purchaserName.trim().slice(0, 200) ||
+    existing.recipientName !== input.recipientName.trim().slice(0, 200) ||
+    existing.message !== expectedMessage ||
+    existing.template !== expectedTemplate ||
+    !expiryMatches
+  ) {
+    throw new LoyaltyLedgerError(
+      "That idempotency key was used for another gift-card issuance payload",
+      "GIFT_CARD_IDEMPOTENCY_CONFLICT",
+      409
+    );
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -119,15 +184,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await db.$transaction((tx) =>
-      issueGiftCard(tx, {
+    const result = await db.$transaction(async (tx) => {
+      await assertIssueReplayMatches(tx, key, parsed);
+      return issueGiftCard(tx, {
         ...parsed,
         expiresAt: parsed.expiresAt ? new Date(parsed.expiresAt) : null,
         idempotencyKey: key,
         actor: auth.session,
         context: auditContextFromRequest(req),
-      })
-    );
+      });
+    });
     return noStore(result, result.replayed ? 200 : 201);
   } catch (error) {
     const known = loyaltyLedgerErrorResponse(error);
