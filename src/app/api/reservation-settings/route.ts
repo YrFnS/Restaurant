@@ -265,23 +265,24 @@ export async function POST(req: NextRequest) {
   try {
     const context = auditContextFromRequest(req);
     if (parsed.data.type === "period") {
+      const periodInput = parsed.data;
       const period = await db.$transaction(async (tx) => {
         const data = {
-          dayOfWeek: parsed.data.dayOfWeek,
-          opensAtMinute: timeToMinutes(parsed.data.opensAt),
-          closesAtMinute: timeToMinutes(parsed.data.closesAt),
-          label: parsed.data.label,
-          isActive: parsed.data.isActive,
+          dayOfWeek: periodInput.dayOfWeek,
+          opensAtMinute: timeToMinutes(periodInput.opensAt),
+          closesAtMinute: timeToMinutes(periodInput.closesAt),
+          label: periodInput.label,
+          isActive: periodInput.isActive,
         };
-        const saved = parsed.data.id
+        const saved = periodInput.id
           ? await tx.reservationServicePeriod.update({
-              where: { id: parsed.data.id },
+              where: { id: periodInput.id },
               data,
             })
           : await tx.reservationServicePeriod.create({ data });
         await writeAuditEvent(tx, {
           actor: auth.session,
-          action: parsed.data.id
+          action: periodInput.id
             ? "reservation.service_period.update"
             : "reservation.service_period.create",
           entityType: "ReservationServicePeriod",
@@ -291,11 +292,15 @@ export async function POST(req: NextRequest) {
         });
         return saved;
       });
-      return NextResponse.json({ period }, { status: parsed.data.id ? 200 : 201 });
+      return NextResponse.json(
+        { period },
+        { status: periodInput.id ? 200 : 201 }
+      );
     }
 
-    const localStart = parsed.data.localStart;
-    const localEnd = parsed.data.localEnd;
+    const closureInput = parsed.data;
+    const localStart = closureInput.localStart;
+    const localEnd = closureInput.localEnd;
     const closure = await db.$transaction(async (tx) => {
       const startsAt = await restaurantLocalDateTimeToUtc(
         tx,
@@ -318,7 +323,7 @@ export async function POST(req: NextRequest) {
         data: {
           startsAt,
           endsAt,
-          reason: parsed.data.reason,
+          reason: closureInput.reason,
           createdById: auth.session.id,
           createdByName: auth.session.name,
         },

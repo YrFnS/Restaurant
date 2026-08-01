@@ -1,9 +1,12 @@
 import "server-only";
 
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
-export type ReservationClient = PrismaClient | Prisma.TransactionClient;
+export type ReservationClient = Pick<
+  Prisma.TransactionClient,
+  "$queryRaw" | "$executeRaw"
+>;
 
 export interface ReservationPolicy {
   timezone: string;

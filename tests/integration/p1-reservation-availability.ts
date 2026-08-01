@@ -277,11 +277,12 @@ async function main() {
   status(reassignAvailability, 200, "Reassignment slot lookup");
   const reassignTime = reassignAvailability.data.slots[0].time;
   const firstKey = `p1-reassign-first-${crypto.randomUUID()}`;
+  const firstPhone = `+96475084${Math.floor(Math.random() * 1000000)}`;
   const first = await book({
     date: reassignDate,
     time: reassignTime,
     partySize: 8,
-    phone: `+96475084${Math.floor(Math.random() * 1000000)}`,
+    phone: firstPhone,
     key: firstKey,
   });
   status(first, 201, "First reassignment reservation");
@@ -289,12 +290,25 @@ async function main() {
     date: reassignDate,
     time: reassignTime,
     partySize: 8,
-    phone: first.data.reservation.customerPhone || "",
+    phone: firstPhone,
     name: first.data.reservation.customerName,
     key: firstKey,
   });
-  // Public DTO intentionally omits phone, so replay with a changed payload must conflict.
-  status(replay, 409, "Changed-payload idempotency conflict");
+  status(replay, 200, "Reservation idempotent replay");
+  assert.equal(replay.data.replayed, true);
+  const replayConflict = await book({
+    date: reassignDate,
+    time: reassignTime,
+    partySize: 8,
+    phone: firstPhone,
+    name: "Changed reservation payload",
+    key: firstKey,
+  });
+  status(replayConflict, 409, "Changed-payload idempotency conflict");
+  assert.equal(
+    replayConflict.data.code,
+    "RESERVATION_IDEMPOTENCY_CONFLICT"
+  );
   const second = await book({
     date: reassignDate,
     time: reassignTime,

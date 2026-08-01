@@ -139,7 +139,9 @@ async function applyReservationUpdate(input: {
         input.update.tableId === undefined
           ? existing.tableId
           : input.update.tableId;
-      let targetTable = null;
+      let targetTable: Awaited<
+        ReturnType<typeof assertReservationTableAvailable>
+      > | null = null;
       if (targetTableId) {
         targetTable = await assertReservationTableAvailable(tx, {
           tableId: targetTableId,
