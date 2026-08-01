@@ -1,9 +1,9 @@
 # P1 Waitlist Operations and Capacity Estimates
 
 > **Repository:** `YrFnS/Restaurant`  
-> **Branch:** `agent/p1-waitlist-operations`  
+> **Branch:** `agent/p1-waitlist-capacity`  
 > **Base:** consolidated `main` after reservation availability  
-> **Status:** Implementation in progress  
+> **Status:** Implemented and validated  
 > **Scope:** capacity-aware estimates, notification holds, customer confirmation, seating, expiry, privacy, auditing, and database concurrency
 
 ## Purpose
@@ -145,9 +145,9 @@ The customer workflow provides:
 - notification expiry status;
 - customer confirmation and cancellation.
 
-## Validation gate
+## Validation
 
-This slice is complete only when all of the following pass:
+The completed slice is protected by permanent static and database-backed gates covering:
 
 - clean migration deployment;
 - representative existing-data adoption;
@@ -164,8 +164,11 @@ This slice is complete only when all of the following pass:
 - notification expiry and hold release;
 - transactional seating and table-state update;
 - cancellation and no-show hold release;
-- audit events;
-- complete P0 and earlier P1 regression chain.
+- table deletion, status, and capacity protections while a hold is active;
+- immutable audit events;
+- complete P0 and earlier P1 regression coverage.
+
+The exact branch head passed both the permanent P0 Validation workflow and the complete PostgreSQL-backed P0/P1 integration workflow before the pull request was marked ready for review.
 
 ## Explicitly deferred
 
@@ -173,6 +176,7 @@ This slice is complete only when all of the following pass:
 - two-way provider callbacks;
 - physical table combinations and adjacency;
 - customer party-size or preference editing after join;
+- automatic waitlist-to-reservation promotion;
 - multi-branch queues;
 - predictive machine-learning estimates;
 - deposits or waitlist fees;
