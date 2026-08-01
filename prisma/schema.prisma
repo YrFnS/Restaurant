@@ -141,6 +141,22 @@ enum CashRegisterSessionStatus {
   closed
 }
 
+enum StockMovementType {
+  opening_balance
+  receipt
+  waste
+  adjustment_in
+  adjustment_out
+  production_consumption
+  reversal
+}
+
+enum InventoryConsumptionState {
+  pending
+  consumed
+  untracked
+}
+
 // ─── Restaurant-wide settings (singleton) ───
 model RestaurantSettings {
   id                    String   @id @default("1")
@@ -229,6 +245,7 @@ model MenuItem {
   category        MenuCategory    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   modifierGroups  ModifierGroup[]
   orderItems      OrderItem[]
+  recipes         Recipe[]
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 }
@@ -259,8 +276,9 @@ model ModifierOption {
   // preset tag: none, no, extra, side, light — for kitchen readability
   preset     String        @default("none")
   groupId    String
-  group      ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  createdAt  DateTime      @default(now())
+  group            ModifierGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  recipeComponents RecipeComponent[]
+  createdAt        DateTime         @default(now())
   updatedAt  DateTime      @updatedAt
 }
 
@@ -342,9 +360,17 @@ model OrderItem {
   hold            Boolean         @default(false) // held until expo fires it
   firedAt         DateTime?
   readyAt         DateTime?
-  seatNumber      Int?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  seatNumber                Int?
+  inventoryConsumptionState InventoryConsumptionState @default(pending)
+  inventoryRecipeId          String?
+  inventoryRecipe            Recipe?                   @relation("OrderItemInventoryRecipe", fields: [inventoryRecipeId], references: [id], onDelete: Restrict)
+  inventoryRecipeVersion     Int?
+  inventoryConsumedAt        DateTime?
+  createdAt                  DateTime                   @default(now())
+  updatedAt                  DateTime                   @updatedAt
+
+  @@index([inventoryConsumptionState, createdAt], map: "OrderItem_inventory_state_idx")
+  @@index([inventoryRecipeId, createdAt], map: "OrderItem_inventory_recipe_idx")
 }
 
 // ─── Tables / Floor ───
@@ -534,14 +560,98 @@ model Ingredient {
   name              String
   unit              String   @default("pcs")
   quantity          Float    @default(0)
+  quantityMicros    BigInt   @default(0)
+  allowNegativeStock Boolean @default(false)
   lowThreshold      Float    @default(10)
   costPerUnit       Float    @default(0)
   // Unit cost uses scale 1_000_000 during the compatibility window.
   costPerUnitMicros BigInt   @default(0)
   supplier          String?
   category          String?
+  unitConversions   IngredientUnitConversion[]
+  recipeComponents  RecipeComponent[]
+  stockMovements    StockMovement[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt
+}
+
+
+model IngredientUnitConversion {
+  id           String     @id
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  unit         String
+  toBaseMicros BigInt
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([ingredientId, unit], map: "IngredientUnitConversion_ingredient_unit_key")
+  @@index([ingredientId, createdAt], map: "IngredientUnitConversion_ingredient_idx")
+}
+
+model Recipe {
+  id                 String            @id
+  creationKey        String            @unique(map: "Recipe_creationKey_key")
+  menuItemId         String
+  menuItem           MenuItem          @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  version            Int
+  yieldMicros        BigInt            @default(1000000)
+  isActive           Boolean           @default(true)
+  createdById        String?
+  createdByName      String            @default("")
+  createdAt          DateTime          @default(now())
+  supersededAt       DateTime?
+  components         RecipeComponent[]
+  consumedOrderItems OrderItem[]       @relation("OrderItemInventoryRecipe")
+
+  @@unique([menuItemId, version], map: "Recipe_menuItem_version_key")
+  @@index([menuItemId, createdAt(sort: Desc)], map: "Recipe_menuItem_createdAt_idx")
+}
+
+model RecipeComponent {
+  id               String          @id
+  recipeId         String
+  recipe           Recipe          @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  ingredientId     String
+  ingredient       Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  modifierOptionId String?
+  modifierOption   ModifierOption? @relation(fields: [modifierOptionId], references: [id], onDelete: Restrict)
+  quantityMicros   BigInt
+  createdAt        DateTime        @default(now())
+
+  @@index([recipeId, createdAt], map: "RecipeComponent_recipe_idx")
+  @@index([ingredientId, createdAt], map: "RecipeComponent_ingredient_idx")
+  @@index([modifierOptionId], map: "RecipeComponent_modifier_idx")
+}
+
+model StockMovement {
+  id                  String            @id
+  idempotencyKey      String            @unique(map: "StockMovement_idempotencyKey_key")
+  ingredientId        String
+  ingredient          Ingredient        @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+  movementType        StockMovementType
+  quantityDeltaMicros BigInt
+  unitCostMicros      BigInt            @default(0)
+  totalCostMinor      BigInt            @default(0)
+  balanceAfterMicros  BigInt            @default(0)
+  sourceType          String            @default("")
+  sourceId            String?
+  sourceLineId        String?
+  reversalOfId        String?
+  reversalOf          StockMovement?    @relation("StockMovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals           StockMovement[]   @relation("StockMovementReversal")
+  reasonCode          String            @default("")
+  reason              String?
+  actorId             String?
+  actorName           String            @default("")
+  metadata            Json?
+  occurredAt          DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+
+  @@index([ingredientId, createdAt(sort: Desc)], map: "StockMovement_ingredient_createdAt_idx")
+  @@index([sourceType, sourceId, sourceLineId], map: "StockMovement_source_idx")
+  @@index([movementType, createdAt(sort: Desc)], map: "StockMovement_type_createdAt_idx")
+  @@index([actorId, createdAt(sort: Desc)], map: "StockMovement_actor_createdAt_idx")
 }
 
 model WasteLog {

@@ -7,6 +7,11 @@ import {
 } from "@/lib/auth/guard";
 import { flushKdsOutboxBestEffort, queueKdsEvent } from "@/lib/kds/outbox";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  consumeOrderInventory,
+  InventoryLedgerError,
+  inventoryLedgerErrorFromDatabase,
+} from "@/lib/inventory/stock-ledger";
 
 const orderStatusSchema = z
   .object({
@@ -29,6 +34,13 @@ const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
   completed: [],
   cancelled: [],
 };
+
+function inventoryErrorResponse(error: InventoryLedgerError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code, details: error.details },
+    { status: error.status, headers: { "Cache-Control": "no-store" } }
+  );
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -80,12 +92,21 @@ export async function PATCH(
     }
 
     const context = auditContextFromRequest(req);
-    const order = await db.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx) => {
+      const inventory = ["preparing", "ready", "completed"].includes(nextStatus)
+        ? await consumeOrderInventory(tx, {
+            orderId: id,
+            actor: auth.session,
+          })
+        : null;
+
       await tx.order.update({
         where: { id },
         data: {
           status: nextStatus,
-          ...(nextStatus === "completed" ? { completedAt: new Date() } : {}),
+          ...(nextStatus === "completed" && existing.status !== "completed"
+            ? { completedAt: new Date() }
+            : {}),
         },
       });
 
@@ -136,7 +157,22 @@ export async function PATCH(
             paymentStatus: existing.paymentStatus,
             total: existing.total,
             tableId: existing.tableId,
+            inventory,
           },
+        });
+      }
+
+      if (
+        inventory &&
+        inventory.movementCount > inventory.replayedMovementCount
+      ) {
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "inventory.production.consume_order",
+          entityType: "Order",
+          entityId: id,
+          context,
+          metadata: inventory,
         });
       }
 
@@ -146,16 +182,25 @@ export async function PATCH(
         payload: { orderId: id, status: nextStatus },
       });
 
-      return tx.order.findUniqueOrThrow({
+      const order = await tx.order.findUniqueOrThrow({
         where: { id },
         include: { items: { include: { menuItem: true } }, table: true },
       });
+      return { order, inventory };
     });
 
     await flushKdsOutboxBestEffort(10);
 
-    return NextResponse.json({ order });
+    return NextResponse.json({
+      order: result.order,
+      inventory: result.inventory,
+    });
   } catch (error) {
+    if (error instanceof InventoryLedgerError) {
+      return inventoryErrorResponse(error);
+    }
+    const mapped = inventoryLedgerErrorFromDatabase(error);
+    if (mapped) return inventoryErrorResponse(mapped);
     console.error("[orders] Failed to update order", error);
     return NextResponse.json(
       { error: "Unable to update order", code: "ORDER_UPDATE_FAILED" },
