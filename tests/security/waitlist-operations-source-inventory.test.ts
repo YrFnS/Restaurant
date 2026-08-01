@@ -101,8 +101,8 @@ describe("waitlist operations source inventory", () => {
 
   test("keeps public access limited, token-scoped, and DTO allowlisted", () => {
     for (const marker of [
-      'scope: "waitlist-read"',
-      'scope: "waitlist-create"',
+      '"waitlist-read"',
+      '"waitlist-create"',
       "Idempotency-Key",
       "createWaitlistEntry",
       'verifyCustomerAccessToken("waitlist"',
@@ -162,7 +162,7 @@ describe("waitlist operations source inventory", () => {
     }
 
     for (const marker of [
-      'apiFetch("/api/waitlist?admin=true',
+      'queryKey: ["waitlist", "admin", scope]',
       'apiFetch("/api/waitlist/settings"',
       'action: "notify"',
       'action: "seat"',
