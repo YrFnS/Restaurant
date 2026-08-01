@@ -182,6 +182,7 @@ jobs:
       AUTH_CUSTOMER_ACCESS_SECRET: "legacy-customer-access-0123456789abcdef0123456789abcdef"
       RATE_LIMIT_SECRET: "legacy-rate-limit-secret-0123456789abcdef0123456789abcdef"
       KDS_OUTBOX_SECRET: "legacy-kds-outbox-secret-0123456789abcdef0123456789abcdef"
+      LEGACY_SOURCE_COMMIT: "7f8679da07545bc9142261bcd0433d665b98a6e6"
 
     steps:
       - name: Check out repository with main history
@@ -202,14 +203,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .tmp
-          git show origin/main:prisma/schema.prisma > .tmp/legacy-schema.prisma
+          git show "$LEGACY_SOURCE_COMMIT":prisma/schema.prisma > .tmp/legacy-schema.prisma
           bunx prisma generate --schema .tmp/legacy-schema.prisma
 
           bunx prisma db execute \
             --file prisma/migrations/20260730000000_baseline/migration.sql \
             --schema .tmp/legacy-schema.prisma
 
-          git show origin/main:prisma/seed.ts > .tmp/legacy-seed.ts
+          git show "$LEGACY_SOURCE_COMMIT":prisma/seed.ts > .tmp/legacy-seed.ts
           bun .tmp/legacy-seed.ts
           bun tests/integration/p0-existing-data-rehearsal.ts \
             snapshot /tmp/p0-existing-data.json
