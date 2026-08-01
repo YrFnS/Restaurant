@@ -1,0 +1,58 @@
+name: Fix waitlist worker JSON requests once
+
+on:
+  push:
+    branches:
+      - agent/p1-waitlist-capacity
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-waitlist-worker-json-once
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-waitlist-capacity
+          fetch-depth: 0
+
+      - name: Send JSON through the state-changing worker boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/integration/p1-waitlist-operations.ts")
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '    headers: { authorization: "Bearer wrong-secret" },\n  });',
+                  '    headers: { authorization: "Bearer wrong-secret" },\n    body: JSON.stringify({}),\n  });',
+              ),
+              (
+                  '    headers: { authorization: `Bearer ${WORKER_SECRET}` },\n  });',
+                  '    headers: { authorization: `Bearer ${WORKER_SECRET}` },\n    body: JSON.stringify({}),\n  });',
+              ),
+          ]
+
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f"Expected one worker request marker, found {text.count(old)}: {old!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          rm .github/workflows/fix-waitlist-worker-json-once.yml
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/integration/p1-waitlist-operations.ts .github/workflows/fix-waitlist-worker-json-once.yml
+          git commit -m "test: send JSON to waitlist worker"
+          git push origin HEAD:agent/p1-waitlist-capacity
