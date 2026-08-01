@@ -16,6 +16,7 @@ import {
   readGiftCardAccount,
   searchGiftCards,
 } from "@/lib/loyalty/ledger";
+import { withSafeLoyaltyRawQueries } from "@/lib/loyalty/safe-transaction";
 
 const querySchema = z
   .object({
@@ -185,8 +186,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await db.$transaction(async (tx) => {
-      await assertIssueReplayMatches(tx, key, parsed);
-      return issueGiftCard(tx, {
+      const safeTx = withSafeLoyaltyRawQueries(tx);
+      await assertIssueReplayMatches(safeTx, key, parsed);
+      return issueGiftCard(safeTx, {
         ...parsed,
         expiresAt: parsed.expiresAt ? new Date(parsed.expiresAt) : null,
         idempotencyKey: key,
