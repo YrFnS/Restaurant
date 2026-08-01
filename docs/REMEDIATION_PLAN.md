@@ -1,14 +1,15 @@
 # Restaurant Production Remediation Plan
 
 > **Repository:** `YrFnS/Restaurant`  
-> **Tracking branch:** `agent/p1-reservation-availability`  
+> **Tracking branch:** `agent/p1-waitlist-capacity`  
+> **Base:** consolidated `main` at `9c6ccb3e02896f47a3ae04b2ad8cbf6579e9f4b8`  
 > **Created:** 2026-07-30  
 > **Last reconciled:** 2026-08-01  
-> **Current milestone:** P1 restaurant workflow correctness — waitlist, loyalty, and remaining operational workflows  
-> **Automated/source P0:** **Complete**  
-> **Production release:** **Blocked by real-environment rehearsal, configuration, independent review, and deployment smoke gates.**
+> **Current milestone:** P1 loyalty, gift cards, and remaining operational workflows  
+> **Automated/source gate:** **Complete for all implemented P0 and P1 slices**  
+> **Production release:** **Blocked by real-environment rehearsal, production configuration, independent review, and deployment smoke gates.**
 
-This is the master roadmap. Detailed implementation evidence remains in the dedicated milestone documents:
+This file is the current master status. Detailed design, policy, migration, and validation evidence remains in the dedicated milestone documents and repository history:
 
 - [`P0_IMPLEMENTATION_STATUS.md`](./P0_IMPLEMENTATION_STATUS.md)
 - [`P0_DEPLOYMENT_RUNBOOK.md`](./P0_DEPLOYMENT_RUNBOOK.md)
@@ -19,12 +20,13 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 - [`P1_PURCHASE_ORDERS_RECEIVING.md`](./P1_PURCHASE_ORDERS_RECEIVING.md)
 - [`P1_EMPLOYEE_TIMEKEEPING.md`](./P1_EMPLOYEE_TIMEKEEPING.md)
 - [`P1_RESERVATION_AVAILABILITY.md`](./P1_RESERVATION_AVAILABILITY.md)
+- [`P1_WAITLIST_OPERATIONS.md`](./P1_WAITLIST_OPERATIONS.md)
 
 ## Status notation
 
 - `[x]` completed and validated
 - `[ ]` open
-- `Blocked` requires deployment/operator action
+- `Blocked` requires production/operator action
 - `Deferred` intentionally moved to a later slice
 
 ---
@@ -38,29 +40,32 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 | P0-C | Authoritative ordering, cash containment, reliable KDS events | Completed and validated for supported flows |
 | P0-D | Customer privacy and sensitive-operation containment | Completed and validated |
 | P0-E | Automated validation and production release gate | Automated gate complete; production gates open |
-| P1-A | Database, exact money, constraints, payment ledger | Exact-money foundation and cash reversals complete; contract migration deferred |
+| P1-A | Exact money, domain integrity, payment ledger, reversals | Foundation complete; contract migration deferred |
 | P1-B01 | Cash-register sessions and reconciliation | Completed and validated |
 | P1-B02 | Immutable employee timekeeping | Completed and validated |
 | P1-B03 | Recipes and immutable stock ledger | Completed and validated |
 | P1-B04 | Suppliers, purchase orders, and partial receiving | Completed and validated |
-| P1-B06 | Restaurant-local reservation availability and safe table allocation | Completed and validated |
-| P1-C | KDS, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
+| P1-B05 | Waste through immutable stock movements | Core path complete; reporting and approvals open |
+| P1-B06 | Restaurant-local reservations and safe table allocation | Completed and validated |
+| P1-B07 | Capacity-aware waitlist, table holds, and guest lifecycle | Completed and validated |
+| P1-B08 | Loyalty and gift-card ledgers | Open — recommended next slice |
+| P1-C | KDS topology, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
 | P2 | UX, accessibility, SEO, observability, performance | Not started as a coordinated phase |
 
 ---
 
-# Consolidated branch history and current slice
+# Consolidated branch history
 
-PRs #1–#7 were merged into `main` in dependency order with ancestry-preserving merge commits. New work now branches directly from the consolidated foundation:
+PRs #1–#8 were merged into `main` in dependency order. The waitlist slice branches directly from the merged reservation foundation:
 
 ```text
-main (P0 and completed P1 foundations)
-└── agent/p1-reservation-availability
+main @ 9c6ccb3e02896f47a3ae04b2ad8cbf6579e9f4b8
+└── agent/p1-waitlist-capacity  (PR #10)
 ```
 
-Validated completed checkpoints:
+Validated checkpoints:
 
-| Slice | Validated head | Evidence |
+| Slice | Validated head or PR | Evidence |
 | --- | --- | --- |
 | P0 security and financial integrity | `5c8c2d93fe95f76aaeff7c433b175d8357ebd978` | P0 Validation #393, P0 Integration #228, Vercel check |
 | P1 exact money and domain integrity | `55ac63f8ffbc94b0f4daec3936dab78c55bc7685` | Validation #511, Integration #341 |
@@ -69,90 +74,64 @@ Validated completed checkpoints:
 | P1 recipes and immutable stock ledger | `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d` | P1 Stacked Validation #32 |
 | P1 suppliers, purchase orders, and partial receiving | `0e0eab253ed43a42e2d0beb88da97ba8e9a3b633` | P1 Stacked Validation #53 |
 | P1 immutable employee timekeeping | `054b096a600782897ef1b6eaf6591326b50fbe58` | P1 Stacked Validation #83 |
-| Consolidated P0/P1 foundation | `578e9bea13b4958e6b6f7ceac53719ce55f49013` | PRs #1–#7 merged into `main` in order |
-| P1 reservation availability and allocation | `45aff45f63bf18113338f7426fda92100760973f` | P0 Validation #793 and P0 Integration #623 |
+| P1 reservation availability and allocation | merged through PR #8 | P0 Validation #793 and P0 Integration #623 |
+| P1 capacity-aware waitlist operations | PR #10 final head | Permanent P0 Validation and P0 Integration gates |
+
+---
+
+# Production release gates
+
+These remain required even though repository-level gates are green:
+
+- [ ] Rehearse backup, baseline adoption, migration, verification, and rollback against a protected copy of the real deployment database.
+- [ ] Provision and verify independent production secrets, trusted origins, database/application URLs, KDS URLs, and worker secrets.
+- [ ] Configure authenticated KDS and waitlist worker schedules, monitoring, and repeated-failure handling.
+- [ ] Complete an independent security- and data-integrity-focused review of the final release stack.
+- [ ] Perform and document controlled post-deployment smoke tests against the real topology.
+- [ ] Verify restore and rollback procedures before enabling destructive contract migrations.
 
 ---
 
 # P0 — Critical security and financial integrity
 
-## P0 source criteria
+Completed source criteria:
 
-- [x] Replace browser-side PIN checks with server-side verification.
-- [x] Store non-recoverable, peppered PIN verifiers.
-- [x] Use persisted, revocable, expiring HTTP-only sessions.
-- [x] Enforce shared role policy inside APIs and reflect it in navigation.
-- [x] Add browser-origin, Fetch Metadata, JSON-content-type, and SameSite protections.
-- [x] Add shared PostgreSQL login and public-endpoint rate limiting.
-- [x] Protect administrative reads and mutations with strict schemas and safe DTOs.
-- [x] Add permanent API mutation and read/privacy inventories.
-- [x] Calculate order prices, modifiers, promotions, tax, fees, tips, and totals server-side.
-- [x] Make order creation atomic, idempotent, rollback-tested, and collision-safe.
-- [x] Add signed ownership credentials for order, reservation, and waitlist access.
-- [x] Add immutable audit events for implemented privileged and financial operations.
-- [x] Add immutable cash-capture events and replay-safe checkout.
-- [x] Add committed Prisma migrations with clean and representative existing-data rehearsals.
-- [x] Add a durable KDS transactional outbox, authenticated worker, retries, and polling fallback.
-- [x] Enforce TypeScript, focused tests, lint, and production build in CI.
-
-## P0 production release gates
-
-- [ ] Rehearse backup, baseline adoption, migration, verification, and rollback against a protected copy of the real deployment database.
-- [ ] Provision and verify independent production secrets, trusted origins, database/application URLs, and KDS service URLs.
-- [ ] Configure the authenticated KDS worker schedule, queue monitoring, and repeated-failure handling.
-- [ ] Complete an independent security-focused review of the final stack and deployment procedure.
-- [ ] Perform and document the controlled post-deployment smoke test against the real topology.
+- [x] Server-side employee authentication with non-recoverable, peppered PIN verifiers.
+- [x] Persisted, revocable, expiring HTTP-only staff sessions.
+- [x] Shared role policy enforced by APIs and reflected in navigation.
+- [x] Trusted-origin, Fetch Metadata, JSON-content-type, and SameSite browser protections.
+- [x] Shared PostgreSQL login and public-endpoint rate limiting.
+- [x] Strict schemas, privacy-safe DTOs, and permanent API mutation/read inventories.
+- [x] Authoritative server-side pricing, promotions, tax, fees, tips, and totals.
+- [x] Atomic, idempotent order creation with rollback and collision coverage.
+- [x] Scoped ownership credentials for order, reservation, and waitlist access.
+- [x] Immutable audit events for implemented privileged and financial operations.
+- [x] Immutable cash-capture events and replay-safe checkout.
+- [x] Additive Prisma migrations with clean and representative existing-data rehearsals.
+- [x] Durable transactional KDS outbox with authenticated processing and bounded retries.
+- [x] Locked install, Prisma validation, TypeScript, tests, lint, and production build in CI.
 
 ---
 
 # P1-A — Database and financial-model correctness
 
-## P1-A01 Exact financial storage
+## Completed foundation
 
-- [x] Define exact scales for currency, wages, rates, percentages, and unit costs.
-- [x] Add scaled-integer exact columns and deterministic legacy backfill.
-- [x] Keep compatibility values synchronized during expand/application-cutover stages.
-- [x] Make exact fields first-class Prisma fields for supported workflows.
-- [x] Prevent accidental `BigInt` JSON exposure through shared omission policy.
-- [x] Use exact values for authoritative menu pricing, modifiers, tax, delivery, promotions, dynamic pricing, tips, orders, checkout, cash, wages, and ingredient unit costs.
-- [x] Add exact-value constraints, verification tooling, runtime tests, and write-path inventory.
+- [x] Exact scaled-integer fields and deterministic backfill for supported money, rate, wage, and inventory paths.
+- [x] First-class exact Prisma fields with safe JSON omission policy.
+- [x] PostgreSQL enums, bounds, cross-field constraints, indexes, and mutable timestamp corrections.
+- [x] Immutable payment-event ledger with successful cash captures.
+- [x] Parent-linked partial/full cash refunds and eligible full-payment voids.
+- [x] Manager authorization, reviewed reasons, idempotency, open-register enforcement, and concurrency protection for reversals.
+
+## Open contract work
+
 - [ ] Resolve gift cards, combo meals, customer lifetime spend, special offers, promo administration, and remaining analytics reads before contract migration.
-- [ ] Rehearse the destructive contract migration against a protected production-like copy.
+- [ ] Add loyalty and gift-card domain constraints together with their complete ledgers.
+- [ ] Rehearse destructive contract migration against a protected production-like database copy.
 - [ ] Remove synchronization triggers and legacy financial `Float` columns only after all runtime dependencies are gone.
-
-## P1-A02 Domain enums, constraints, timestamps, and indexes
-
-- [x] Convert order, order-item, payment, employee-role, table, reservation, waitlist, cash, KDS, and dynamic-pricing controlled values to enums.
-- [x] Add fail-fast migration preflight for unknown legacy values.
-- [x] Add cross-field bounds and concurrency-safe partial uniqueness.
-- [x] Correct mutable `updatedAt` behavior and preserve immutable event timestamps.
-- [x] Add indexes for common order, reservation, kitchen, cash, employee, payment, session, and outbox paths.
-- [x] Add inventory movement, unit conversion, recipe, production-consumption, and stock-ledger constraints and indexes.
-- [x] Add supplier, purchase-order, receipt, line-progress, and receiving constraints and indexes.
-- [x] Add employee time-event, open-shift, open-break, adjustment, and operational-day constraints and indexes.
-- [ ] Add loyalty and gift-card domain constraints with their complete workflows.
-- [x] Define restaurant timezone and operational-day semantics for staff timekeeping.
-- [ ] Define retention/anonymization policy for customer, session, rate-limit, outbox, payment, inventory, timekeeping, and audit data.
-
-## P1-A03 Payment ledger and reversals
-
-- [x] Add immutable successful cash-capture events.
-- [x] Link captures to exact cash-register sessions.
-- [x] Add parent-linked partial/full cash refunds.
-- [x] Add eligible full-payment cash voids.
-- [x] Require manager authorization, reviewed reason code, written reason, idempotency, and an open register.
-- [x] Prevent over-refunds, duplicate voids, cross-order parents, partial voids, and concurrent reversal races in PostgreSQL.
-- [x] Reconcile order state to `partially_refunded`, `refunded`, or `voided` from the event ledger.
-- [x] Add bilingual manager reversal console and full database-backed tests.
-- [ ] Add processor-backed card capture/refund/authorization reversal.
-- [ ] Add split tender and per-tender reversal.
-- [ ] Add item-level refund allocation, tax/discount allocation, receipts, and customer notifications.
-
-## P1-A04 Branch and tenant boundaries
-
-- [x] Record current scope as one restaurant.
-- [ ] Decide whether multi-branch support is required.
-- [ ] Add branch ownership/scoping and tenant-isolation tests if required.
+- [ ] Define retention and anonymization policy for customer, session, rate-limit, outbox, payment, inventory, timekeeping, waitlist, and audit data.
+- [ ] Decide whether multi-branch support is required and add scoping before expanding beyond one restaurant.
 
 ---
 
@@ -160,188 +139,119 @@ Validated completed checkpoints:
 
 ## P1-B01 Cash-register sessions
 
-- [x] Add register and device identity.
-- [x] Add opening float, cashier identity, and opening timestamp.
-- [x] Link sales, refunds, pay-ins, payouts, and drops to an open session.
-- [x] Calculate exact expected closing balance.
-- [x] Record counted cash, signed discrepancy, threshold, and manager approval.
-- [x] Prevent multiple open sessions for one register.
-- [x] Serialize checkout, movements, and closing through row locks.
-- [x] Make closed sessions and close records immutable.
-- [x] Add persistent POS assignment and open/close workflow.
-- [ ] Add register edit, reassignment, deactivation, retirement, denomination counts, and dual-custody safe drops.
+- [x] Register/device identity, opening float, cashier identity, and opening timestamp.
+- [x] Register-linked sales, refunds, pay-ins, payouts, drops, and exact expected balance.
+- [x] Counted cash, signed discrepancy, configurable threshold, and manager approval.
+- [x] One open session per register, row-lock serialization, immutable close records, and persistent POS assignment.
+- [ ] Register editing, reassignment, retirement, denomination counts, and dual-custody safe drops.
 - [ ] Remove the legacy headerless checkout fallback after every deployed terminal is assigned.
 
 ## P1-B02 Employee timekeeping
 
-Completed and validated scope:
-
-- [x] Add immutable clock-in, clock-out, break-start, and break-end events.
-- [x] Enforce one open shift and one open break per employee under concurrent requests.
-- [x] Add immutable closed-shift summaries and exact wage/labor-cost snapshots.
-- [x] Add audited append-only manager corrections instead of rewriting history.
-- [x] Calculate gross, break, paid-time, and adjusted labor-cost totals from the ledger.
-- [x] Add restaurant timezone and operational-day assignment for overnight shifts.
-- [x] Add protected kiosk and manager APIs, bilingual timesheet workflow, migrations, source inventories, and database-backed tests.
-- [x] Preserve historical employees instead of deleting records referenced by immutable time history.
-
-Policy decisions for this slice:
-
-- Clock, break, and correction history is append-only and cannot be rewritten or deleted.
-- Employee records with historical timekeeping data are retained rather than hard-deleted.
-- Only one open shift and one open break may exist for an employee.
-- Closed shifts snapshot the employee's exact hourly wage and labor cost.
-- Manager corrections are signed duration/cost adjustments with a required reason and actor.
-- The restaurant timezone and operational-day boundary determine the business date for overnight shifts.
-
-Explicitly deferred:
-
-- [ ] Payroll calculation, payroll export, and payroll locking.
-- [ ] Schedule-vs-actual variance and overtime policy.
-- [ ] Geofencing, biometric terminals, and offline kiosk synchronization.
-- [ ] Leave, absence, holiday entitlement, and jurisdiction-specific labor rules.
+- [x] Immutable clock, break, shift, and manager-adjustment history.
+- [x] One open shift and one open break per employee under concurrency.
+- [x] Exact wage and labor-cost snapshots with operational-day and overnight semantics.
+- [x] Protected kiosk/manager APIs and bilingual timesheet workflow.
+- [ ] Payroll export/locking, overtime policy, schedule variance, leave, geofencing, biometrics, and offline terminals.
 
 ## P1-B03 Recipes and immutable stock ledger
 
-Completed and validated scope:
-
-- [x] Add exact ingredient balances in base-unit micros.
-- [x] Add per-ingredient unit conversions.
-- [x] Add versioned recipes/BOMs for menu items.
-- [x] Add modifier-specific recipe components.
-- [x] Add immutable stock movements with source references and idempotency.
-- [x] Add opening-balance movements for migrated inventory.
-- [x] Add receiving, waste, positive/negative adjustment, production-consumption, and correction/reversal movements.
-- [x] Consume recipe stock exactly once when an item enters production, including direct KDS jumps.
-- [x] Store an immutable recipe ID/version or permanent untracked decision on each order item at first production.
-- [x] Block configured production when stock is insufficient unless the ingredient explicitly permits negative stock.
-- [x] Prevent direct quantity edits after ledger cutover.
-- [x] Preserve movement cost snapshots and calculate cost impact.
-- [x] Add database immutability, balance, conversion, recipe-ownership, snapshot, and concurrency constraints.
-- [x] Add bilingual manager/inventory APIs, operator workflow, source inventories, and database-backed integration tests.
-
-Policy decisions for this slice:
-
-- Consumption occurs when an order item first enters production (`preparing`, or a later state reached directly).
-- The first decision is permanent for that order item: a newer recipe cannot consume it again, and a recipe published after an untracked production start cannot deduct it retroactively.
-- Cancelling after production does not silently return ingredients; a reviewed correction movement is required.
-- Refunds do not automatically return physical stock.
-- Missing recipes remain visible as permanently untracked items for that production lifecycle rather than blocking every legacy menu item.
-
-Deferred from this slice:
-
-- [ ] Lots, batches, expiry dates, serial tracking, and multi-location bins.
-- [ ] Weighted-average, FIFO, or another formal valuation method.
-- [ ] Vendor returns and stock transfers.
-- [ ] Automatic physical-stock return on refunds or cancellations.
-- [ ] Destructive removal of the legacy `Ingredient.quantity` compatibility field.
+- [x] Exact ingredient balances, unit conversion, versioned recipes, and modifier recipe components.
+- [x] Immutable opening, receipt, waste, adjustment, production-consumption, and reversal movements.
+- [x] Consume stock exactly once at first production and persist the recipe version or permanent untracked decision.
+- [x] Explicit negative-stock policy, movement cost snapshots, and database concurrency/immutability constraints.
+- [ ] Lots, batches, expiry, serial tracking, multi-location bins, valuation method, transfers, and automatic physical returns.
 
 ## P1-B04 Purchase orders
 
-Completed and validated scope:
-
-- [x] Add first-class supplier records with stable codes, contact details, payment terms, and active/inactive policy.
-- [x] Add exact purchase-order lines with ingredient, purchasing-unit, conversion, quantity, and cost snapshots.
-- [x] Add draft, submitted, partially received, received, and cancelled workflow.
-- [x] Freeze commercial terms and lines after submission.
-- [x] Add idempotent purchase-order creation and controlled submission/cancellation.
-- [x] Support partial and full receiving through exact immutable stock-receipt movements.
-- [x] Serialize concurrent receipt attempts and prevent over-receiving.
-- [x] Preserve immutable receipt and receipt-line history.
-- [x] Add reviewed purchase-receipt correction through linked stock reversals.
-- [x] Prevent generic stock reversal from bypassing purchasing reconciliation.
-- [x] Adopt legacy supplier text and purchase-order headers without inventing line history.
-- [x] Add bilingual supplier, order, receiving, receipt, and correction operator workflows.
-- [x] Add Prisma mappings, exact-value omission policy, audit coverage, source inventories, database tests, and existing-data rehearsal.
-
-Deferred from this slice:
-
-- [ ] Supplier invoices, accounts payable, taxes, and payment scheduling.
-- [ ] Approval thresholds and multi-step procurement authorization.
-- [ ] Vendor returns, debit notes, and supplier credits.
-- [ ] Lots, batches, expiry dates, serial numbers, and multi-location receiving.
-- [ ] Weighted-average, FIFO, or another formal inventory valuation method.
-- [ ] Automatic reorder suggestions, supplier transmission, and document attachments.
+- [x] First-class suppliers and exact purchase-order lines.
+- [x] Draft, submitted, partially received, received, and cancelled lifecycle.
+- [x] Immutable submitted terms, partial/full receiving, concurrent over-receipt prevention, and reviewed receipt correction.
+- [x] Bilingual supplier, ordering, receiving, receipt, and correction workflows.
+- [ ] Supplier invoices, AP, approval thresholds, vendor returns, tax, payment scheduling, attachments, and automatic reorder suggestions.
 
 ## P1-B05 Waste
 
-- [x] Route all new waste through immutable stock movements.
-- [x] Add unit conversion, exact cost impact, idempotency, and reviewed correction support.
+- [x] Route new waste through immutable stock movements with unit conversion, exact cost, idempotency, and correction support.
 - [ ] Add configurable approval thresholds and role policy.
-- [ ] Report by ingredient, reason, employee, and operational day.
+- [ ] Report waste by ingredient, reason, employee, and operational day.
 
 ## P1-B06 Reservation availability
 
-Completed and validated scope:
-
-- [x] Add restaurant-local timezone conversion and independent weekly reservation service periods.
-- [x] Support multiple periods per weekday, prior-day overnight continuation, and full/partial closures.
-- [x] Enforce notice, horizon, party-size, duration, turnover, slot-interval, closure, capacity, and compatibility policy.
-- [x] Return rate-limited, aggregate-only public availability without exposing tables, customers, or other bookings.
-- [x] Snapshot exact reservation start, dining end, release time, duration, turnover, and source.
-- [x] Add transactional automatic allocation and staff reassignment with PostgreSQL exclusion protection against active table overlap.
-- [x] Add ownership-token customer cancellation with a configurable cutoff.
-- [x] Complete audited confirmed, seated, completed, cancelled, and no-show lifecycle behavior with table-state effects.
-- [x] Add bilingual public availability, staff calendar, reservation-policy, weekly-period, and closure workflows.
-- [x] Add clean-database migration, representative existing-data adoption, privacy/source inventories, and complete P0/P1 regression coverage.
-
-Policy decisions for this slice:
-
-- Customer input is a restaurant-local date and time; the server performs authoritative timezone conversion.
-- Occupancy uses the half-open range `[startsAt, releaseAt)` and snapshots duration plus turnover at booking time.
-- Active `confirmed` and `seated` reservations block their assigned table.
-- PostgreSQL is the final concurrency boundary for table overlap.
-- Public availability exposes aggregate capacity only.
-- One physical table is assigned per reservation; table combinations require an explicit adjacency model and remain deferred.
-
-Explicitly deferred:
-
-- [ ] Physical table combinations and adjacency rules.
-- [ ] Customer rescheduling and self-service detail editing.
-- [ ] Deposits, card authorization, cancellation fees, and overbooking policy.
-- [ ] Email, SMS, messaging-provider delivery, and notification retries.
-- [ ] Waitlist estimates and automatic waitlist-to-reservation promotion.
+- [x] Restaurant-local timezone conversion and weekly/overnight service periods.
+- [x] Full/partial closures, notice, horizon, party-size, duration, turnover, and slot policy.
+- [x] Aggregate-only public availability without table or customer disclosure.
+- [x] Transactional automatic allocation and staff reassignment with PostgreSQL table-overlap exclusion.
+- [x] Ownership-token cancellation cutoff and audited confirmed, seated, completed, cancelled, and no-show lifecycle.
+- [x] Bilingual public, calendar, settings, period, and closure workflows.
+- [ ] Physical table combinations, customer rescheduling/editing, deposits, cancellation fees, overbooking policy, and provider notifications.
 
 ## P1-B07 Waitlist
 
-- [ ] Improve estimates using capacity, party size, reservations, and turnover.
-- [ ] Complete notify, confirm, seat, cancel, and no-show transitions.
-- [ ] Add notification expiry and compatible-table assignment.
+Completed and validated scope:
 
-## P1-B08 Loyalty and gift cards
+- [x] Replace the fixed FIFO quote with capacity-, party-size-, occupancy-, reservation-, turnover-, and queue-aware estimates.
+- [x] Simulate one availability lane per physical table and store projected seating time plus estimate timestamp.
+- [x] Add idempotent public joins, duplicate-active-phone protection, safe aggregate reads, and scoped ownership credentials.
+- [x] Complete notify, confirm, seat, cancel, no-show, and automatic notification-expiry transitions.
+- [x] Assign and temporarily hold one compatible open table only when a party is notified.
+- [x] Enforce one active notified hold per table and serialize queue changes with advisory and row locks.
+- [x] Release holds transactionally after cancellation, no-show, expiry, or seating.
+- [x] Recheck reservation conflicts while seating and update the entry and physical table atomically.
+- [x] Prevent deletion, capacity reduction, or manual release of a table with an active waitlist hold.
+- [x] Add configurable waitlist policy, an authenticated expiry worker, immutable audit events, and privacy-safe customer/staff DTOs.
+- [x] Add bilingual customer and host workflows with projected seating, countdowns, confirmation, and lifecycle actions.
+- [x] Add additive migrations, legacy-entry adoption, PostgreSQL lifecycle constraints, source inventories, clean-database tests, and complete P0/P1 regression coverage.
 
-- [ ] Define earning and reversal policy from trusted payment events.
-- [ ] Add immutable point transactions.
-- [ ] Add concurrency-safe gift-card issue, redemption, refund, and adjustment ledger.
+Policy decisions:
+
+- Waiting entries have no table assignment; a table hold begins only at notification.
+- Estimates are conservative quotes and are recalculated after every queue or capacity change.
+- One notified entry may hold one physical table, and one physical table may have only one active waitlist hold.
+- Customer confirmation is recorded without adding another active status; staff may require confirmation before seating.
+- Historical terminal entries are retained instead of hard-deleted.
+
+Deferred:
+
+- [ ] SMS, email, and messaging-provider delivery or callbacks.
+- [ ] Physical table combinations and adjacency.
+- [ ] Automatic waitlist-to-reservation promotion.
+- [ ] Customer party-size/preference editing after join.
+- [ ] Predictive machine-learning estimates, deposits, offline host synchronization, and multi-branch queues.
+
+## P1-B08 Loyalty and gift cards — recommended next slice
+
+- [ ] Define earning, expiration, adjustment, and reversal policy from trusted payment events.
+- [ ] Add immutable loyalty-point transactions with idempotency and concurrency safety.
+- [ ] Reconcile points on refunds and voids without rewriting history.
+- [ ] Add concurrency-safe gift-card issue, redemption, refund, void, and adjustment ledger.
+- [ ] Add exact balances, audit evidence, ownership/lookup privacy, bilingual operator/customer workflows, and full database tests.
 
 ---
 
 # P1-C — KDS, analytics, jobs, and recovery
 
-## P1-C01 Production-ready KDS
+## KDS
 
-- [x] Add transactional outbox, authenticated retry endpoint, and bounded polling fallback.
-- [x] Replace client-side latest-200 counting with a redacted aggregate.
+- [x] Transactional outbox, authenticated retry endpoint, bounded polling fallback, and safe aggregate reads.
 - [ ] Finalize multi-instance realtime topology, broker, service authentication, reconnect behavior, health checks, and metrics.
 - [ ] Complete course, hold, fire, recall, bump, and audit workflows.
-- [ ] Configure production worker/runtime topology.
+- [ ] Configure production worker/runtime topology and repeated-failure handling.
 
-## P1-C02 Revenue analytics
+## Revenue analytics
 
 - [ ] Define revenue-recognition and operational-day policy.
-- [ ] Recognize revenue from trusted payment events.
-- [ ] Deduct refunds and voids and exclude unpaid/cancelled orders.
-- [ ] Use database aggregation, bounded ranges, pagination, and restaurant timezone.
-- [ ] Read operating hours from settings.
+- [ ] Recognize revenue from trusted payment events and deduct refunds/voids.
+- [ ] Exclude unpaid/cancelled orders and use database aggregation with bounded ranges and restaurant timezone.
+- [ ] Add reconciliation to cash-register, payment, order, inventory, and labor ledgers.
 
-## P1-C03 Jobs, monitoring, backup, and recovery
+## Jobs, monitoring, backup, and recovery
 
-- [x] Add durable idempotent KDS outbox processing with retries and visibility.
 - [ ] Add dead-letter policy, alert thresholds, structured logging, metrics, readiness, and error monitoring.
-- [ ] Extend durable jobs to notifications, email/SMS, and analytics rollups.
-- [ ] Define automated production backups and recovery targets.
-- [ ] Test restore and point-in-time recovery with the actual provider.
-- [ ] Protect uploaded assets and configuration.
+- [ ] Extend durable jobs to provider notifications, email/SMS, and analytics rollups.
+- [ ] Define automated production backups, recovery targets, and point-in-time recovery.
+- [ ] Test restore and rollback with the actual provider.
+- [ ] Protect uploaded assets and production configuration.
 
 ---
 
@@ -360,13 +270,13 @@ Explicitly deferred:
 
 ## Engineering and operations
 
-- [x] Add focused unit and database-backed integration tests.
-- [x] Add API mutation/read inventory tests and locked CI install/migration/typecheck/test/lint/build.
-- [ ] Add browser end-to-end tests.
-- [ ] Configure required branch-protection checks, dependency scanning, and secret scanning.
-- [ ] Add structured logs, monitoring, metrics, readiness, and alerts.
-- [ ] Add pagination, safe caching/invalidation, image optimization, bundle review, and query profiling.
-- [ ] Document final supported Bun/Node/PostgreSQL versions and provider-specific deployment steps.
+- [x] Focused unit and database-backed integration tests.
+- [x] API mutation/read inventories and locked CI install/migration/typecheck/test/lint/build.
+- [ ] Browser end-to-end tests.
+- [ ] Required branch-protection checks, dependency scanning, and secret scanning.
+- [ ] Structured logs, monitoring, metrics, readiness, and alerts.
+- [ ] Pagination, safe caching/invalidation, image optimization, bundle review, and query profiling.
+- [ ] Final supported Bun/Node/PostgreSQL and provider-specific deployment documentation.
 - [ ] Remove unused dependencies and enforce one package-manager strategy.
 - [ ] Validate CSP, security headers, cache rules, and image-host configuration.
 
@@ -374,26 +284,24 @@ Explicitly deferred:
 
 # Recorded decisions
 
-- [x] Authentication: signed cookie plus persisted revocable PostgreSQL session.
-- [x] PIN storage: peppered memory-hard verifier retained in the legacy column during migration compatibility.
-- [x] Permissions: shared role groups enforced by APIs and reflected in frontend visibility.
-- [x] Browser mutation protection: trusted origin + Fetch Metadata + JSON content type + SameSite cookie.
-- [x] Order references: date-prefixed, random, unique, and non-sequential.
-- [x] Order idempotency: deterministic internal order identity retained with the order.
-- [x] Money: exact scaled integers; legacy floats remain only during expand/contract migration.
-- [x] Cash operations: immutable payment events and register-session ledger.
-- [x] Refunds/voids: append-only parent-linked events with manager approval and open-register cash effects.
-- [x] KDS reliability: transactional outbox, authenticated retries, realtime delivery, and polling fallback.
-- [x] Current deployment scope: one restaurant.
-- [x] Stock consumption timing: first entry into production; no silent return on cancellation/refund.
-- [x] Stock recipe snapshot: first production stores an immutable recipe version or a permanent untracked decision.
-- [x] Purchasing receipts: submitted terms are immutable; partial receipts and reviewed corrections reconcile atomically with the stock ledger.
-- [x] Timekeeping ledger: clock, break, shift, and correction history is append-only; employee records with history are retained.
-- [x] Restaurant timezone and operational-day boundary govern overnight timekeeping and business-date assignment.
-- [x] Reservation availability uses restaurant-local date/time, snapshotted duration/turnover, and PostgreSQL exclusion constraints for active table occupancy.
+- [x] Authentication uses a signed cookie plus a persisted, revocable PostgreSQL session.
+- [x] PINs use peppered memory-hard verifiers retained in the legacy column during migration compatibility.
+- [x] Shared role groups are enforced by APIs and reflected in frontend visibility.
+- [x] Browser mutations require trusted origin, Fetch Metadata, JSON content type, and SameSite protection.
+- [x] Order references are random, date-prefixed, unique, and non-sequential; order creation is idempotent.
+- [x] Supported money paths use exact scaled integers while legacy floats remain only during expand/contract migration.
+- [x] Cash operations and reversals use immutable parent-linked payment events and open-register effects.
+- [x] KDS reliability uses a transactional outbox, authenticated retries, realtime delivery, and polling fallback.
+- [x] Current deployment scope is one restaurant.
+- [x] Stock consumption occurs on first production entry and stores an immutable recipe version or permanent untracked decision.
+- [x] Submitted purchasing terms and receipts are immutable; reviewed corrections reconcile with the stock ledger.
+- [x] Timekeeping history is append-only and uses restaurant timezone plus operational-day assignment.
+- [x] Reservation occupancy uses restaurant-local input and snapshotted half-open `[startsAt, releaseAt)` ranges.
 - [x] Public reservation availability is aggregate-only; customer cancellation is ownership-token scoped and cutoff-controlled.
-- [ ] Revenue recognition policy.
-- [ ] Loyalty earning/reversal policy.
+- [x] Waitlist estimates simulate compatible table capacity, occupancy, reservation ranges, turnover, active holds, and parties ahead.
+- [x] A notified waitlist party receives one expiring compatible-table hold; confirmation, seating, cancellation, no-show, and expiry are transactional and audited.
+- [ ] Revenue-recognition policy.
+- [ ] Loyalty earning, expiration, and reversal policy.
 - [ ] Multi-branch requirement.
 - [ ] Final realtime topology and notification providers.
 - [ ] Production backup, restore, point-in-time recovery, and alert targets.
@@ -405,11 +313,9 @@ Explicitly deferred:
 | Date | Change | Validation |
 | --- | --- | --- |
 | 2026-07-30 | Created remediation roadmap and P0 tracking branch. | Initial repository audit. |
-| 2026-07-31 | Completed source-level P0 containment, authentication, RBAC, privacy, authoritative ordering, audit, migrations, KDS outbox, and CI. | P0 Validation #393 and P0 Integration #228 green at `5c8c2d9`. |
-| 2026-07-31 | Added exact financial storage, domain enums, timestamps, constraints, indexes, exact runtime cutover, and migration rehearsals. | Validation #511 and Integration #341 green at `55ac63f`. |
-| 2026-07-31 | Added POS register assignment, opening/closing, cash reconciliation, immutable close records, and register-linked payment/cash ledgers. | Validation #558 and Integration #388 green at `c44030b`. |
-| 2026-07-31 | Added immutable cash refunds and voids, manager console, ledger reconciliation, and concurrency/database protections. | P1 Stacked Validation #6 green at `87d787b`. |
-| 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |
-| 2026-07-31 | Added first-class suppliers, exact purchase-order lines, immutable submitted terms, partial/full receiving, reviewed receipt correction, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #53 green at `0e0eab2`. |
-| 2026-08-01 | Added immutable employee shifts, breaks, event history, exact labor snapshots, append-only manager adjustments, operational-day policy, kiosk/manager workflows, and full regression coverage. | P1 Stacked Validation #83 green at `054b096`. |
-| 2026-08-01 | Consolidated PRs #1–#7 into `main`, then added restaurant-local reservation policy, weekly/overnight service periods, closures, safe public availability, transactional table allocation, lifecycle controls, bilingual workflows, and full regression coverage. | P0 Validation #793 and P0 Integration #623 green at `45aff45`. |
+| 2026-07-31 | Completed P0 containment, authentication, RBAC, privacy, authoritative ordering, auditing, migrations, KDS outbox, and CI. | P0 Validation #393 and P0 Integration #228 green at `5c8c2d9`. |
+| 2026-07-31 | Added exact storage, domain integrity, cash-register sessions, and immutable payment reversals. | Validation #511/#558 and stacked reversal validation green. |
+| 2026-07-31 | Added exact inventory, versioned recipes, immutable stock movements, purchasing, receiving, and reviewed corrections. | P1 Stacked Validation #32 and #53 green. |
+| 2026-08-01 | Added immutable employee shifts, breaks, labor snapshots, corrections, and operational-day policy. | P1 Stacked Validation #83 green. |
+| 2026-08-01 | Added restaurant-local reservation policy, service periods, closures, safe availability, transactional allocation, lifecycle controls, and bilingual workflows. | P0 Validation #793 and P0 Integration #623 green. |
+| 2026-08-01 | Added capacity-aware wait estimates, expiring table holds, customer confirmation, transactional seating/release, bilingual customer/host workflows, authenticated expiry processing, privacy controls, and full regression coverage. | Permanent P0 Validation and P0 Integration gates green on PR #10. |

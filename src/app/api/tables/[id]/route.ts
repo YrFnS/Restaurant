@@ -32,6 +32,34 @@ const tableUpdateSchema = z
     message: "At least one editable field is required",
   });
 
+class TableMutationError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(message: string, code: string, status = 409) {
+    super(message);
+    this.name = "TableMutationError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+function tableError(error: TableMutationError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code },
+    { status: error.status, headers: { "Cache-Control": "no-store" } }
+  );
+}
+
+async function lockTable(tx: Prisma.TransactionClient, id: string) {
+  await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT "id"
+    FROM "RestaurantTable"
+    WHERE "id" = ${id}
+    FOR UPDATE
+  `);
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -53,12 +81,50 @@ export async function PATCH(
       );
     }
 
-    const table = await db.restaurantTable.update({
-      where: { id },
-      data: parsed.data,
+    const table = await db.$transaction(async (tx) => {
+      await lockTable(tx, id);
+      const existing = await tx.restaurantTable.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          waitlistEntries: {
+            where: { status: "notified" },
+            take: 1,
+            select: { id: true, partySize: true },
+          },
+        },
+      });
+      if (!existing) {
+        throw new TableMutationError("Table not found", "TABLE_NOT_FOUND", 404);
+      }
+
+      const activeHold = existing.waitlistEntries[0];
+      if (activeHold) {
+        if (parsed.data.status && parsed.data.status !== "reserved") {
+          throw new TableMutationError(
+            "Release or seat the active waitlist hold before changing this table status",
+            "TABLE_HAS_WAITLIST_HOLD"
+          );
+        }
+        if (
+          parsed.data.capacity !== undefined &&
+          parsed.data.capacity < activeHold.partySize
+        ) {
+          throw new TableMutationError(
+            "Table capacity cannot be reduced below the held waitlist party size",
+            "TABLE_CAPACITY_BELOW_WAITLIST_PARTY"
+          );
+        }
+      }
+
+      return tx.restaurantTable.update({
+        where: { id },
+        data: parsed.data,
+      });
     });
     return NextResponse.json({ table });
   } catch (error) {
+    if (error instanceof TableMutationError) return tableError(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -86,43 +152,50 @@ export async function DELETE(
 
   try {
     const { id } = await params;
-    const table = await db.restaurantTable.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        orders: {
-          where: {
-            status: { in: ["pending", "confirmed", "preparing", "ready"] },
+    await db.$transaction(async (tx) => {
+      await lockTable(tx, id);
+      const table = await tx.restaurantTable.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          orders: {
+            where: {
+              status: { in: ["pending", "confirmed", "preparing", "ready"] },
+            },
+            take: 1,
+            select: { id: true },
           },
-          take: 1,
-          select: { id: true },
+          reservations: {
+            where: { status: { in: ["confirmed", "seated"] } },
+            take: 1,
+            select: { id: true },
+          },
+          waitlistEntries: {
+            where: { status: "notified" },
+            take: 1,
+            select: { id: true },
+          },
         },
-        reservations: {
-          where: { status: { in: ["confirmed", "seated"] } },
-          take: 1,
-          select: { id: true },
-        },
-      },
-    });
-    if (!table) {
-      return NextResponse.json(
-        { error: "Table not found", code: "TABLE_NOT_FOUND" },
-        { status: 404 }
-      );
-    }
-    if (table.orders.length > 0 || table.reservations.length > 0) {
-      return NextResponse.json(
-        {
-          error: "Move active orders and reservations before deleting this table",
-          code: "TABLE_IN_USE",
-        },
-        { status: 409 }
-      );
-    }
+      });
+      if (!table) {
+        throw new TableMutationError("Table not found", "TABLE_NOT_FOUND", 404);
+      }
+      if (
+        table.orders.length > 0 ||
+        table.reservations.length > 0 ||
+        table.waitlistEntries.length > 0
+      ) {
+        throw new TableMutationError(
+          "Move active orders, reservations, and waitlist holds before deleting this table",
+          "TABLE_IN_USE"
+        );
+      }
 
-    await db.restaurantTable.delete({ where: { id } });
+      await tx.restaurantTable.delete({ where: { id } });
+    });
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (error instanceof TableMutationError) return tableError(error);
     console.error("[tables] Failed to delete table", error);
     return NextResponse.json(
       { error: "Unable to delete table", code: "TABLE_DELETE_FAILED" },

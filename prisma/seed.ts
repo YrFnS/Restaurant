@@ -24,6 +24,7 @@ const db = new PrismaClient();
 function uid() { return randomUUID().slice(0, 12); }
 function futureDate(days: number) { return new Date(Date.now() + days * 86400000); }
 function pastDate(days: number) { return new Date(Date.now() - days * 86400000); }
+function addMinutes(value: Date, minutes: number) { return new Date(value.getTime() + minutes * 60000); }
 function micros(value: number) { return BigInt(Math.round(value * 1_000_000)); }
 function minor(value: number) { return BigInt(Math.round(value * 100)); }
 
@@ -313,9 +314,33 @@ async function main() {
     { customerName: "Sara Nabil", customerPhone: "+9647507777777", partySize: 2, status: "notified", estimatedWait: 5, notes: "Waiting at bar" },
     { customerName: "Karim Fadel", customerPhone: "+9647508888888", partySize: 6, status: "waiting", estimatedWait: 35, notes: "Large group" },
   ];
+  const waitlistSeededAt = new Date();
+  const seededHoldTable = tableRecords.find((table: any) => table.number === 9);
   for (const w of wlData) {
+    const notified = w.status === "notified";
+    if (notified && seededHoldTable) {
+      // P1 waitlist seeded hold: a notified entry must own a real table hold.
+      await db.restaurantTable.update({
+        where: { id: seededHoldTable.id },
+        data: { status: TableStatus.reserved, seatedAt: null },
+      });
+    }
     await db.waitlistEntry.create({
-      data: { ...w, status: w.status as WaitlistStatus },
+      data: {
+        ...w,
+        status: w.status as WaitlistStatus,
+        source: ReservationSource.import,
+        tableId: notified ? seededHoldTable?.id : null,
+        estimatedSeatAt: notified
+          ? waitlistSeededAt
+          : addMinutes(waitlistSeededAt, w.estimatedWait),
+        estimateCalculatedAt: waitlistSeededAt,
+        notifiedAt: notified ? waitlistSeededAt : null,
+        notificationExpiresAt: notified
+          ? addMinutes(waitlistSeededAt, 10)
+          : null,
+        notificationConfirmedAt: notified ? waitlistSeededAt : null,
+      },
     });
   }
   console.log(`  ✓ ${wlData.length} waitlist entries`);

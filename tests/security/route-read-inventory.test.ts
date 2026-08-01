@@ -63,6 +63,15 @@ const SPECIAL_READ_POLICIES: Record<string, ReadPolicy> = {
     ],
     markerScope: "source",
   },
+  "GET /api/internal/waitlist": {
+    markers: [
+      "configuredSecret",
+      "secretsMatch",
+      "processWaitlist(request)",
+      "refreshWaitlist",
+    ],
+    markerScope: "source",
+  },
   "GET /api/menu": {
     markers: [
       'searchParams.get("all")',
@@ -128,7 +137,8 @@ const SPECIAL_READ_POLICIES: Record<string, ReadPolicy> = {
       "requireStaffSession(RESERVATION_MANAGEMENT_ROLES)",
       "verifyCustomerAccessToken",
       "waitingCount",
-      "select: {",
+      "serializeWaitlistForCustomer",
+      "safeWaitlistPolicy",
     ],
     forbidden: [/\btokenHash\b/i, /\bpin(?:Hash|Verifier)?\b/i],
   },

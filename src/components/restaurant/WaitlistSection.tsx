@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -12,14 +12,39 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ArrowLeft,
   ArrowRight,
   Bell,
+  CalendarClock,
+  CheckCircle2,
   Clock,
   Hourglass,
   ShieldCheck,
   Users,
 } from "lucide-react";
+
+function formatProjectedTime(value: string | null | undefined, timezone: string) {
+  if (!value) return "—";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: timezone,
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return new Date(value).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+}
 
 export function WaitlistSection() {
   const { t, isRTL } = useI18n();
@@ -38,9 +63,18 @@ export function WaitlistSection() {
     name: customerName || "",
     phone: customerPhone || "",
     partySize: 2,
+    preference: "any",
     notes: "",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [joinKey, setJoinKey] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const waitlistQuery = useQuery({
     queryKey: [
@@ -49,7 +83,7 @@ export function WaitlistSection() {
       waitlistAccess?.accessToken,
     ],
     retry: false,
-    refetchInterval: 15_000,
+    refetchInterval: 10_000,
     queryFn: async () => {
       const query = waitlistAccess
         ? `?id=${encodeURIComponent(
@@ -63,7 +97,12 @@ export function WaitlistSection() {
 
       if (response.status === 404 && waitlistAccess) {
         clearWaitlistAccess();
-        return { entry: null, position: 0, waitingCount: data?.waitingCount || 0 };
+        return {
+          entry: null,
+          position: 0,
+          waitingCount: data?.waitingCount || 0,
+          policy: data?.policy || null,
+        };
       }
       if (!response.ok) {
         throw new Error(data?.error || t.common.error);
@@ -75,22 +114,64 @@ export function WaitlistSection() {
   const myEntry = waitlistQuery.data?.entry || null;
   const position = waitlistQuery.data?.position || 0;
   const waitingCount = waitlistQuery.data?.waitingCount || 0;
+  const policy = waitlistQuery.data?.policy || {
+    enabled: true,
+    isOpenNow: true,
+    timezone: "UTC",
+    minPartySize: 1,
+    maxPartySize: 8,
+    notificationExpiryMinutes: 10,
+    requireConfirmation: true,
+  };
+
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      partySize: Math.min(
+        Math.max(current.partySize, policy.minPartySize || 1),
+        policy.maxPartySize || 8
+      ),
+    }));
+  }, [policy.maxPartySize, policy.minPartySize]);
+
+  const partySizes = useMemo(() => {
+    const minimum = Math.max(1, policy.minPartySize || 1);
+    const maximum = Math.min(12, policy.maxPartySize || 8);
+    return Array.from(
+      { length: Math.max(0, maximum - minimum + 1) },
+      (_, index) => minimum + index
+    );
+  }, [policy.maxPartySize, policy.minPartySize]);
 
   const join = async () => {
     if (!form.name || !form.phone) {
       toast.error(t.waitlist.yourName);
       return;
     }
+    if (!policy.enabled || !policy.isOpenNow) {
+      toast.error(
+        isRTL
+          ? "قائمة الانتظار غير متاحة حالياً"
+          : "The waitlist is not available right now"
+      );
+      return;
+    }
 
+    const requestKey = joinKey || crypto.randomUUID();
+    if (!joinKey) setJoinKey(requestKey);
     setSubmitting(true);
     try {
       const response = await fetch("/api/waitlist", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `waitlist-${requestKey}`,
+        },
         body: JSON.stringify({
           customerName: form.name,
           customerPhone: form.phone,
           partySize: form.partySize,
+          preference: form.preference,
           notes: form.notes || null,
         }),
       });
@@ -101,6 +182,7 @@ export function WaitlistSection() {
       }
 
       rememberWaitlistAccess(data.entry.id, data.accessToken);
+      setJoinKey("");
       toast.success(t.waitlist.joined);
       await queryClient.invalidateQueries({ queryKey: ["customer-waitlist"] });
     } catch {
@@ -110,9 +192,12 @@ export function WaitlistSection() {
     }
   };
 
-  const leave = async () => {
+  const mutateEntry = async (
+    action: "confirm" | "cancel",
+    setBusy?: (value: boolean) => void
+  ) => {
     if (!waitlistAccess || !myEntry) return;
-
+    setBusy?.(true);
     try {
       const response = await fetch(
         `/api/waitlist/${encodeURIComponent(
@@ -121,7 +206,7 @@ export function WaitlistSection() {
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "cancelled" }),
+          body: JSON.stringify({ action }),
         }
       );
       const data = await response.json().catch(() => null);
@@ -130,11 +215,19 @@ export function WaitlistSection() {
         return;
       }
 
-      clearWaitlistAccess();
-      toast.success(t.waitlist.statusCancelled);
+      if (action === "cancel") {
+        clearWaitlistAccess();
+        toast.success(t.waitlist.statusCancelled);
+      } else {
+        toast.success(
+          isRTL ? "تم تأكيد حضورك" : "Your arrival is confirmed"
+        );
+      }
       await queryClient.invalidateQueries({ queryKey: ["customer-waitlist"] });
     } catch {
       toast.error(t.common.error);
+    } finally {
+      setBusy?.(false);
     }
   };
 
@@ -142,9 +235,19 @@ export function WaitlistSection() {
     myEntry && ["waiting", "notified"].includes(myEntry.status)
       ? myEntry
       : null;
+  const isNotified = activeEntry?.status === "notified";
+  const isConfirmed = Boolean(activeEntry?.notificationConfirmedAt);
+  const expiresInSeconds = activeEntry?.notificationExpiresAt
+    ? Math.max(
+        0,
+        Math.ceil(
+          (new Date(activeEntry.notificationExpiresAt).getTime() - now) / 1_000
+        )
+      )
+    : 0;
 
   return (
-    <div className="flex-1 max-w-4xl mx-auto w-full px-4 md:px-6 py-6">
+    <div className="flex-1 max-w-5xl mx-auto w-full px-4 md:px-6 py-6">
       <div className="flex items-center gap-3 mb-6">
         <Button
           variant="ghost"
@@ -164,43 +267,146 @@ export function WaitlistSection() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {!policy.enabled || !policy.isOpenNow ? (
+        <Card className="mb-6 border-amber-300/50 bg-amber-50/50 dark:bg-amber-950/10">
+          <CardContent className="p-4 flex items-start gap-3">
+            <Clock className="size-5 text-amber-600 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                {isRTL
+                  ? "قائمة الانتظار مغلقة حالياً"
+                  : "The waitlist is currently closed"}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {isRTL
+                  ? "يمكن الانضمام خلال فترات خدمة المطعم وعندما لا توجد فترة إغلاق مجدولة."
+                  : "Joining is available during restaurant service periods when no closure is active."}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-6">
         <div>
           {activeEntry ? (
             <Card className="bg-gradient-to-br from-primary/10 to-accent/40 border-primary/20">
-              <CardContent className="p-6 text-center">
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  className="size-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-3xl font-bold mx-auto mb-4"
-                >
-                  {position}
-                </motion.div>
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <h3 className="font-bold text-lg">{t.waitlist.yourSpot}</h3>
-                  {activeEntry.status === "notified" && (
-                    <Badge className="gap-1">
-                      <Bell className="size-3" />
-                      {isRTL ? "حان دورك" : "Your table is ready"}
-                    </Badge>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="size-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-3xl font-bold mx-auto mb-4"
+                  >
+                    {isNotified ? <Bell className="size-8" /> : position}
+                  </motion.div>
+                  <div className="flex items-center justify-center gap-2 mb-1 flex-wrap">
+                    <h3 className="font-bold text-lg">
+                      {isNotified
+                        ? isRTL
+                          ? "طاولتك جاهزة"
+                          : "Your table is ready"
+                        : t.waitlist.yourSpot}
+                    </h3>
+                    {isNotified && (
+                      <Badge className="gap-1">
+                        <Bell className="size-3" />
+                        {isConfirmed
+                          ? isRTL
+                            ? "تم التأكيد"
+                            : "Confirmed"
+                          : isRTL
+                            ? "بانتظار تأكيدك"
+                            : "Confirmation needed"}
+                      </Badge>
+                    )}
+                  </div>
+                  {!isNotified && (
+                    <p className="text-sm text-muted-foreground mb-4">
+                      {t.waitlist.partyAhead.replace(
+                        "{count}",
+                        String(Math.max(0, position - 1))
+                      )}
+                    </p>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground mb-4">
-                  {t.waitlist.partyAhead.replace(
-                    "{count}",
-                    String(Math.max(0, position - 1))
-                  )}
-                </p>
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-background mb-4">
-                  <Clock className="size-4 text-primary" />
-                  <span className="text-sm font-medium">
-                    {t.waitlist.estimatedWait}: {activeEntry.estimatedWait}{" "}
-                    {t.waitlist.minutes}
-                  </span>
+
+                <div className="grid sm:grid-cols-2 gap-3 my-5">
+                  <div className="rounded-xl bg-background/80 border p-3">
+                    <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Clock className="size-3.5" />
+                      {t.waitlist.estimatedWait}
+                    </div>
+                    <div className="font-bold mt-1">
+                      {isNotified
+                        ? isRTL
+                          ? "الآن"
+                          : "Now"
+                        : `${activeEntry.estimatedWait} ${t.waitlist.minutes}`}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-background/80 border p-3">
+                    <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <CalendarClock className="size-3.5" />
+                      {isRTL ? "الوقت المتوقع" : "Projected seating"}
+                    </div>
+                    <div className="font-bold mt-1">
+                      {formatProjectedTime(
+                        activeEntry.estimatedSeatAt,
+                        policy.timezone
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {isNotified && (
+                  <div className="rounded-xl border bg-background/90 p-4 mb-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs text-muted-foreground">
+                          {isRTL ? "الطاولة المحجوزة" : "Held table"}
+                        </div>
+                        <div className="font-bold">
+                          {activeEntry.table
+                            ? `#${activeEntry.table.number} · ${activeEntry.table.section}`
+                            : "—"}
+                        </div>
+                      </div>
+                      <Badge variant={expiresInSeconds > 60 ? "secondary" : "destructive"}>
+                        {Math.floor(expiresInSeconds / 60)}:
+                        {String(expiresInSeconds % 60).padStart(2, "0")}
+                      </Badge>
+                    </div>
+                    {!isConfirmed && policy.requireConfirmation && (
+                      <Button
+                        onClick={() =>
+                          void mutateEntry("confirm", setConfirming)
+                        }
+                        disabled={confirming || expiresInSeconds <= 0}
+                        className="w-full gap-2"
+                      >
+                        <CheckCircle2 className="size-4" />
+                        {confirming
+                          ? "..."
+                          : isRTL
+                            ? "تأكيد أنني قادم"
+                            : "Confirm I am coming"}
+                      </Button>
+                    )}
+                    {isConfirmed && (
+                      <p className="text-sm text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+                        <CheckCircle2 className="size-4" />
+                        {isRTL
+                          ? "تم تأكيد حضورك. توجّه إلى المضيف قبل انتهاء المهلة."
+                          : "Arrival confirmed. Please see the host before the hold expires."}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <Button
                   variant="outline"
-                  onClick={leave}
+                  onClick={() => void mutateEntry("cancel")}
                   className="w-full text-destructive gap-2"
                 >
                   <ArrowLeft className="size-4" />
@@ -211,7 +417,7 @@ export function WaitlistSection() {
           ) : (
             <Card>
               <CardContent className="p-5 space-y-4">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-muted-foreground mb-1 block">
                       {t.waitlist.yourName}
@@ -243,9 +449,10 @@ export function WaitlistSection() {
                     {t.waitlist.partySize}
                   </label>
                   <div className="flex items-center gap-1 border rounded-xl p-1 flex-wrap">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((partySize) => (
+                    {partySizes.map((partySize) => (
                       <button
                         key={partySize}
+                        type="button"
                         onClick={() => setForm({ ...form, partySize })}
                         className={`size-9 rounded-lg text-sm font-medium ${
                           form.partySize === partySize
@@ -258,6 +465,38 @@ export function WaitlistSection() {
                     ))}
                   </div>
                 </div>
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground mb-1 block">
+                    {isRTL ? "تفضيل الجلوس" : "Seating preference"}
+                  </label>
+                  <Select
+                    value={form.preference}
+                    onValueChange={(preference) =>
+                      setForm({ ...form, preference })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">
+                        {isRTL ? "أي مكان" : "Any section"}
+                      </SelectItem>
+                      <SelectItem value="indoor">
+                        {isRTL ? "داخلي" : "Indoor"}
+                      </SelectItem>
+                      <SelectItem value="outdoor">
+                        {isRTL ? "خارجي" : "Outdoor"}
+                      </SelectItem>
+                      <SelectItem value="bar">
+                        {isRTL ? "البار" : "Bar"}
+                      </SelectItem>
+                      <SelectItem value="private">
+                        {isRTL ? "خاص" : "Private"}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Textarea
                   placeholder={t.waitlist.notes}
                   value={form.notes}
@@ -268,8 +507,8 @@ export function WaitlistSection() {
                   dir="auto"
                 />
                 <Button
-                  onClick={join}
-                  disabled={submitting}
+                  onClick={() => void join()}
+                  disabled={submitting || !policy.enabled || !policy.isOpenNow}
                   className="w-full h-12 text-base gap-2"
                 >
                   <Hourglass className="size-5" />
@@ -294,14 +533,17 @@ export function WaitlistSection() {
                 {waitingCount === 0
                   ? t.waitlist.noWaitlist
                   : isRTL
-                    ? `${waitingCount} مجموعات تنتظر حالياً`
-                    : `${waitingCount} parties are currently waiting`}
+                    ? `${waitingCount} مجموعات نشطة حالياً`
+                    : `${waitingCount} active parties`}
               </p>
               <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <ShieldCheck className="size-3.5" />
                 {isRTL
-                  ? "أسماء وأرقام العملاء لا تظهر للعامة"
-                  : "Guest names and phone numbers remain private"}
+                  ? "التقدير يعتمد على حجم المجموعة والطاولات والحجوزات"
+                  : "Quotes use party size, table capacity, and reservations"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                {isRTL ? "المنطقة الزمنية" : "Restaurant timezone"}: {policy.timezone}
               </p>
             </CardContent>
           </Card>
