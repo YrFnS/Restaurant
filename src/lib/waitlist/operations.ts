@@ -978,7 +978,7 @@ export async function notifyWaitlistEntry(
       "estimateCalculatedAt" = CURRENT_TIMESTAMP,
       "notifiedAt" = CURRENT_TIMESTAMP,
       "notificationExpiresAt" = CURRENT_TIMESTAMP +
-        make_interval(mins => ${policy.notificationExpiryMinutes}),
+        make_interval(mins => CAST(${policy.notificationExpiryMinutes} AS integer)),
       "notificationConfirmedAt" = NULL,
       "updatedAt" = CURRENT_TIMESTAMP
     WHERE "id" = ${target.id}
