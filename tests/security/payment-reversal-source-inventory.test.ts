@@ -63,19 +63,23 @@ describe("payment reversal source inventory", () => {
     }
   });
 
-  test("uses manager authorization, idempotency, register locks, and exact cash effects", () => {
+  test("uses manager authorization, idempotency, register locks, and exact tender effects", () => {
     for (const marker of [
       'PAYMENT_REVERSAL_ROLES = ["owner", "admin", "manager"]',
-      'lockOrder',
-      'readLedgerEvents(tx, input.orderId, true)',
-      'lockOpenRegisterSession',
-      'type: "refund"',
-      'registerSessionId: registerContext.session.id',
-      'parentEventId',
-      'payment.cash.${input.action}',
-      'partially_refunded',
-      'refunded',
-      'voided',
+      "lockOrder",
+      "readLedgerEvents(tx, input.orderId, true)",
+      "lockOpenRegisterSession",
+      "prepareReversalAllocation",
+      "appendReversalLedgers",
+      "if (allocation.cashRefundCents > 0)",
+      "amountMinor: BigInt(allocation.cashRefundCents)",
+      "giftCardRefundCents",
+      "registerSessionId: registerContext.session.id",
+      "parentEventId",
+      'action: `payment.${capture.method}.${input.action}`',
+      "partially_refunded",
+      "refunded",
+      "voided",
     ]) {
       expect(service).toContain(marker);
     }
