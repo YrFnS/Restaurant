@@ -60,10 +60,10 @@ function expectStatus(
   );
 }
 
-function futureServiceTime(daysAhead: number): string {
-  const date = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1_000);
-  date.setHours(18, 0, 0, 0);
-  return date.toISOString();
+function futureDate(daysAhead: number): string {
+  return new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1_000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 function uniquePhone(prefix: string): string {
@@ -71,14 +71,25 @@ function uniquePhone(prefix: string): string {
 }
 
 async function createReservation(label: string, daysAhead: number) {
+  const date = futureDate(daysAhead);
+  const params = new URLSearchParams({ date, partySize: "2" });
+  const availability = await request(`/api/reservations/availability?${params}`);
+  expectStatus(availability, 200, `Load reservation availability ${label}`);
+  const time = availability.data?.slots?.[0]?.time;
+  assert.ok(time, `Reservation ${label} must have an available server-approved slot`);
+
   const result = await request("/api/reservations", {
     method: "POST",
+    headers: {
+      "Idempotency-Key": `p0-customer-reservation-${crypto.randomUUID()}`,
+    },
     body: JSON.stringify({
       customerName: `P0 Reservation ${label}`,
       customerPhone: uniquePhone("702"),
       customerEmail: null,
       partySize: 2,
-      dateTime: futureServiceTime(daysAhead),
+      date,
+      time,
       occasion: null,
       preference: null,
       notes: `Isolation test ${label}`,
