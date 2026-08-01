@@ -33,6 +33,11 @@ export const exactFinancialFieldOmit = {
     balanceMinor: true,
   },
   employee: { hourlyWageMinor: true },
+  employeeShift: {
+    hourlyWageMinor: true,
+    baseLaborCostMinor: true,
+  },
+  employeeTimeAdjustment: { laborCostDeltaMinor: true },
   ingredient: {
     quantityMicros: true,
     costPerUnitMicros: true,

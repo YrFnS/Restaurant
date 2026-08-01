@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -13,6 +14,13 @@ import {
   resetRateLimit,
   type RateLimitResult,
 } from "@/lib/security/rate-limit";
+import {
+  clockEmployee,
+  readClockStatuses,
+  TimekeepingError,
+  timekeepingErrorFromDatabase,
+  type TimeAction,
+} from "@/lib/timekeeping/timekeeping";
 
 const CLOCK_WINDOW_MS = 15 * 60 * 1_000;
 const MAX_SOURCE_ATTEMPTS = 30;
@@ -21,23 +29,37 @@ const MAX_PIN_ATTEMPTS = 5;
 const clockSchema = z
   .object({
     pin: z.string().regex(/^\d{4,8}$/).optional(),
-    employeeId: z.string().min(1).optional(),
-    action: z.enum(["in", "out"]),
+    employeeId: z.string().min(1).max(191).optional(),
+    action: z.enum([
+      "in",
+      "out",
+      "clock_in",
+      "clock_out",
+      "break_start",
+      "break_end",
+    ]),
+    occurredAt: z.string().datetime().optional(),
+    reasonCode: z.string().trim().max(80).optional(),
+    reason: z.string().trim().max(2_000).optional(),
+    requestId: z.string().trim().min(8).max(191).optional(),
   })
   .strict()
   .refine((value) => Boolean(value.pin) !== Boolean(value.employeeId), {
     message: "Provide either pin or employeeId",
   });
 
-const clockEmployeeSelect = {
-  id: true,
-  name: true,
-  role: true,
-  isActive: true,
-  clockedIn: true,
-  lastClockIn: true,
-  lastClockOut: true,
-} as const;
+function normalizedAction(action: z.infer<typeof clockSchema>["action"]): TimeAction {
+  if (action === "in") return "clock_in";
+  if (action === "out") return "clock_out";
+  return action;
+}
+
+function errorResponse(error: TimekeepingError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code, details: error.details },
+    { status: error.status, headers: { "Cache-Control": "no-store" } }
+  );
+}
 
 function clockRateLimited(result: RateLimitResult) {
   return NextResponse.json(
@@ -56,20 +78,25 @@ function clockRateLimitUnavailable() {
   );
 }
 
-// Clock in/out by PIN for the staff kiosk, or by employeeId for authorized managers.
+// Clock and break actions by PIN for a kiosk, or by employee ID for managers.
 export async function POST(req: NextRequest) {
   try {
     const parsed = clockSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "Invalid clock request", code: "VALIDATION_ERROR" },
+        {
+          error: "Invalid clock request",
+          code: "VALIDATION_ERROR",
+          details: parsed.error.flatten().fieldErrors,
+        },
         { status: 400 }
       );
     }
 
-    const { pin, employeeId, action } = parsed.data;
+    const { pin, employeeId } = parsed.data;
+    const action = normalizedAction(parsed.data.action);
     let managerSession: StaffSession | null = null;
-    let source = "";
+    let sourceIdentifier = "";
     let sourceLimit: RateLimitResult | null = null;
     let pinLimit: RateLimitResult | null = null;
 
@@ -78,11 +105,21 @@ export async function POST(req: NextRequest) {
       if ("response" in auth) return auth.response;
       managerSession = auth.session;
     } else {
-      source = getRequestSource(req);
+      if (parsed.data.occurredAt || parsed.data.reasonCode || parsed.data.reason) {
+        return NextResponse.json(
+          {
+            error: "Kiosk clock events cannot be backdated or corrected",
+            code: "KIOSK_CLOCK_FIELDS_FORBIDDEN",
+          },
+          { status: 400 }
+        );
+      }
+
+      sourceIdentifier = getRequestSource(req);
       try {
         sourceLimit = await consumeRateLimit({
           scope: "employee-clock-source",
-          identifier: source,
+          identifier: sourceIdentifier,
           limit: MAX_SOURCE_ATTEMPTS,
           windowMs: CLOCK_WINDOW_MS,
         });
@@ -106,14 +143,8 @@ export async function POST(req: NextRequest) {
       if (!pinLimit.allowed) return clockRateLimited(pinLimit);
     }
 
-    const employee = pin
-      ? await authenticateEmployeePin(pin)
-      : await db.employee.findUnique({
-          where: { id: employeeId! },
-          select: clockEmployeeSelect,
-        });
-
-    if (!employee?.isActive) {
+    const kioskEmployee = pin ? await authenticateEmployeePin(pin) : null;
+    if (pin && !kioskEmployee?.isActive) {
       return NextResponse.json(
         { error: "Invalid credentials", code: "INVALID_CREDENTIALS" },
         {
@@ -125,39 +156,48 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const now = new Date();
+    const targetEmployeeId = employeeId || kioskEmployee!.id;
+    const actor: StaffSession | { id: string; name: string; role: string } =
+      managerSession || {
+        id: kioskEmployee!.id,
+        name: kioskEmployee!.name,
+        role: kioskEmployee!.role,
+      };
+    const idempotencyKey =
+      req.headers.get("Idempotency-Key")?.trim() ||
+      parsed.data.requestId ||
+      `clock:${targetEmployeeId}:${action}:${randomUUID()}`;
     const context = auditContextFromRequest(req);
-    const updated = await db.$transaction(async (tx) => {
-      const saved = await tx.employee.update({
-        where: { id: employee.id },
-        data:
-          action === "in"
-            ? { clockedIn: true, lastClockIn: now }
-            : { clockedIn: false, lastClockOut: now },
-        select: clockEmployeeSelect,
+
+    const result = await db.$transaction(async (tx) => {
+      const saved = await clockEmployee(tx, {
+        idempotencyKey,
+        employeeId: targetEmployeeId,
+        action,
+        source: managerSession ? "manager" : "kiosk",
+        actor,
+        occurredAt: managerSession ? parsed.data.occurredAt : undefined,
+        reasonCode: managerSession ? parsed.data.reasonCode : undefined,
+        reason: managerSession ? parsed.data.reason : undefined,
       });
 
-      await writeAuditEvent(tx, {
-        actor: managerSession || {
-          id: employee.id,
-          name: employee.name,
-          role: employee.role,
-        },
-        action: `employee.clock.${action}`,
-        entityType: "Employee",
-        entityId: employee.id,
-        context,
-        metadata: {
-          via: pin ? "pin" : "manager",
-          previousClockedIn: employee.clockedIn,
-          clockedIn: saved.clockedIn,
-          previousLastClockIn: employee.lastClockIn,
-          previousLastClockOut: employee.lastClockOut,
-          lastClockIn: saved.lastClockIn,
-          lastClockOut: saved.lastClockOut,
-        },
-      });
-
+      if (!saved.replayed) {
+        await writeAuditEvent(tx, {
+          actor,
+          action: `employee.time.${action}`,
+          entityType: "EmployeeTimeEvent",
+          entityId: saved.event.id,
+          context,
+          metadata: {
+            employeeId: targetEmployeeId,
+            source: managerSession ? "manager" : "kiosk",
+            occurredAt: saved.event.occurredAt,
+            operationalDate: saved.event.operationalDate,
+            shiftId: saved.employee.shiftId,
+            onBreak: saved.employee.onBreak,
+          },
+        });
+      }
       return saved;
     });
 
@@ -165,7 +205,7 @@ export async function POST(req: NextRequest) {
       await Promise.all([
         resetRateLimit({
           scope: "employee-clock-source",
-          identifier: source,
+          identifier: sourceIdentifier,
           windowMs: CLOCK_WINDOW_MS,
         }),
         resetRateLimit({
@@ -178,17 +218,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let sessionHours = 0;
-    if (updated.clockedIn && updated.lastClockIn) {
-      sessionHours = (now.getTime() - updated.lastClockIn.getTime()) / 3_600_000;
-    }
-
     return NextResponse.json(
       {
-        employee: updated,
-        sessionHours: Math.round(sessionHours * 100) / 100,
+        employee: result.employee,
+        event: {
+          id: result.event.id,
+          eventType: result.event.eventType,
+          occurredAt: result.event.occurredAt,
+          operationalDate: result.event.operationalDate,
+        },
+        replayed: result.replayed,
+        sessionHours: result.employee.currentSessionHours,
       },
       {
+        status: result.replayed ? 200 : 201,
         headers: sourceLimit
           ? rateLimitHeaders(sourceLimit)
           : { "Cache-Control": "no-store" },
@@ -201,59 +244,35 @@ export async function POST(req: NextRequest) {
         { status: 503 }
       );
     }
+    if (error instanceof TimekeepingError) return errorResponse(error);
+    const mapped = timekeepingErrorFromDatabase(error);
+    if (mapped) return errorResponse(mapped);
 
     console.error("[employees/clock] Clock operation failed", error);
     return NextResponse.json(
-      { error: "Unable to update clock status", code: "CLOCK_UPDATE_FAILED" },
+      { error: "Unable to record time event", code: "CLOCK_UPDATE_FAILED" },
       { status: 500 }
     );
   }
 }
 
-// Management view of all active employee clock states.
+// Management view of active employee state derived from open shifts and breaks.
 export async function GET() {
   const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
   if ("response" in auth) return auth.response;
 
-  const employees = await db.employee.findMany({
-    where: { isActive: true },
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      role: true,
-      hourlyWage: true,
-      clockedIn: true,
-      lastClockIn: true,
-      lastClockOut: true,
-    },
-  });
-
-  const now = new Date();
-  const withHours = employees.map((employee) => {
-    let currentSessionHours = 0;
-    if (employee.clockedIn && employee.lastClockIn) {
-      currentSessionHours =
-        (now.getTime() - employee.lastClockIn.getTime()) / 3_600_000;
-    }
-    return {
-      ...employee,
-      currentSessionHours: Math.round(currentSessionHours * 100) / 100,
-    };
-  });
-
-  const clockedInCount = employees.filter((employee) => employee.clockedIn).length;
-  const totalHoursToday = withHours.reduce(
-    (sum, employee) => sum + employee.currentSessionHours,
-    0
-  );
-
-  return NextResponse.json(
-    {
-      employees: withHours,
-      clockedInCount,
-      totalHoursToday: Math.round(totalHoursToday * 100) / 100,
-    },
-    { headers: { "Cache-Control": "no-store" } }
-  );
+  try {
+    const result = await readClockStatuses(db);
+    return NextResponse.json(result, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    const mapped = timekeepingErrorFromDatabase(error);
+    if (mapped) return errorResponse(mapped);
+    console.error("[employees/clock] Failed to load clock states", error);
+    return NextResponse.json(
+      { error: "Unable to load clock states", code: "CLOCK_STATUS_FAILED" },
+      { status: 500 }
+    );
+  }
 }

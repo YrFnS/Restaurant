@@ -1,10 +1,10 @@
 # Restaurant Production Remediation Plan
 
 > **Repository:** `YrFnS/Restaurant`  
-> **Tracking branch:** `agent/p1-purchase-orders-receiving`  
+> **Tracking branch:** `agent/p1-employee-timekeeping`  
 > **Created:** 2026-07-30  
-> **Last reconciled:** 2026-07-31  
-> **Current milestone:** P1 restaurant workflow correctness — timekeeping, reservations, waitlist, and loyalty  
+> **Last reconciled:** 2026-08-01  
+> **Current milestone:** P1 restaurant workflow correctness — reservation availability, waitlist, and loyalty  
 > **Automated/source P0:** **Complete**  
 > **Production release:** **Blocked by real-environment rehearsal, configuration, independent review, and deployment smoke gates.**
 
@@ -17,6 +17,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 - [`P1_PAYMENT_REVERSALS.md`](./P1_PAYMENT_REVERSALS.md)
 - [`P1_STOCK_LEDGER_RECIPES.md`](./P1_STOCK_LEDGER_RECIPES.md)
 - [`P1_PURCHASE_ORDERS_RECEIVING.md`](./P1_PURCHASE_ORDERS_RECEIVING.md)
+- [`P1_EMPLOYEE_TIMEKEEPING.md`](./P1_EMPLOYEE_TIMEKEEPING.md)
 
 ## Status notation
 
@@ -38,6 +39,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 | P0-E | Automated validation and production release gate | Automated gate complete; production gates open |
 | P1-A | Database, exact money, constraints, payment ledger | Exact-money foundation and cash reversals complete; contract migration deferred |
 | P1-B01 | Cash-register sessions and reconciliation | Completed and validated |
+| P1-B02 | Immutable employee timekeeping | Completed and validated |
 | P1-B03 | Recipes and immutable stock ledger | Completed and validated |
 | P1-B04 | Suppliers, purchase orders, and partial receiving | Completed and validated |
 | P1-C | KDS, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
@@ -57,6 +59,7 @@ main
             └── agent/p1-payment-reversals
                 └── agent/p1-stock-ledger-recipes
                     └── agent/p1-purchase-orders-receiving
+                        └── agent/p1-employee-timekeeping
 ```
 
 Validated completed checkpoints:
@@ -68,7 +71,8 @@ Validated completed checkpoints:
 | P1 cash-register sessions | `c44030bcb222fa78f8c50152dbab81187877e59d` | Validation #558, Integration #388 |
 | P1 payment reversals | `87d787b1b39b6ed93caf5493b7fec2911a2c211c` | P1 Stacked Validation #6 |
 | P1 recipes and immutable stock ledger | `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d` | P1 Stacked Validation #32 |
-| P1 suppliers, purchase orders, and partial receiving | `432d02814528db9097eee3595658b6953d30f669` | P1 Stacked Validation #46 |
+| P1 suppliers, purchase orders, and partial receiving | `0e0eab253ed43a42e2d0beb88da97ba8e9a3b633` | P1 Stacked Validation #53 |
+| P1 immutable employee timekeeping | `054b096a600782897ef1b6eaf6591326b50fbe58` | P1 Stacked Validation #83 |
 
 ---
 
@@ -114,7 +118,7 @@ Validated completed checkpoints:
 - [x] Prevent accidental `BigInt` JSON exposure through shared omission policy.
 - [x] Use exact values for authoritative menu pricing, modifiers, tax, delivery, promotions, dynamic pricing, tips, orders, checkout, cash, wages, and ingredient unit costs.
 - [x] Add exact-value constraints, verification tooling, runtime tests, and write-path inventory.
-- [ ] Resolve gift cards, purchase orders, combo meals, customer lifetime spend, special offers, promo administration, and remaining analytics reads before contract migration.
+- [ ] Resolve gift cards, combo meals, customer lifetime spend, special offers, promo administration, and remaining analytics reads before contract migration.
 - [ ] Rehearse the destructive contract migration against a protected production-like copy.
 - [ ] Remove synchronization triggers and legacy financial `Float` columns only after all runtime dependencies are gone.
 
@@ -126,9 +130,11 @@ Validated completed checkpoints:
 - [x] Correct mutable `updatedAt` behavior and preserve immutable event timestamps.
 - [x] Add indexes for common order, reservation, kitchen, cash, employee, payment, session, and outbox paths.
 - [x] Add inventory movement, unit conversion, recipe, production-consumption, and stock-ledger constraints and indexes.
-- [ ] Add purchase-order and loyalty domain constraints with their complete workflows.
-- [ ] Define restaurant timezone and operational-day semantics.
-- [ ] Define retention/anonymization policy for customer, session, rate-limit, outbox, payment, inventory, and audit data.
+- [x] Add supplier, purchase-order, receipt, line-progress, and receiving constraints and indexes.
+- [x] Add employee time-event, open-shift, open-break, adjustment, and operational-day constraints and indexes.
+- [ ] Add loyalty and gift-card domain constraints with their complete workflows.
+- [x] Define restaurant timezone and operational-day semantics for staff timekeeping.
+- [ ] Define retention/anonymization policy for customer, session, rate-limit, outbox, payment, inventory, timekeeping, and audit data.
 
 ## P1-A03 Payment ledger and reversals
 
@@ -170,10 +176,32 @@ Validated completed checkpoints:
 
 ## P1-B02 Employee timekeeping
 
-- [ ] Add immutable clock, break, and shift entries.
-- [ ] Support audited manager corrections instead of rewriting historical state.
-- [ ] Calculate hours from events.
-- [ ] Define overnight-shift and restaurant-timezone behavior.
+Completed and validated scope:
+
+- [x] Add immutable clock-in, clock-out, break-start, and break-end events.
+- [x] Enforce one open shift and one open break per employee under concurrent requests.
+- [x] Add immutable closed-shift summaries and exact wage/labor-cost snapshots.
+- [x] Add audited append-only manager corrections instead of rewriting history.
+- [x] Calculate gross, break, paid-time, and adjusted labor-cost totals from the ledger.
+- [x] Add restaurant timezone and operational-day assignment for overnight shifts.
+- [x] Add protected kiosk and manager APIs, bilingual timesheet workflow, migrations, source inventories, and database-backed tests.
+- [x] Preserve historical employees instead of deleting records referenced by immutable time history.
+
+Policy decisions for this slice:
+
+- Clock, break, and correction history is append-only and cannot be rewritten or deleted.
+- Employee records with historical timekeeping data are retained rather than hard-deleted.
+- Only one open shift and one open break may exist for an employee.
+- Closed shifts snapshot the employee's exact hourly wage and labor cost.
+- Manager corrections are signed duration/cost adjustments with a required reason and actor.
+- The restaurant timezone and operational-day boundary determine the business date for overnight shifts.
+
+Explicitly deferred:
+
+- [ ] Payroll calculation, payroll export, and payroll locking.
+- [ ] Schedule-vs-actual variance and overtime policy.
+- [ ] Geofencing, biometric terminals, and offline kiosk synchronization.
+- [ ] Leave, absence, holiday entitlement, and jurisdiction-specific labor rules.
 
 ## P1-B03 Recipes and immutable stock ledger
 
@@ -337,7 +365,8 @@ Deferred from this slice:
 - [x] Stock consumption timing: first entry into production; no silent return on cancellation/refund.
 - [x] Stock recipe snapshot: first production stores an immutable recipe version or a permanent untracked decision.
 - [x] Purchasing receipts: submitted terms are immutable; partial receipts and reviewed corrections reconcile atomically with the stock ledger.
-- [ ] Restaurant timezone and operational-day boundary.
+- [x] Timekeeping ledger: clock, break, shift, and correction history is append-only; employee records with history are retained.
+- [x] Restaurant timezone and operational-day boundary govern overnight timekeeping and business-date assignment.
 - [ ] Revenue recognition policy.
 - [ ] Loyalty earning/reversal policy.
 - [ ] Multi-branch requirement.
@@ -356,4 +385,5 @@ Deferred from this slice:
 | 2026-07-31 | Added POS register assignment, opening/closing, cash reconciliation, immutable close records, and register-linked payment/cash ledgers. | Validation #558 and Integration #388 green at `c44030b`. |
 | 2026-07-31 | Added immutable cash refunds and voids, manager console, ledger reconciliation, and concurrency/database protections. | P1 Stacked Validation #6 green at `87d787b`. |
 | 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |
-| 2026-07-31 | Added first-class suppliers, exact purchase-order lines, immutable submitted terms, partial/full receiving, reviewed receipt correction, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #46 green at `432d028`. |
+| 2026-07-31 | Added first-class suppliers, exact purchase-order lines, immutable submitted terms, partial/full receiving, reviewed receipt correction, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #53 green at `0e0eab2`. |
+| 2026-08-01 | Added immutable employee shifts, breaks, event history, exact labor snapshots, append-only manager adjustments, operational-day policy, kiosk/manager workflows, and full regression coverage. | P1 Stacked Validation #83 green at `054b096`. |

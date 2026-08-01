@@ -310,7 +310,7 @@ async function main() {
     });
 
     const clockIn = await clock(targetPin, "in");
-    expectStatus(clockIn, 200, "Clock in after fixed-window expiry");
+    expectStatus(clockIn, 201, "Clock in after fixed-window expiry");
     assert.equal(clockIn.data?.employee?.id, targetId);
     assert.equal(clockIn.data?.employee?.clockedIn, true);
 
@@ -325,31 +325,31 @@ async function main() {
 
     const clockInAudit = await db.auditEvent.findFirst({
       where: {
-        action: "employee.clock.in",
-        entityType: "Employee",
-        entityId: targetId,
+        action: "employee.time.clock_in",
+        entityType: "EmployeeTimeEvent",
         createdAt: { gte: testStartedAt },
       },
       orderBy: { createdAt: "desc" },
     });
     assert.ok(clockInAudit, "Successful clock-in must create an audit event");
-    assert.equal((clockInAudit.metadata as any)?.via, "pin");
+    assert.equal((clockInAudit.metadata as any)?.employeeId, targetId);
+    assert.equal((clockInAudit.metadata as any)?.source, "kiosk");
 
     const clockOut = await clock(targetPin, "out");
-    expectStatus(clockOut, 200, "Clock out with valid PIN");
+    expectStatus(clockOut, 201, "Clock out with valid PIN");
     assert.equal(clockOut.data?.employee?.clockedIn, false);
 
     const clockOutAudit = await db.auditEvent.findFirst({
       where: {
-        action: "employee.clock.out",
-        entityType: "Employee",
-        entityId: targetId,
+        action: "employee.time.clock_out",
+        entityType: "EmployeeTimeEvent",
         createdAt: { gte: testStartedAt },
       },
       orderBy: { createdAt: "desc" },
     });
     assert.ok(clockOutAudit, "Successful clock-out must create an audit event");
-    assert.equal((clockOutAudit.metadata as any)?.via, "pin");
+    assert.equal((clockOutAudit.metadata as any)?.employeeId, targetId);
+    assert.equal((clockOutAudit.metadata as any)?.source, "kiosk");
 
     console.log("[p0-lockout] Login and clock lockout assertions passed.");
   } finally {
@@ -369,7 +369,12 @@ async function main() {
         await tx.schedule.deleteMany({
           where: { employeeId: cleanupTargetId },
         });
-        await tx.employee.deleteMany({ where: { id: cleanupTargetId } });
+        // The clock-in/out events are an immutable audit ledger. Preserve the
+        // employee record they reference and retire the disposable account.
+        await tx.employee.updateMany({
+          where: { id: cleanupTargetId },
+          data: { isActive: false },
+        });
       });
     }
   }

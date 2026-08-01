@@ -108,6 +108,22 @@ export async function PATCH(
       );
     }
 
+    if (parsed.data.isActive === false) {
+      const openShift = await db.employeeShift.findFirst({
+        where: { employeeId: id, status: "open" },
+        select: { id: true },
+      });
+      if (openShift) {
+        return NextResponse.json(
+          {
+            error: "Clock the employee out before deactivating the account",
+            code: "EMPLOYEE_HAS_OPEN_SHIFT",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const { pin, ...employeeData } = parsed.data;
     const hourlyWageMinor =
       employeeData.hourlyWage === undefined
@@ -221,6 +237,33 @@ export async function DELETE(
       return NextResponse.json(
         { error: "Only an owner can delete an owner account", code: "PERMISSION_DENIED" },
         { status: 403 }
+      );
+    }
+
+    const [openShift, eventCount, shiftCount] = await Promise.all([
+      db.employeeShift.findFirst({
+        where: { employeeId: id, status: "open" },
+        select: { id: true },
+      }),
+      db.employeeTimeEvent.count({ where: { employeeId: id } }),
+      db.employeeShift.count({ where: { employeeId: id } }),
+    ]);
+    if (openShift) {
+      return NextResponse.json(
+        {
+          error: "Clock the employee out before removing the account",
+          code: "EMPLOYEE_HAS_OPEN_SHIFT",
+        },
+        { status: 409 }
+      );
+    }
+    if (eventCount > 0 || shiftCount > 0) {
+      return NextResponse.json(
+        {
+          error: "Employees with timekeeping history must be deactivated, not deleted",
+          code: "EMPLOYEE_HAS_TIME_HISTORY",
+        },
+        { status: 409 }
       );
     }
 
