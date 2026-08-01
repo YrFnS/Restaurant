@@ -170,6 +170,7 @@ model Order {
   customerId      String?
   customer        Customer?    @relation(fields: [customerId], references: [id])
   items           OrderItem[]
+  paymentEvents   PaymentEvent[]
   estimatedReady  DateTime?
   completedAt     DateTime?
   createdAt       DateTime     @default(now())
@@ -497,3 +498,99 @@ model ComboMeal {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @default(now())
 }
+
+// ─── Append-only security and financial audit trail ───
+model AuditEvent {
+  id          String   @id @default(cuid())
+  actorId     String?
+  actorName   String   @default("")
+  actorRole   String   @default("")
+  sessionId   String?
+  action      String
+  entityType  String
+  entityId    String?
+  requestId   String?
+  sourceHash  String   @default("")
+  userAgent   String   @default("")
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ─── Persisted, revocable staff sessions ───
+model StaffSession {
+  id         String    @id
+  employeeId String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([employeeId, revokedAt, expiresAt])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+// ─── Shared, privacy-safe fixed-window rate-limit counters ───
+model RateLimitCounter {
+  key       String   @id
+  scope     String
+  count     Int      @default(1)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([scope, expiresAt])
+  @@index([expiresAt])
+}
+
+// ─── Durable KDS transactional outbox ───
+model KdsOutboxEvent {
+  id            String    @id @default(cuid())
+  eventType     String
+  screenSlugs   Json
+  payload       Json?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lockedAt      DateTime?
+  lockToken     String?
+  deliveredAt   DateTime?
+  lastError     String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([deliveredAt, nextAttemptAt])
+  @@index([lockedAt])
+  @@index([createdAt])
+}
+
+// ─── Immutable payment event ledger ───
+model PaymentEvent {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  eventType      String
+  method         String
+  status         String   @default("succeeded")
+  amountCents    Int
+  tenderedCents  Int?
+  changeCents    Int?
+  currency       String   @default("USD")
+  actorId        String?
+  actorName      String   @default("")
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([createdAt])
+}
+

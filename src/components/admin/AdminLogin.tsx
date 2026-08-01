@@ -1,55 +1,82 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { toast } from "sonner";
 import {
-  Loader2, Lock, ArrowLeft, Languages, ShieldCheck, KeyRound,
+  Loader2,
+  Lock,
+  ArrowLeft,
+  Languages,
+  ShieldCheck,
+  KeyRound,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 
 export function AdminLogin() {
   const { t, isRTL, toggleLocale, locale } = useI18n();
-  const setStaff = useRestaurantStore((s) => s.setStaff);
+  const setStaff = useRestaurantStore((state) => state.setStaff);
+  const queryClient = useQueryClient();
+  const router = useRouter();
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!pin) return;
+    if (!/^\d{4,8}$/.test(pin)) {
+      toast.error(t.admin.loginError);
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await fetch("/api/employees");
-      const data = await res.json();
-      const emp = (data.employees || []).find(
-        (e: any) => e.pin === pin && e.isActive
-      );
-      if (!emp) {
-        toast.error(t.admin.loginError);
-        setLoading(false);
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.user) {
+        toast.error(data?.error || t.admin.loginError);
         return;
       }
-      setStaff(emp.pin, emp.name);
-      toast.success(`${t.admin.welcome}, ${emp.name}`);
+
+      setPin("");
+      setStaff(data.user.name);
+      queryClient.setQueryData(["auth-session"], data);
+      toast.success(`${t.admin.welcome}, ${data.user.name}`);
+
+      const nextPath = new URLSearchParams(window.location.search).get("next");
+      if (
+        nextPath &&
+        nextPath.startsWith("/") &&
+        !nextPath.startsWith("//")
+      ) {
+        router.replace(nextPath);
+        router.refresh();
+      }
     } catch {
       toast.error(t.admin.loginError);
+    } finally {
       setLoading(false);
     }
   };
 
-  const quickPins = [
-    { pin: "1234", label: "Admin" },
-    { pin: "2222", label: "Manager" },
-    { pin: "1111", label: "Sarah" },
-  ];
-
   return (
     <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Decorative background */}
       <div className="absolute inset-0 -z-10 opacity-50">
         <div className="absolute -top-32 -start-32 w-96 h-96 bg-primary/20 rounded-full blur-3xl" />
         <div className="absolute -bottom-32 -end-32 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
@@ -72,21 +99,30 @@ export function AdminLogin() {
             <CardDescription className="text-base font-medium">
               {t.admin.login}
             </CardDescription>
-            <p className="text-xs text-muted-foreground mt-1">{t.admin.loginDesc}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {t.admin.loginDesc}
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-1.5">
+              <label
+                htmlFor="staff-pin"
+                className="text-sm font-medium flex items-center gap-1.5"
+              >
                 <KeyRound className="size-4 text-primary" />
                 {t.admin.pin}
               </label>
               <Input
+                id="staff-pin"
                 type="password"
                 inputMode="numeric"
+                autoComplete="current-password"
                 autoFocus
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
-                onKeyDown={(e) => e.key === "Enter" && submit()}
+                onChange={(event) =>
+                  setPin(event.target.value.replace(/\D/g, "").slice(0, 8))
+                }
+                onKeyDown={(event) => event.key === "Enter" && void submit()}
                 placeholder="••••"
                 className="text-center text-2xl tracking-[0.5em] font-bold h-14"
                 dir="ltr"
@@ -94,8 +130,8 @@ export function AdminLogin() {
             </div>
 
             <Button
-              onClick={submit}
-              disabled={loading || !pin}
+              onClick={() => void submit()}
+              disabled={loading || pin.length < 4}
               size="lg"
               className="w-full h-12 text-base"
             >
@@ -107,29 +143,12 @@ export function AdminLogin() {
               {t.admin.login}
             </Button>
 
-            {/* Quick login */}
-            <div className="pt-2">
-              <p className="text-[11px] text-muted-foreground text-center mb-2 uppercase tracking-wide">
-                Quick Login
-              </p>
-              <div className="grid grid-cols-3 gap-2">
-                {quickPins.map((q) => (
-                  <button
-                    key={q.pin}
-                    onClick={() => setPin(q.pin)}
-                    className="px-2 py-2 rounded-lg border border-border bg-muted/40 hover:bg-primary/10 hover:border-primary/40 transition-colors text-center"
-                  >
-                    <div className="text-xs font-semibold">{q.label}</div>
-                    <div className="text-[10px] text-muted-foreground">{q.pin}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <div className="flex items-center justify-between pt-3 border-t">
               <Link href="/">
                 <Button variant="ghost" size="sm" className="gap-1.5">
-                  <ArrowLeft className={isRTL ? "size-4 rotate-180" : "size-4"} />
+                  <ArrowLeft
+                    className={isRTL ? "size-4 rotate-180" : "size-4"}
+                  />
                   {t.common.back}
                 </Button>
               </Link>
@@ -148,7 +167,9 @@ export function AdminLogin() {
 
         <p className="text-center text-xs text-muted-foreground mt-6 flex items-center justify-center gap-1.5">
           <Lock className="size-3" />
-          {isRTL ? "محمية برمز سري للموظفين" : "Secured by staff PIN"}
+          {isRTL
+            ? "محمية بجلسة آمنة للموظفين"
+            : "Protected by a secure staff session"}
         </p>
       </motion.div>
     </div>

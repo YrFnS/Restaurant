@@ -1,0 +1,229 @@
+name: P0 Integration
+
+on:
+  push:
+    branches:
+      - "agent/**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Database-backed security and order smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: integration
+          POSTGRES_PASSWORD: integration
+          POSTGRES_DB: restaurant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U integration -d restaurant"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      CI: "true"
+      DATABASE_URL: "postgresql://integration:integration@127.0.0.1:5432/restaurant?sslmode=disable"
+      AUTH_SECRET: "integration-session-secret-0123456789abcdef0123456789abcdef"
+      AUTH_PIN_PEPPER: "integration-pin-pepper-0123456789abcdef0123456789abcdef"
+      AUTH_ORDER_ACCESS_SECRET: "integration-order-access-0123456789abcdef0123456789abcdef"
+      AUTH_CUSTOMER_ACCESS_SECRET: "integration-customer-access-0123456789abcdef0123456789abcdef"
+      RATE_LIMIT_SECRET: "integration-rate-limit-secret-0123456789abcdef0123456789abcdef"
+      KDS_OUTBOX_SECRET: "integration-kds-outbox-secret-0123456789abcdef0123456789abcdef"
+      AUTH_SESSION_TTL_SECONDS: "28800"
+      AUTH_SESSION_IDLE_SECONDS: "1800"
+      APP_ALLOWED_ORIGINS: "http://127.0.0.1:3000"
+      NEXTAUTH_SECRET: "integration-nextauth-secret-0123456789abcdef0123456789abcdef"
+      NEXTAUTH_URL: "http://127.0.0.1:3000"
+      KDS_REALTIME_URL: "http://127.0.0.1:3003/broadcast"
+      NEXT_PUBLIC_KDS_PORT: "3003"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Deploy committed migrations to an empty database
+        run: bun run db:deploy
+
+      - name: Seed and secure staff credentials
+        run: |
+          bun run db:seed
+          bun run auth:check-pins
+
+      - name: Build production server
+        env:
+          NODE_ENV: production
+        run: bun run build
+
+      - name: Run database-backed P0 smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bun tests/integration/kds-mock.ts > /tmp/kds-mock.log 2>&1 &
+          kds_pid=$!
+          PORT=3000 NODE_ENV=production bun .next/standalone/server.js > /tmp/p0-server.log 2>&1 &
+          server_pid=$!
+
+          cleanup() {
+            status=$?
+            kill "$server_pid" "$kds_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+            wait "$kds_pid" 2>/dev/null || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- production server log ---"
+              cat /tmp/p0-server.log || true
+              echo "--- KDS mock log ---"
+              cat /tmp/kds-mock.log || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          kds_ready=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3003/health >/dev/null; then
+              kds_ready=1
+              break
+            fi
+            if ! kill -0 "$kds_pid" 2>/dev/null; then
+              echo "KDS mock exited before becoming ready."
+              cat /tmp/kds-mock.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$kds_ready" -ne 1 ]; then
+            echo "KDS mock did not become ready."
+            cat /tmp/kds-mock.log || true
+            exit 1
+          fi
+
+          app_ready=0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/api >/dev/null; then
+              app_ready=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "Production server exited before becoming ready."
+              cat /tmp/p0-server.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$app_ready" -ne 1 ]; then
+            echo "Production server did not become ready."
+            cat /tmp/p0-server.log || true
+            exit 1
+          fi
+
+          P0_BASE_URL=http://127.0.0.1:3000 bun run test:integration
+
+  existing-data-rehearsal:
+    name: Existing-data baseline adoption rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: legacy
+          POSTGRES_PASSWORD: legacy
+          POSTGRES_DB: restaurant_legacy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U legacy -d restaurant_legacy"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      CI: "true"
+      DATABASE_URL: "postgresql://legacy:legacy@127.0.0.1:5432/restaurant_legacy?sslmode=disable"
+      AUTH_SECRET: "legacy-session-secret-0123456789abcdef0123456789abcdef"
+      AUTH_PIN_PEPPER: "legacy-pin-pepper-0123456789abcdef0123456789abcdef"
+      AUTH_ORDER_ACCESS_SECRET: "legacy-order-access-0123456789abcdef0123456789abcdef"
+      AUTH_CUSTOMER_ACCESS_SECRET: "legacy-customer-access-0123456789abcdef0123456789abcdef"
+      RATE_LIMIT_SECRET: "legacy-rate-limit-secret-0123456789abcdef0123456789abcdef"
+      KDS_OUTBOX_SECRET: "legacy-kds-outbox-secret-0123456789abcdef0123456789abcdef"
+
+    steps:
+      - name: Check out repository with main history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate current Prisma client
+        run: bun run db:generate
+
+      - name: Recreate the pre-P0 database and representative data
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx prisma db execute \
+            --file prisma/migrations/20260730000000_baseline/migration.sql \
+            --schema prisma/schema.prisma
+
+          mkdir -p .tmp
+          git show origin/main:prisma/seed.ts > .tmp/legacy-seed.ts
+          bun .tmp/legacy-seed.ts
+          bun tests/integration/p0-existing-data-rehearsal.ts \
+            snapshot /tmp/p0-existing-data.json
+
+      - name: Adopt the baseline and deploy additive P0 migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx prisma migrate resolve \
+            --applied 20260730000000_baseline \
+            --schema prisma/schema.prisma
+          bun run db:deploy
+          bunx prisma migrate status --schema prisma/schema.prisma
+
+      - name: Migrate credentials and verify data preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run auth:migrate-pins
+          bun run auth:check-pins
+          bun tests/integration/p0-existing-data-rehearsal.ts \
+            verify /tmp/p0-existing-data.json

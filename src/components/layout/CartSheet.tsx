@@ -10,7 +10,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Minus, Plus, Trash2, ShoppingBag, Tag, X, Gift, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+function createIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `sheet-order-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
 
 export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t, isRTL, fmtCurrency } = useI18n();
@@ -21,6 +28,7 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
     customerPhone, setCustomerPhone, promoCode, promoDiscount,
     setPromo, clearPromo, tipPercent, tipCustom, setTip,
     orderNotes, setOrderNotes, setActiveSection,
+    recentOrders, rememberOrderAccess,
   } = useRestaurantStore();
 
   const [promoInput, setPromoInput] = useState("");
@@ -29,6 +37,7 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
   const [loyaltyDiscount, setLoyaltyDiscount] = useState(0);
   const [loyaltyPointsUsed, setLoyaltyPointsUsed] = useState(0);
   const [loyaltyLooking, setLoyaltyLooking] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   // Fetch settings for tax rate, delivery fee, min order, prep time, tip presets
   const { data: settingsData } = useQuery({
@@ -39,16 +48,59 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
   const taxRate = s?.taxRate ?? 0.1;
   const deliveryFeeSetting = s?.deliveryFee ?? 4.99;
   const minDeliveryOrder = s?.minDeliveryOrder ?? 15;
-  const avgPrepMin = s?.avgPrepTimeMin ?? 25;
   const tipPresets = s?.tipPresets ? s.tipPresets.split(",").map(Number) : [0, 15, 18, 20];
 
   const subtotal = cartSubtotal(cart);
   const tax = subtotal * taxRate;
   const discount = (subtotal * promoDiscount) / 100;
-  const loyaltyDisc = loyaltyDiscount;
+  const loyaltyDisc = 0;
   const deliveryFee = orderType === "delivery" ? deliveryFeeSetting : 0;
   const tipAmount = tipPercent > 0 ? (subtotal * tipPercent) / 100 : tipCustom;
-  const total = Math.max(0, subtotal + tax + deliveryFee - discount - loyaltyDisc + tipAmount);
+  const total = Math.max(0, subtotal + tax + deliveryFee - discount + tipAmount);
+  const orderPayload = useMemo(
+    () => ({
+      type: orderType,
+      customerName: customerName || "",
+      customerPhone,
+      deliveryAddress: orderType === "delivery" ? deliveryAddress : null,
+      tableNumber: orderType === "dine_in" ? tableNumber : undefined,
+      notes: orderNotes || null,
+      promoCode: promoCode || null,
+      tip:
+        tipPercent > 0
+          ? { mode: "percent" as const, value: tipPercent }
+          : tipCustom > 0
+            ? { mode: "amount" as const, value: tipCustom }
+            : { mode: "none" as const },
+      items: cart.map((item) => ({
+        menuItemId: item.menuItemId,
+        quantity: item.quantity,
+        modifierOptionIds: item.modifiers.map((modifier) => modifier.id),
+        notes: item.notes || null,
+        course: item.course,
+      })),
+    }),
+    [
+      cart,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      orderNotes,
+      orderType,
+      promoCode,
+      tableNumber,
+      tipCustom,
+      tipPercent,
+    ]
+  );
+  const orderFingerprint = useMemo(
+    () => JSON.stringify(orderPayload),
+    [orderPayload]
+  );
+
+  useEffect(() => {
+    idempotencyKeyRef.current = null;
+  }, [orderFingerprint]);
 
   const applyPromo = async () => {
     if (!promoInput) return;
@@ -63,19 +115,33 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
   };
 
   const lookupLoyalty = async () => {
-    if (!customerPhone) {
-      toast.error(isRTL ? "أدخل رقم الهاتف أولاً" : "Enter phone number first");
+    if (recentOrders.length === 0) {
+      toast.error(
+        isRTL
+          ? "أنشئ طلباً أو افتح رابط طلب آمن أولاً للتحقق من النقاط"
+          : "Place an order or open a secure order link before checking points"
+      );
       return;
     }
+
     setLoyaltyLooking(true);
     try {
-      const r = await fetch(`/api/customers/lookup?phone=${encodeURIComponent(customerPhone)}`);
-      const data = await r.json();
-      if (data.customer) {
-        setLoyaltyCustomer(data.customer);
-        toast.success(`${isRTL ? "أهلاً" : "Welcome"} ${data.customer.name} · ${data.customer.loyaltyPoints} ${isRTL ? "نقطة" : "pts"}`);
+      const response = await fetch("/api/customers/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orders: recentOrders }),
+      });
+      const data = await response.json().catch(() => null);
+      if (response.ok && data?.customer) {
+        setLoyaltyCustomer({
+          ...data.customer,
+          redemptionOptions: data.redemptionOptions || [],
+        });
+        toast.success(
+          `${isRTL ? "أهلاً" : "Welcome"} ${data.customer.name} · ${data.customer.loyaltyPoints} ${isRTL ? "نقطة" : "pts"}`
+        );
       } else {
-        toast.error(isRTL ? "العميل غير موجود" : "Customer not found");
+        toast.error(data?.error || (isRTL ? "تعذر التحقق من الحساب" : "Unable to verify loyalty account"));
       }
     } catch {
       toast.error(t.common.error);
@@ -84,26 +150,15 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
     }
   };
 
-  const redeemPoints = async (points: number, value: number) => {
-    try {
-      const r = await fetch("/api/customers/lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: customerPhone, pointsToRedeem: points }),
-      });
-      const data = await r.json();
-      if (r.ok) {
-        setLoyaltyCustomer(data.customer);
-        setLoyaltyDiscount(value);
-        setLoyaltyPointsUsed(points);
-        toast.success(`${isRTL ? "تم استبدال" : "Redeemed"} ${points} ${isRTL ? "نقطة" : "pts"} → ${fmtCurrency(value)}`);
-      } else {
-        toast.error(data.error || t.common.error);
-      }
-    } catch {
-      toast.error(t.common.error);
-    }
+
+  const redeemPoints = async (_points: number, _value: number) => {
+    toast.error(
+      isRTL
+        ? "استبدال النقاط معطل حتى يتم تطبيقه داخل معاملة دفع آمنة"
+        : "Point redemption is disabled until it is part of a secure checkout transaction"
+    );
   };
+
 
   const clearLoyalty = () => {
     setLoyaltyDiscount(0);
@@ -113,66 +168,64 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
 
   const placeOrder = async () => {
     if (orderType === "delivery" && subtotal < minDeliveryOrder) {
-      toast.error(t.cart.minOrderNotMet.replace("{amount}", fmtCurrency(minDeliveryOrder)));
+      toast.error(
+        t.cart.minOrderNotMet.replace(
+          "{amount}",
+          fmtCurrency(minDeliveryOrder)
+        )
+      );
       return;
     }
     if (orderType === "delivery" && !deliveryAddress) {
       toast.error(t.cart.deliveryAddress);
       return;
     }
+    if (orderType === "delivery" && !customerPhone) {
+      toast.error(t.cart.customerPhone);
+      return;
+    }
     if (orderType === "dine_in" && !tableNumber) {
       toast.error(t.cart.selectTable);
       return;
     }
+
     setPlacing(true);
+    idempotencyKeyRef.current ??= createIdempotencyKey();
+
     try {
-      const items = cart.map((c) => ({
-        menuItemId: c.menuItemId,
-        quantity: c.quantity,
-        unitPrice: c.price,
-        modifiers: c.modifiers,
-        notes: c.notes,
-        totalPrice: c.totalPrice,
-        course: c.course,
-        stationSlug: c.stationSlug || "",
-      }));
-      const r = await fetch("/api/orders", {
+      const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: orderType,
-          customerName: customerName || "Guest",
-          customerPhone,
-          deliveryAddress: orderType === "delivery" ? deliveryAddress : null,
-          notes: orderNotes,
-          subtotal,
-          taxAmount: tax,
-          deliveryFee,
-          discountAmount: discount + loyaltyDisc,
-          tipAmount,
-          total,
-          paymentMethod: "cash",
-          paymentStatus: "unpaid",
-          items,
-          tableNumber: orderType === "dine_in" ? tableNumber : undefined,
-          estimatedReady: new Date(Date.now() + avgPrepMin * 60 * 1000),
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKeyRef.current,
+        },
+        body: JSON.stringify(orderPayload),
       });
-      if (r.ok) {
-        const { order } = await r.json();
-        toast.success(`${t.cart.orderPlaced} ${order.orderNumber}`);
-        clearCart();
-        onOpenChange(false);
-        // redirect to live order tracking page
-        // eslint-disable-next-line react-hooks/immutability
-        window.location.href = `/track/${order.orderNumber.replace(/^#/, "")}`;
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.order || !data?.accessToken) {
+        toast.error(data?.error || t.common.error);
+        return;
       }
+
+      rememberOrderAccess(data.order.orderNumber, data.accessToken);
+      toast.success(`${t.cart.orderPlaced} ${data.order.orderNumber}`);
+      clearCart();
+      onOpenChange(false);
+      idempotencyKeyRef.current = null;
+
+      const orderNumber = data.order.orderNumber.replace(/^#/, "");
+      window.location.assign(
+        `/track/${encodeURIComponent(orderNumber)}?token=${encodeURIComponent(
+          data.accessToken
+        )}`
+      );
     } catch {
       toast.error(t.common.error);
     } finally {
       setPlacing(false);
     }
   };
+
 
   const orderTypes = [
     { id: "dine_in" as const, icon: "🍽️", label: t.cart.dineIn },

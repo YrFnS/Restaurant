@@ -1,56 +1,202 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
+import {
+  STAFF_ADMIN_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
+import {
+  OrderAccessConfigurationError,
+  verifyOrderAccessToken,
+} from "@/lib/orders/access";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
-// Look up a customer by phone and return their loyalty points + redemption options
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const phone = searchParams.get("phone");
-  if (!phone) return NextResponse.json({ customer: null });
+const loyaltyCredentialsSchema = z
+  .object({
+    orders: z
+      .array(
+        z
+          .object({
+            orderNumber: z.string().trim().min(1).max(100),
+            accessToken: z.string().trim().min(20).max(200),
+            createdAt: z.string().datetime().optional(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(20),
+  })
+  .strict();
 
-  const customer = await db.customer.findUnique({
-    where: { phone },
-    select: { id: true, name: true, phone: true, loyaltyPoints: true, totalSpent: true, visits: true },
-  });
+const LOYALTY_LOOKUP_WINDOW_MS = 60_000;
+const MAX_LOYALTY_LOOKUPS_PER_WINDOW = 60;
 
-  if (!customer) return NextResponse.json({ customer: null });
+function normalizeOrderNumber(value: string): string {
+  return `#${value.replace(/^#/, "").trim()}`;
+}
 
-  // Redemption tiers: 100 pts = $1, 500 pts = $6, 1000 pts = $15
-  const redemptionOptions = [
+function redemptionOptions(points: number) {
+  return [
     { points: 100, value: 1, label: "$1 off" },
     { points: 250, value: 3, label: "$3 off" },
     { points: 500, value: 6, label: "$6 off" },
-    { points: 1000, value: 15, label: "$15 off" },
-  ].filter((r) => customer.loyaltyPoints >= r.points);
-
-  return NextResponse.json({ customer, redemptionOptions });
+    { points: 1_000, value: 15, label: "$15 off" },
+  ].filter((option) => points >= option.points);
 }
 
-// Redeem points (subtract from customer's balance)
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { phone, pointsToRedeem } = body;
-    if (!phone || !pointsToRedeem) {
-      return NextResponse.json({ error: "phone and pointsToRedeem required" }, { status: 400 });
-    }
-    const customer = await db.customer.findUnique({ where: { phone } });
-    if (!customer) return NextResponse.json({ error: "Customer not found" }, { status: 404 });
-    if (customer.loyaltyPoints < pointsToRedeem) {
-      return NextResponse.json({ error: "Insufficient points" }, { status: 400 });
-    }
-    // Calculate discount value: 100 pts = $1
-    const discountValue = pointsToRedeem / 100;
-    const updated = await db.customer.update({
-      where: { id: customer.id },
-      data: { loyaltyPoints: { decrement: pointsToRedeem } },
-      select: { id: true, name: true, phone: true, loyaltyPoints: true },
-    });
-    return NextResponse.json({
-      customer: updated,
-      redeemedPoints: pointsToRedeem,
-      discountValue: Math.round(discountValue * 100) / 100,
-    });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+// Staff-only lookup for customer management workflows.
+export async function GET(req: NextRequest) {
+  const auth = await requireStaffSession(STAFF_ADMIN_ROLES);
+  if ("response" in auth) return auth.response;
+
+  const phone = new URL(req.url).searchParams.get("phone")?.trim();
+  if (!phone || phone.length > 40) {
+    return NextResponse.json(
+      { error: "A valid phone number is required", code: "VALIDATION_ERROR" },
+      { status: 400 }
+    );
   }
+
+  const customer = await db.customer.findUnique({
+    where: { phone },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      loyaltyPoints: true,
+      totalSpent: true,
+      visits: true,
+      notes: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return NextResponse.json(
+    {
+      customer,
+      redemptionOptions: customer
+        ? redemptionOptions(customer.loyaltyPoints)
+        : [],
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
+}
+
+// Customer loyalty access requires proof of ownership of a linked order.
+export async function POST(req: NextRequest) {
+  let lookupLimit;
+  try {
+    lookupLimit = await consumeRateLimit({
+      scope: "loyalty-lookup",
+      identifier: getRequestSource(req),
+      limit: MAX_LOYALTY_LOOKUPS_PER_WINDOW,
+      windowMs: LOYALTY_LOOKUP_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[customers/lookup] Shared rate limiter failed", error);
+    return NextResponse.json(
+      {
+        error: "Loyalty lookup is temporarily unavailable",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  if (!lookupLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many loyalty requests", code: "LOYALTY_RATE_LIMITED" },
+      { status: 429, headers: rateLimitHeaders(lookupLimit) }
+    );
+  }
+
+  try {
+    const parsed = loyaltyCredentialsSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid loyalty credentials", code: "VALIDATION_ERROR" },
+        { status: 400, headers: rateLimitHeaders(lookupLimit) }
+      );
+    }
+
+    const credentials = new Map(
+      parsed.data.orders.map((entry) => [
+        normalizeOrderNumber(entry.orderNumber),
+        entry.accessToken,
+      ])
+    );
+    const orders = await db.order.findMany({
+      where: {
+        orderNumber: { in: Array.from(credentials.keys()) },
+        customerId: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, orderNumber: true, customerId: true },
+    });
+
+    const authorizedOrder = orders.find((order) =>
+      verifyOrderAccessToken(order.id, credentials.get(order.orderNumber))
+    );
+    if (!authorizedOrder?.customerId) {
+      return NextResponse.json(
+        { customer: null, redemptionOptions: [] },
+        { status: 404, headers: rateLimitHeaders(lookupLimit) }
+      );
+    }
+
+    const customer = await db.customer.findUnique({
+      where: { id: authorizedOrder.customerId },
+      select: {
+        id: true,
+        name: true,
+        loyaltyPoints: true,
+        totalSpent: true,
+        visits: true,
+      },
+    });
+
+    return NextResponse.json(
+      {
+        customer,
+        redemptionOptions: customer
+          ? redemptionOptions(customer.loyaltyPoints)
+          : [],
+        redemptionEnabled: false,
+      },
+      { headers: rateLimitHeaders(lookupLimit) }
+    );
+  } catch (error) {
+    if (error instanceof OrderAccessConfigurationError) {
+      return NextResponse.json(
+        {
+          error: "Loyalty access is not configured",
+          code: "ORDER_ACCESS_NOT_CONFIGURED",
+        },
+        { status: 503, headers: rateLimitHeaders(lookupLimit) }
+      );
+    }
+
+    console.error("[customers/lookup] Loyalty lookup failed", error);
+    return NextResponse.json(
+      { error: "Unable to load loyalty account", code: "LOYALTY_LOOKUP_FAILED" },
+      { status: 500, headers: rateLimitHeaders(lookupLimit) }
+    );
+  }
+}
+
+export async function PATCH() {
+  return NextResponse.json(
+    {
+      error:
+        "Point redemption must be applied through a validated checkout transaction",
+      code: "DIRECT_REDEMPTION_DISABLED",
+    },
+    { status: 405, headers: { Allow: "GET, POST" } }
+  );
 }

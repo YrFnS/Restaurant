@@ -1,171 +1,376 @@
+import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { db } from "@/lib/db";
-import { broadcastKds, stationSlugsFromItems } from "@/lib/kds/broadcast";
+import {
+  ORDER_MANAGEMENT_ROLES,
+  requireStaffSession,
+} from "@/lib/auth/guard";
+import { getStaffSession } from "@/lib/auth/session";
+import {
+  calculateOrderPricing,
+  fromCents,
+  OrderPricingError,
+  orderRequestSchema,
+  type OrderRequest,
+} from "@/lib/orders/pricing";
+import {
+  createOrderAccessToken,
+  OrderAccessConfigurationError,
+  orderIdFromIdempotencyKey,
+} from "@/lib/orders/access";
+import {
+  flushKdsOutboxBestEffort,
+  queueKdsEvent,
+  resolveKdsScreenSlugs,
+} from "@/lib/kds/outbox";
+import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
+import {
+  consumeRateLimit,
+  getRequestSource,
+  rateLimitHeaders,
+} from "@/lib/security/rate-limit";
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const phone = searchParams.get("phone");
-  const status = searchParams.get("status");
-  const limit = parseInt(searchParams.get("limit") || "50");
+const orderStatusSchema = z.enum([
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "completed",
+  "cancelled",
+]);
+const orderQuerySchema = z
+  .object({
+    status: z.union([z.literal("all"), orderStatusSchema]).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    from: z.string().datetime().optional(),
+    countOnly: z.enum(["true", "false"]).default("false"),
+  })
+  .strict();
 
-  const where: any = {};
-  if (phone) where.customerPhone = phone;
-  if (status && status !== "all") where.status = status;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
+const ORDER_WINDOW_MS = 60_000;
+const MAX_ORDERS_PER_WINDOW = 20;
 
-  const orders = await db.order.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    take: limit,
-    include: {
-      items: { include: { menuItem: true } },
-      table: true,
-    },
-  });
-  return NextResponse.json({ orders });
+function generateOrderNumber(): string {
+  const date = new Date().toISOString().slice(2, 10).replaceAll("-", "");
+  return `#R-${date}-${randomBytes(6).toString("hex").toUpperCase()}`;
 }
 
-export async function POST(req: NextRequest) {
+const orderInclude = {
+  items: { include: { menuItem: true } },
+  table: true,
+} as const;
+
+type OrderWithRelations = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
+
+function publicOrderResponse(order: OrderWithRelations, replayed = false) {
+  return {
+    order,
+    accessToken: createOrderAccessToken(order.id),
+    replayed,
+  };
+}
+
+async function findExistingIdempotentOrder(orderId: string) {
+  return db.order.findUnique({ where: { id: orderId }, include: orderInclude });
+}
+
+export async function GET(req: NextRequest) {
+  const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
+  if ("response" in auth) return auth.response;
+
+  const parsed = orderQuerySchema.safeParse(
+    Object.fromEntries(new URL(req.url).searchParams.entries())
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid order query", code: "VALIDATION_ERROR" },
+      { status: 400 }
+    );
+  }
+
   try {
-    const body = await req.json();
+    const where: Prisma.OrderWhereInput = {
+      ...(parsed.data.status && parsed.data.status !== "all"
+        ? { status: parsed.data.status }
+        : {}),
+      ...(parsed.data.from
+        ? { createdAt: { gte: new Date(parsed.data.from) } }
+        : {}),
+    };
 
-    // Fetch settings for server-side defaults (tax, delivery, prep time)
-    const settings = await db.restaurantSettings.findFirst({ where: { id: "1" } });
-    const taxRate = settings?.taxRate ?? 0.1;
-    const deliveryFee = settings?.deliveryFee ?? 4.99;
-    const minDeliveryOrder = settings?.minDeliveryOrder ?? 15;
-    const avgPrepMin = settings?.avgPrepTimeMin ?? 25;
-
-    // Server-side validation: min delivery order
-    if (body.type === "delivery" && (body.subtotal || 0) < minDeliveryOrder) {
+    if (parsed.data.countOnly === "true") {
+      const count = await db.order.count({ where });
       return NextResponse.json(
-        { error: `Minimum delivery order is ${minDeliveryOrder}` },
-        { status: 400 }
+        { count },
+        { headers: { "Cache-Control": "no-store" } }
       );
     }
 
-    // Resolve stationSlug for each item from its menu category if not provided
-    const menuItemIds = (body.items || []).map((it: any) => it.menuItemId).filter(Boolean);
-    const menuItems = menuItemIds.length > 0
-      ? await db.menuItem.findMany({ where: { id: { in: menuItemIds } }, include: { category: true } })
-      : [];
-    const menuItemMap = new Map(menuItems.map((mi) => [mi.id, mi]));
+    const orders = await db.order.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: parsed.data.limit,
+      include: orderInclude,
+    });
+    return NextResponse.json(
+      { orders },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
+    console.error("[orders] Failed to load orders", error);
+    return NextResponse.json(
+      { error: "Unable to load orders", code: "ORDERS_LOAD_FAILED" },
+      { status: 500 }
+    );
+  }
+}
 
-    // Resolve tableId if tableNumber (string) provided but no tableId
-    let resolvedTableId = body.tableId || null;
-    if (!resolvedTableId && body.tableNumber) {
-      const table = await db.restaurantTable.findFirst({ where: { number: parseInt(body.tableNumber) } });
-      if (table) resolvedTableId = table.id;
+export async function POST(req: NextRequest) {
+  let orderLimit;
+  try {
+    orderLimit = await consumeRateLimit({
+      scope: "order-create",
+      identifier: getRequestSource(req),
+      limit: MAX_ORDERS_PER_WINDOW,
+      windowMs: ORDER_WINDOW_MS,
+    });
+  } catch (error) {
+    console.error("[orders] Shared rate limiter failed", error);
+    return NextResponse.json(
+      { error: "Ordering is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  if (!orderLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many order attempts", code: "ORDER_RATE_LIMITED" },
+      { status: 429, headers: rateLimitHeaders(orderLimit) }
+    );
+  }
+
+  const idempotencyKey = req.headers.get("idempotency-key")?.trim() || "";
+  if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    return NextResponse.json(
+      {
+        error: "A valid Idempotency-Key header is required",
+        code: "IDEMPOTENCY_KEY_REQUIRED",
+      },
+      { status: 400 }
+    );
+  }
+
+  let input: OrderRequest;
+  try {
+    const parsed = orderRequestSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid order",
+          code: "VALIDATION_ERROR",
+          details: parsed.error.flatten().fieldErrors,
+        },
+        { status: 400 }
+      );
+    }
+    input = parsed.data;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body", code: "INVALID_JSON" },
+      { status: 400 }
+    );
+  }
+
+  const orderId = orderIdFromIdempotencyKey(idempotencyKey);
+
+  try {
+    const existing = await findExistingIdempotentOrder(orderId);
+    if (existing) {
+      return NextResponse.json(publicOrderResponse(existing, true), {
+        status: 200,
+        headers: { "Cache-Control": "no-store" },
+      });
     }
 
-    // generate order number
-    const count = await db.order.count();
-    const orderNumber = `#${1000 + count + 1}`;
+    const [actor, context] = await Promise.all([
+      getStaffSession().catch(() => null),
+      Promise.resolve(auditContextFromRequest(req)),
+    ]);
+    const order = await db.$transaction(async (tx) => {
+      const replay = await tx.order.findUnique({
+        where: { id: orderId },
+        include: orderInclude,
+      });
+      if (replay) return replay;
 
-    const order = await db.order.create({
-      data: {
-        orderNumber,
-        type: body.type || "dine_in",
-        status: "confirmed",
-        customerName: body.customerName || "",
-        customerPhone: body.customerPhone || "",
-        deliveryAddress: body.deliveryAddress || null,
-        notes: body.notes || null,
-        subtotal: body.subtotal || 0,
-        taxAmount: body.taxAmount ?? (body.subtotal || 0) * taxRate,
-        deliveryFee: body.deliveryFee ?? (body.type === "delivery" ? deliveryFee : 0),
-        discountAmount: body.discountAmount || 0,
-        tipAmount: body.tipAmount || 0,
-        total: body.total || 0,
-        paymentMethod: body.paymentMethod || "cash",
-        paymentStatus: body.paymentStatus || "unpaid",
-        serverName: body.serverName || "",
-        tableId: resolvedTableId,
-        customerId: body.customerId || null,
-        estimatedReady: body.estimatedReady ? new Date(body.estimatedReady) : new Date(Date.now() + avgPrepMin * 60 * 1000),
-        items: {
-          create: (body.items || []).map((it: any) => {
-            const mi = menuItemMap.get(it.menuItemId);
-            const stationSlug = it.stationSlug || mi?.category?.stationSlugs || "prep";
-            return {
-              menuItemId: it.menuItemId,
-              quantity: it.quantity || 1,
-              unitPrice: it.unitPrice,
-              modifiers: JSON.stringify(it.modifiers || []),
-              notes: it.notes || null,
-              totalPrice: it.totalPrice,
-              stationSlug,
-              course: it.course || 1,
-              status: "pending",
-            };
-          }),
-        },
-      },
-      include: { items: { include: { menuItem: true } } },
-    });
+      const pricing = await calculateOrderPricing(tx, input);
 
-    // update customer loyalty if phone provided
-    if (body.customerPhone && body.total) {
-      const customer = await db.customer.findUnique({ where: { phone: body.customerPhone } });
-      if (customer) {
-        await db.customer.update({
-          where: { id: customer.id },
-          data: {
-            loyaltyPoints: { increment: Math.floor(body.total) },
-            totalSpent: { increment: body.total },
-            visits: { increment: 1 },
-          },
+      let tableId: string | null = null;
+      if (input.type === "dine_in") {
+        const table = await tx.restaurantTable.findUnique({
+          where: { number: input.tableNumber! },
+          select: { id: true, status: true },
         });
-      } else if (body.customerName) {
-        await db.customer.create({
-          data: {
-            name: body.customerName,
-            phone: body.customerPhone,
-            loyaltyPoints: Math.floor(body.total),
-            totalSpent: body.total,
-            visits: 1,
+        if (!table) {
+          throw new OrderPricingError(
+            "The selected table does not exist",
+            "TABLE_NOT_FOUND",
+            400
+          );
+        }
+        if (["cleaning", "reserved", "paid"].includes(table.status)) {
+          throw new OrderPricingError(
+            "The selected table is not available for ordering",
+            "TABLE_UNAVAILABLE",
+            409
+          );
+        }
+        tableId = table.id;
+      }
+
+      let customerId: string | null = null;
+      if (input.customerPhone) {
+        const customer = await tx.customer.upsert({
+          where: { phone: input.customerPhone },
+          update: input.customerName ? { name: input.customerName } : {},
+          create: {
+            name: input.customerName || "Guest",
+            phone: input.customerPhone,
           },
+          select: { id: true },
+        });
+        customerId = customer.id;
+      }
+
+      const created = await tx.order.create({
+        data: {
+          id: orderId,
+          orderNumber: generateOrderNumber(),
+          type: input.type,
+          status: "confirmed",
+          customerName: input.customerName || "Guest",
+          customerPhone: input.customerPhone,
+          deliveryAddress:
+            input.type === "delivery" ? input.deliveryAddress || null : null,
+          notes: input.notes || null,
+          subtotal: fromCents(pricing.subtotalCents),
+          taxAmount: fromCents(pricing.taxCents),
+          deliveryFee: fromCents(pricing.deliveryFeeCents),
+          discountAmount: fromCents(pricing.discountCents),
+          tipAmount: fromCents(pricing.tipCents),
+          total: fromCents(pricing.totalCents),
+          paymentMethod: "cash",
+          paymentStatus: "unpaid",
+          serverName: "",
+          tableId,
+          customerId,
+          estimatedReady: new Date(
+            Date.now() + pricing.averagePrepMinutes * 60_000
+          ),
+          items: {
+            create: pricing.lines.map((line) => ({
+              menuItemId: line.menuItemId,
+              quantity: line.quantity,
+              unitPrice: fromCents(line.unitPriceCents),
+              modifiers: line.modifiers,
+              notes: line.notes,
+              totalPrice: fromCents(line.totalPriceCents),
+              stationSlug: line.stationSlug,
+              course: line.course,
+              status: "pending",
+            })),
+          },
+        },
+        include: orderInclude,
+      });
+
+      if (tableId) {
+        await tx.restaurantTable.update({
+          where: { id: tableId },
+          data: { status: "ordered" },
         });
       }
-    }
 
-    // update table status if dine-in
-    if (body.tableId) {
-      await db.restaurantTable.update({
-        where: { id: body.tableId },
-        data: { status: "ordered" },
+      await writeAuditEvent(tx, {
+        actor,
+        action: "order.create",
+        entityType: "Order",
+        entityId: created.id,
+        context,
+        metadata: {
+          orderNumber: created.orderNumber,
+          type: created.type,
+          status: created.status,
+          subtotal: created.subtotal,
+          taxAmount: created.taxAmount,
+          deliveryFee: created.deliveryFee,
+          discountAmount: created.discountAmount,
+          tipAmount: created.tipAmount,
+          total: created.total,
+          itemCount: created.items.length,
+          tableId,
+          promoCode: pricing.promoCode,
+          dynamicMultiplier: pricing.dynamicMultiplier,
+          activePricingRules: pricing.activePricingRules,
+        },
       });
-    }
 
-    // ── Broadcast to KDS screens so they update instantly ────────────────
-    // Determine which screens should see this order: any active screen whose
-    // stationFilter is empty (all stations) OR contains one of the order's
-    // station slugs. Also include "expo" screens (screenType=expo) since they
-    // show everything.
-    try {
-      const itemStationSlugs = stationSlugsFromItems(order.items);
-      const screens = await db.kitchenScreen.findMany({
-        where: { isActive: true },
-        select: { slug: true, stationFilter: true, screenType: true },
-      });
-      const targetScreenSlugs = screens
-        .filter((s) => {
-          if (s.screenType === "expo") return true;
-          if (!s.stationFilter) return true; // empty filter = all stations
-          const filter = s.stationFilter.split(",").filter(Boolean);
-          return filter.some((slug) => itemStationSlugs.includes(slug));
-        })
-        .map((s) => s.slug);
-      await broadcastKds({
+      const targetScreenSlugs = await resolveKdsScreenSlugs(
+        tx,
+        created.items.map((item) => item.stationSlug)
+      );
+      await queueKdsEvent(tx, {
         type: "order:new",
         screenSlugs: targetScreenSlugs,
-        payload: { orderId: order.id, orderNumber: order.orderNumber },
+        payload: { orderId: created.id, orderNumber: created.orderNumber },
       });
-    } catch (e) {
-      // best-effort; polling will catch up
+
+      return created;
+    });
+
+    await flushKdsOutboxBestEffort(10);
+
+    return NextResponse.json(publicOrderResponse(order), {
+      status: 201,
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof OrderPricingError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, details: error.details },
+        { status: error.status }
+      );
+    }
+    if (error instanceof OrderAccessConfigurationError) {
+      return NextResponse.json(
+        { error: "Order access is not configured", code: "ORDER_ACCESS_NOT_CONFIGURED" },
+        { status: 503 }
+      );
     }
 
-    return NextResponse.json({ order });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const replay = await findExistingIdempotentOrder(orderId);
+      if (replay) {
+        return NextResponse.json(publicOrderResponse(replay, true), {
+          status: 200,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+      return NextResponse.json(
+        { error: "Unable to allocate an order reference", code: "ORDER_REFERENCE_CONFLICT" },
+        { status: 409 }
+      );
+    }
+
+    console.error("[orders] Failed to create order", error);
+    return NextResponse.json(
+      { error: "Unable to place order", code: "ORDER_CREATE_FAILED" },
+      { status: 500 }
+    );
   }
 }

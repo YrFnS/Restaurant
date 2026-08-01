@@ -35,7 +35,7 @@ export function ReportsTab() {
 
   // Build a synthetic 7-day trend based on hour totals
   const last7Days = (() => {
-    const days = [];
+    const days: Array<{ day: string; Sales: number; Orders: number }> = [];
     const names = isRTL
       ? ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"]
       : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

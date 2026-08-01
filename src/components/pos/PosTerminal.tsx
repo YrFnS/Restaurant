@@ -3,7 +3,7 @@
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore } from "@/lib/store";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   LayoutGrid, Map, ShoppingCart, Languages, LogOut, Flame, Store, RefreshCw,
@@ -29,6 +29,13 @@ import {
 
 type LeftView = "menu" | "floor";
 
+function createIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `pos-kitchen-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
 export function PosTerminal() {
   const { t, isRTL, locale, toggleLocale, fmtCurrency } = useI18n();
   const { staffName, clearStaff } = useRestaurantStore();
@@ -46,6 +53,7 @@ export function PosTerminal() {
   const [notes, setNotes] = useState("");
   const [tip, setTip] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  const kitchenIdempotencyKeyRef = useRef<string | null>(null);
 
   const [payOpen, setPayOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
@@ -72,6 +80,50 @@ export function PosTerminal() {
   const settings = settingsData?.settings;
   const taxRate = settings?.taxRate ?? 0.1;
   const deliveryFee = settings?.deliveryFee ?? 4.99;
+  const kitchenOrderPayload = useMemo(
+    () => ({
+      type: orderType,
+      customerName:
+        customerName ||
+        (selectedTable ? `Table ${selectedTable.number}` : "Walk-in"),
+      customerPhone,
+      deliveryAddress:
+        orderType === "delivery" ? deliveryAddress : null,
+      tableNumber:
+        orderType === "dine_in" ? selectedTable?.number : undefined,
+      notes: notes || null,
+      promoCode: null,
+      tip:
+        tip > 0
+          ? { mode: "amount" as const, value: tip }
+          : { mode: "none" as const },
+      items: items.map((item) => ({
+        menuItemId: item.menuItemId,
+        quantity: item.quantity,
+        modifierOptionIds: item.modifiers.map((modifier) => modifier.id),
+        notes: item.notes || null,
+        course: item.course,
+      })),
+    }),
+    [
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      items,
+      notes,
+      orderType,
+      selectedTable,
+      tip,
+    ]
+  );
+  const kitchenOrderFingerprint = useMemo(
+    () => JSON.stringify(kitchenOrderPayload),
+    [kitchenOrderPayload]
+  );
+
+  useEffect(() => {
+    kitchenIdempotencyKeyRef.current = null;
+  }, [kitchenOrderFingerprint]);
 
   // ─── Item ops ───
   const addItem = (item: PosOrderItem) => {
@@ -174,56 +226,39 @@ export function PosTerminal() {
       toast.error(t.cart.deliveryAddress);
       return;
     }
+    if (orderType === "delivery" && !customerPhone.trim()) {
+      toast.error(t.cart.customerPhone);
+      return;
+    }
+
     setIsSending(true);
+    kitchenIdempotencyKeyRef.current ??= createIdempotencyKey();
+
     try {
-      const subtotal = items.reduce((s, i) => s + i.totalPrice, 0);
-      const tax = Math.round(subtotal * taxRate * 100) / 100;
-      const dFee = orderType === "delivery" ? deliveryFee : 0;
-      const total = subtotal + tax + dFee + tip;
-      const r = await fetch("/api/orders", {
+      const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: orderType,
-          customerName: customerName || (selectedTable ? `Table ${selectedTable.number}` : "Walk-in"),
-          customerPhone,
-          deliveryAddress: orderType === "delivery" ? deliveryAddress : null,
-          notes,
-          subtotal,
-          taxAmount: tax,
-          deliveryFee: dFee,
-          discountAmount: 0,
-          tipAmount: tip,
-          total,
-          paymentMethod: "cash",
-          paymentStatus: "unpaid",
-          serverName: staffName || "Server",
-          tableId: selectedTable?.id || null,
-          items: items.map((it) => ({
-            menuItemId: it.menuItemId,
-            quantity: it.quantity,
-            unitPrice: it.price,
-            modifiers: it.modifiers,
-            notes: it.notes,
-            totalPrice: it.totalPrice,
-            stationSlug: it.stationSlug,
-            course: it.course,
-          })),
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": kitchenIdempotencyKeyRef.current,
+        },
+        body: JSON.stringify(kitchenOrderPayload),
       });
-      if (!r.ok) throw new Error("Failed");
-      const { order } = await r.json();
-      // Refetch tables so the table status reflects "ordered"
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.order) {
+        throw new Error(data?.error || t.common.error);
+      }
+
       qc.invalidateQueries({ queryKey: ["pos-tables"] });
-      toast.success(`${t.pos.sentToKitchen} — ${order.orderNumber}`);
-      // Keep items in ticket (server may now press Charge). Optionally clear:
-      // We DON'T clear here so Charge can be tapped immediately.
-    } catch {
-      toast.error(t.common.error);
+      toast.success(`${t.pos.sentToKitchen} — ${data.order.orderNumber}`);
+      kitchenIdempotencyKeyRef.current = null;
+      clearAll();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.common.error);
     } finally {
       setIsSending(false);
     }
   };
+
 
   const handlePayComplete = (result: {
     orderId: string;

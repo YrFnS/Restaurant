@@ -150,7 +150,7 @@ export function OrderTicket(props: OrderTicketProps) {
             <div className="space-y-1.5 text-start w-full max-w-[200px]">
               <div className="flex items-center gap-2 text-xs">
                 <span className={`size-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${orderType === "dine_in" && !table ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>1</span>
-                <span>{orderType === "dine_in" ? (table ? "✓ " + t.pos.tables + " #" + table.number : t.pos.selectTable) : t.pos.orderType}</span>
+                <span>{orderType === "dine_in" ? (table ? "✓ " + t.pos.tables + " #" + table.number : t.pos.selectTable) : (isRTL ? "نوع الطلب" : "Order type")}</span>
               </div>
               <div className="flex items-center gap-2 text-xs">
                 <span className="size-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 bg-muted text-muted-foreground">2</span>
@@ -320,7 +320,7 @@ export function OrderTicket(props: OrderTicketProps) {
                   <span>{t.pos.sendToKitchen}</span>
                   {itemCount > 0 && (
                     <span className="text-[10px] font-normal opacity-70">
-                      {itemCount} {itemCount === 1 ? t.orders.item : t.orders.items}
+                      {itemCount} {itemCount === 1 ? (isRTL ? "صنف" : "item") : t.orders.items}
                     </span>
                   )}
                 </span>

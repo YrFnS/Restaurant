@@ -22,11 +22,11 @@ export interface CartModifier {
 }
 
 export interface CartItem {
-  id: string; // unique cart line id
+  id: string;
   menuItemId: string;
   nameEn: string;
   nameAr: string;
-  price: number; // unit price including modifiers
+  price: number;
   basePrice: number;
   quantity: number;
   image: string;
@@ -34,16 +34,26 @@ export interface CartItem {
   notes: string;
   course: number;
   totalPrice: number;
-  stationSlug?: string; // kitchen station routing
-  categoryId?: string; // for station derivation
+  stationSlug?: string;
+  categoryId?: string;
+}
+
+export interface RecentOrderAccess {
+  orderNumber: string;
+  accessToken: string;
+  createdAt: string;
+}
+
+export interface CustomerResourceAccess {
+  id: string;
+  accessToken: string;
+  createdAt: string;
 }
 
 interface RestaurantState {
-  // Navigation
   activeSection: ActiveSection;
   setActiveSection: (section: ActiveSection) => void;
 
-  // Cart
   cart: CartItem[];
   orderType: "dine_in" | "takeout" | "delivery";
   deliveryAddress: string;
@@ -56,44 +66,77 @@ interface RestaurantState {
   tipCustom: number;
   orderNotes: string;
 
-  // Favorites
   favorites: string[];
-
-  // Recent searches
   recentSearches: string[];
+  recentOrders: RecentOrderAccess[];
+  recentReservations: CustomerResourceAccess[];
+  waitlistAccess: CustomerResourceAccess | null;
 
-  // KDS / staff session
-  staffPin: string | null;
+  // Non-sensitive display state only. Staff authentication lives in an HTTP-only cookie.
   staffName: string | null;
 
-  // Actions
   addToCart: (item: CartItem) => void;
   updateCartQty: (id: string, qty: number) => void;
   removeFromCart: (id: string) => void;
   clearCart: () => void;
-  setOrderType: (t: "dine_in" | "takeout" | "delivery") => void;
-  setDeliveryAddress: (a: string) => void;
-  setTableNumber: (t: string) => void;
-  setCustomerName: (n: string) => void;
-  setCustomerPhone: (p: string) => void;
+  setOrderType: (type: "dine_in" | "takeout" | "delivery") => void;
+  setDeliveryAddress: (address: string) => void;
+  setTableNumber: (tableNumber: string) => void;
+  setCustomerName: (name: string) => void;
+  setCustomerPhone: (phone: string) => void;
   setPromo: (code: string, discount: number) => void;
   clearPromo: () => void;
   setTip: (percent: number, custom?: number) => void;
-  setOrderNotes: (n: string) => void;
+  setOrderNotes: (notes: string) => void;
 
   toggleFavorite: (id: string) => void;
-  addRecentSearch: (q: string) => void;
+  addRecentSearch: (query: string) => void;
   clearRecentSearches: () => void;
+  rememberOrderAccess: (orderNumber: string, accessToken: string) => void;
+  forgetOrderAccess: (orderNumber: string) => void;
+  rememberReservationAccess: (id: string, accessToken: string) => void;
+  forgetReservationAccess: (id: string) => void;
+  rememberWaitlistAccess: (id: string, accessToken: string) => void;
+  clearWaitlistAccess: () => void;
 
-  setStaff: (pin: string, name: string) => void;
+  setStaff: (name: string) => void;
   clearStaff: () => void;
 }
 
+function purgeLegacyPersistedStaffCredentials() {
+  if (typeof window === "undefined") return;
+
+  try {
+    const raw = window.localStorage.getItem("rs-store");
+    if (!raw) return;
+
+    const persisted = JSON.parse(raw) as {
+      state?: Record<string, unknown>;
+      version?: number;
+    };
+    if (!persisted.state) return;
+
+    const hadSensitiveState =
+      Object.prototype.hasOwnProperty.call(persisted.state, "staffPin") ||
+      Object.prototype.hasOwnProperty.call(persisted.state, "staffName");
+
+    if (hadSensitiveState) {
+      delete persisted.state.staffPin;
+      delete persisted.state.staffName;
+      window.localStorage.setItem("rs-store", JSON.stringify(persisted));
+    }
+  } catch {
+    window.localStorage.removeItem("rs-store");
+  }
+}
+
+purgeLegacyPersistedStaffCredentials();
+
 export const useRestaurantStore = create<RestaurantState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       activeSection: "home",
-      setActiveSection: (section) => set({ activeSection: section }),
+      setActiveSection: (activeSection) => set({ activeSection }),
 
       cart: [],
       orderType: "dine_in",
@@ -109,43 +152,56 @@ export const useRestaurantStore = create<RestaurantState>()(
 
       favorites: [],
       recentSearches: [],
-
-      staffPin: null,
+      recentOrders: [],
+      recentReservations: [],
+      waitlistAccess: null,
       staffName: null,
 
       addToCart: (item) =>
-        set((s) => {
-          // merge identical lines (same item + modifiers + notes)
-          const existing = s.cart.find(
-            (c) =>
-              c.menuItemId === item.menuItemId &&
-              c.notes === item.notes &&
-              JSON.stringify(c.modifiers) === JSON.stringify(item.modifiers)
+        set((state) => {
+          const existing = state.cart.find(
+            (cartItem) =>
+              cartItem.menuItemId === item.menuItemId &&
+              cartItem.notes === item.notes &&
+              JSON.stringify(cartItem.modifiers) === JSON.stringify(item.modifiers)
           );
           if (existing) {
             return {
-              cart: s.cart.map((c) =>
-                c.id === existing.id
-                  ? { ...c, quantity: c.quantity + item.quantity, totalPrice: (c.quantity + item.quantity) * c.price }
-                  : c
+              cart: state.cart.map((cartItem) =>
+                cartItem.id === existing.id
+                  ? {
+                      ...cartItem,
+                      quantity: cartItem.quantity + item.quantity,
+                      totalPrice:
+                        (cartItem.quantity + item.quantity) * cartItem.price,
+                    }
+                  : cartItem
               ),
             };
           }
-          return { cart: [...s.cart, item] };
+          return { cart: [...state.cart, item] };
         }),
 
-      updateCartQty: (id, qty) =>
-        set((s) => ({
+      updateCartQty: (id, quantity) =>
+        set((state) => ({
           cart:
-            qty <= 0
-              ? s.cart.filter((c) => c.id !== id)
-              : s.cart.map((c) =>
-                  c.id === id ? { ...c, quantity: qty, totalPrice: qty * c.price } : c
+            quantity <= 0
+              ? state.cart.filter((cartItem) => cartItem.id !== id)
+              : state.cart.map((cartItem) =>
+                  cartItem.id === id
+                    ? {
+                        ...cartItem,
+                        quantity,
+                        totalPrice: quantity * cartItem.price,
+                      }
+                    : cartItem
                 ),
         })),
 
       removeFromCart: (id) =>
-        set((s) => ({ cart: s.cart.filter((c) => c.id !== id) })),
+        set((state) => ({
+          cart: state.cart.filter((cartItem) => cartItem.id !== id),
+        })),
 
       clearCart: () =>
         set({
@@ -159,56 +215,102 @@ export const useRestaurantStore = create<RestaurantState>()(
           deliveryAddress: "",
         }),
 
-      setOrderType: (t) => set({ orderType: t }),
-      setDeliveryAddress: (a) => set({ deliveryAddress: a }),
-      setTableNumber: (t) => set({ tableNumber: t }),
-      setCustomerName: (n) => set({ customerName: n }),
-      setCustomerPhone: (p) => set({ customerPhone: p }),
-      setPromo: (code, discount) =>
-        set({ promoCode: code, promoDiscount: discount }),
+      setOrderType: (orderType) => set({ orderType }),
+      setDeliveryAddress: (deliveryAddress) => set({ deliveryAddress }),
+      setTableNumber: (tableNumber) => set({ tableNumber }),
+      setCustomerName: (customerName) => set({ customerName }),
+      setCustomerPhone: (customerPhone) => set({ customerPhone }),
+      setPromo: (promoCode, promoDiscount) => set({ promoCode, promoDiscount }),
       clearPromo: () => set({ promoCode: "", promoDiscount: 0 }),
-      setTip: (percent, custom = 0) =>
-        set({ tipPercent: percent, tipCustom: custom }),
-      setOrderNotes: (n) => set({ orderNotes: n }),
+      setTip: (tipPercent, tipCustom = 0) => set({ tipPercent, tipCustom }),
+      setOrderNotes: (orderNotes) => set({ orderNotes }),
 
       toggleFavorite: (id) =>
-        set((s) => ({
-          favorites: s.favorites.includes(id)
-            ? s.favorites.filter((f) => f !== id)
-            : [...s.favorites, id],
+        set((state) => ({
+          favorites: state.favorites.includes(id)
+            ? state.favorites.filter((favorite) => favorite !== id)
+            : [...state.favorites, id],
         })),
 
-      addRecentSearch: (q) =>
-        set((s) => ({
+      addRecentSearch: (query) =>
+        set((state) => ({
           recentSearches: [
-            q,
-            ...s.recentSearches.filter((r) => r !== q),
+            query,
+            ...state.recentSearches.filter((recent) => recent !== query),
           ].slice(0, 8),
         })),
 
       clearRecentSearches: () => set({ recentSearches: [] }),
 
-      setStaff: (pin, name) => set({ staffPin: pin, staffName: name }),
-      clearStaff: () => set({ staffPin: null, staffName: null }),
+      rememberOrderAccess: (orderNumber, accessToken) =>
+        set((state) => ({
+          recentOrders: [
+            {
+              orderNumber,
+              accessToken,
+              createdAt: new Date().toISOString(),
+            },
+            ...state.recentOrders.filter(
+              (recent) => recent.orderNumber !== orderNumber
+            ),
+          ].slice(0, 20),
+        })),
+
+      forgetOrderAccess: (orderNumber) =>
+        set((state) => ({
+          recentOrders: state.recentOrders.filter(
+            (recent) => recent.orderNumber !== orderNumber
+          ),
+        })),
+
+      rememberReservationAccess: (id, accessToken) =>
+        set((state) => ({
+          recentReservations: [
+            { id, accessToken, createdAt: new Date().toISOString() },
+            ...state.recentReservations.filter(
+              (reservation) => reservation.id !== id
+            ),
+          ].slice(0, 20),
+        })),
+
+      forgetReservationAccess: (id) =>
+        set((state) => ({
+          recentReservations: state.recentReservations.filter(
+            (reservation) => reservation.id !== id
+          ),
+        })),
+
+      rememberWaitlistAccess: (id, accessToken) =>
+        set({
+          waitlistAccess: {
+            id,
+            accessToken,
+            createdAt: new Date().toISOString(),
+          },
+        }),
+
+      clearWaitlistAccess: () => set({ waitlistAccess: null }),
+
+      setStaff: (staffName) => set({ staffName }),
+      clearStaff: () => set({ staffName: null }),
     }),
     {
       name: "rs-store",
-      version: 0,
-      partialize: (s) => ({
-        cart: s.cart,
-        orderType: s.orderType,
-        favorites: s.favorites,
-        recentSearches: s.recentSearches,
-        customerName: s.customerName,
-        customerPhone: s.customerPhone,
-        staffPin: s.staffPin,
-        staffName: s.staffName,
+      partialize: (state) => ({
+        cart: state.cart,
+        orderType: state.orderType,
+        favorites: state.favorites,
+        recentSearches: state.recentSearches,
+        recentOrders: state.recentOrders,
+        recentReservations: state.recentReservations,
+        waitlistAccess: state.waitlistAccess,
+        customerName: state.customerName,
+        customerPhone: state.customerPhone,
       }),
     }
   )
 );
 
-// Cart helpers
 export function cartSubtotal(cart: CartItem[]): number {
-  return cart.reduce((sum, i) => sum + i.totalPrice, 0);
+  return cart.reduce((sum, item) => sum + item.totalPrice, 0);
 }

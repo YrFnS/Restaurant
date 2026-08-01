@@ -135,61 +135,14 @@ export function SplitBillDialog(props: SplitBillDialogProps) {
     setGuests((prev) => prev.map((g, i) => i === guestIdx ? { ...g, customAmount: amount } : g));
   };
 
-  const payGuest = async (guestIdx: number) => {
-    const amount = guestAmounts[guestIdx];
-    if (amount <= 0) return;
-    const guest = guests[guestIdx];
-    setIsProcessing(true);
-    try {
-      // For split: create a single order for this guest's portion if items mode, or a partial payment
-      // Simplest approach: create the full order once on first payment, then mark subsequent as partial
-      const isLastPayment = completedPayments.length + 1 >= guestCount;
-      const r = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: orderType,
-          customerName: customerName || guest.name,
-          customerPhone,
-          deliveryAddress: orderType === "delivery" ? deliveryAddress : null,
-          notes: notes ? `${notes} (Split ${guestIdx + 1}/${guestCount})` : `Split ${guestIdx + 1}/${guestCount}`,
-          subtotal: mode === "items" ? guest.itemIds.reduce((s, id) => s + (items.find((i) => i.id === id)?.totalPrice || 0), 0) : amount,
-          taxAmount: mode === "items" ? tax * (subtotal > 0 ? guest.itemIds.reduce((s, id) => s + (items.find((i) => i.id === id)?.totalPrice || 0), 0) / subtotal : 0) : 0,
-          deliveryFee: 0,
-          tipAmount: 0,
-          total: amount,
-          paymentMethod: guest.method,
-          paymentStatus: "paid",
-          serverName,
-          tableId: table?.id,
-          items: mode === "items" ? items.filter((i) => guest.itemIds.includes(i.id)).map((i) => ({
-            menuItemId: i.menuItemId, quantity: i.quantity, unitPrice: i.unitPrice,
-            modifiers: i.modifiers, notes: i.notes, totalPrice: i.totalPrice,
-          })) : [],
-          estimatedReady: new Date(),
-        }),
-      });
-      if (r.ok) {
-        const { order } = await r.json();
-        setCompletedPayments((prev) => [...prev, guestIdx]);
-        toast.success(`${guest.name}: ${fmtCurrency(amount)} ${isRTL ? "مدفوع" : "paid"}`);
-        if (isLastPayment) {
-          if (table) {
-            await fetch("/api/tables", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "update", id: table.id, status: "paid" }),
-            });
-          }
-          onComplete({ orderId: order.id, orderNumber: order.orderNumber });
-        }
-      }
-    } catch {
-      toast.error(t.common.error);
-    } finally {
-      setIsProcessing(false);
-    }
+  const payGuest = async (_guestIdx: number) => {
+    toast.error(
+      isRTL
+        ? "تم تعطيل الدفع المجزأ مؤقتاً حتى يتم ربطه بسجل دفع آمن."
+        : "Split payments are temporarily disabled until the secure payment ledger is available."
+    );
   };
+
 
   const modes: { id: SplitMode; icon: any; label: string; desc: string }[] = [
     { id: "even", icon: Divide, label: isRTL ? "تقسيم متساوي" : "Even Split", desc: isRTL ? "بالعدد" : "By count" },
@@ -202,7 +155,7 @@ export function SplitBillDialog(props: SplitBillDialogProps) {
       <DialogContent showCloseButton={!isProcessing} className="sm:max-w-2xl max-h-[92vh] overflow-y-auto p-0 gap-0">
         <DialogTitle className="sr-only">{t.pos.splitBill}</DialogTitle>
         <DialogDescription className="sr-only">
-          {fmtCurrency(total)} · {items.length} {t.pos.items || "items"}
+          {fmtCurrency(total)} · {items.length} {isRTL ? "أصناف" : "items"}
         </DialogDescription>
 
         {/* Header */}

@@ -97,7 +97,7 @@ function Carousel({
     if (!api) return
     api.on("reInit", onSelect)
     api.on("select", onSelect)
-    onSelect(api) // eslint-disable-line react-hooks/set-state-in-effect
+    onSelect(api)
 
     return () => {
       api?.off("select", onSelect)

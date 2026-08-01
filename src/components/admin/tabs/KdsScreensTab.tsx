@@ -400,7 +400,7 @@ export function KdsScreensTab() {
   );
 }
 
-function MetaPill({ label, value, icon }: { label: string; value: React.ReactNode; icon: React.ReactNode }) {
+function MetaPill({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
   return (
     <div className="p-2 rounded-lg bg-muted/30 border border-border">
       <div className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-0.5">{icon}{label}</div>

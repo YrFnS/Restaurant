@@ -116,7 +116,7 @@ export function MenuSection() {
           {/* Recent searches */}
           {!query && recentSearches.length > 0 && (
             <div className="flex items-center gap-2 mt-2 overflow-x-auto no-scrollbar">
-              <span className="text-xs text-muted-foreground shrink-0">{t.menu.recentSearches}:</span>
+              <span className="text-xs text-muted-foreground shrink-0">{isRTL ? "عمليات البحث الأخيرة" : "Recent searches"}:</span>
               {recentSearches.slice(0, 5).map((q) => (
                 <button
                   key={q}

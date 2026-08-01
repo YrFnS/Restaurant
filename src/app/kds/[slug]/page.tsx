@@ -1,6 +1,7 @@
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { db } from "@/lib/db";
+import { getStaffSession } from "@/lib/auth/session";
 import { KitchenDisplay } from "@/components/kds/KitchenDisplay";
 import type {
   KdsScreen,
@@ -13,10 +14,19 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
+const KDS_PAGE_ROLES = new Set([
+  "owner",
+  "admin",
+  "manager",
+  "server",
+  "cook",
+  "bartender",
+]);
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   return {
-    title: `KDS · ${slug} — Saffron & Spice`,
+    title: `KDS · ${slug} — Restaurant`,
     description: "Kitchen Display System screen",
     robots: { index: false, follow: false },
   };
@@ -24,8 +34,15 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function KdsScreenPage({ params }: PageProps) {
   const { slug } = await params;
+  const session = await getStaffSession();
 
-  // Server-side prefetch for instant first paint
+  if (!session) {
+    redirect(`/admin?next=${encodeURIComponent(`/kds/${slug}`)}`);
+  }
+  if (!KDS_PAGE_ROLES.has(session.role)) {
+    redirect("/admin?error=kds_access_denied");
+  }
+
   let initialScreen: KdsScreenResponse | null = null;
   let initialSettings: KdsSettings | null = null;
 
@@ -40,16 +57,18 @@ export default async function KdsScreenPage({ params }: PageProps) {
       const stationSlugs = screen.stationFilter
         ? screen.stationFilter.split(",").filter(Boolean)
         : [];
-      const filteredStations: KdsStation[] = (stations as any[] ?? [])
-        .filter((s) => (stationSlugs.length ? stationSlugs.includes(s.slug) : true))
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          slug: s.slug,
-          icon: s.icon,
-          color: s.color,
-          targetPrepMin: s.targetPrepMin,
-          isActive: s.isActive,
+      const filteredStations: KdsStation[] = (stations ?? [])
+        .filter((station) =>
+          stationSlugs.length ? stationSlugs.includes(station.slug) : true
+        )
+        .map((station) => ({
+          id: station.id,
+          name: station.name,
+          slug: station.slug,
+          icon: station.icon,
+          color: station.color,
+          targetPrepMin: station.targetPrepMin,
+          isActive: station.isActive,
         }));
       initialScreen = {
         screen: {
@@ -85,9 +104,8 @@ export default async function KdsScreenPage({ params }: PageProps) {
         avgPrepTimeMin: settings.avgPrepTimeMin,
       } as KdsSettings;
     }
-  } catch (e) {
-    // DB not ready; the client component will retry
-    console.error("[kds/page] prefetch failed:", e);
+  } catch (error) {
+    console.error("[kds/page] prefetch failed:", error);
   }
 
   return (
