@@ -726,6 +726,13 @@ export async function reverseStockMovement(
       409
     );
   }
+  if (original.sourceType === "PurchaseReceipt") {
+    throw new InventoryLedgerError(
+      "Purchase receipt movements must be corrected from Purchasing",
+      "PURCHASE_RECEIPT_REVERSAL_REQUIRED",
+      409
+    );
+  }
 
   return createStockMovement(client, {
     idempotencyKey: input.idempotencyKey,

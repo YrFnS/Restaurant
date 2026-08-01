@@ -1,10 +1,10 @@
 # Restaurant Production Remediation Plan
 
 > **Repository:** `YrFnS/Restaurant`  
-> **Tracking branch:** `agent/p1-stock-ledger-recipes`  
+> **Tracking branch:** `agent/p1-purchase-orders-receiving`  
 > **Created:** 2026-07-30  
 > **Last reconciled:** 2026-07-31  
-> **Current milestone:** P1 restaurant workflow correctness — timekeeping, purchasing, reservations, and loyalty  
+> **Current milestone:** P1 restaurant workflow correctness — timekeeping, reservations, waitlist, and loyalty  
 > **Automated/source P0:** **Complete**  
 > **Production release:** **Blocked by real-environment rehearsal, configuration, independent review, and deployment smoke gates.**
 
@@ -16,6 +16,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 - [`P1_CASH_REGISTER_SESSIONS.md`](./P1_CASH_REGISTER_SESSIONS.md)
 - [`P1_PAYMENT_REVERSALS.md`](./P1_PAYMENT_REVERSALS.md)
 - [`P1_STOCK_LEDGER_RECIPES.md`](./P1_STOCK_LEDGER_RECIPES.md)
+- [`P1_PURCHASE_ORDERS_RECEIVING.md`](./P1_PURCHASE_ORDERS_RECEIVING.md)
 
 ## Status notation
 
@@ -38,6 +39,7 @@ This is the master roadmap. Detailed implementation evidence remains in the dedi
 | P1-A | Database, exact money, constraints, payment ledger | Exact-money foundation and cash reversals complete; contract migration deferred |
 | P1-B01 | Cash-register sessions and reconciliation | Completed and validated |
 | P1-B03 | Recipes and immutable stock ledger | Completed and validated |
+| P1-B04 | Suppliers, purchase orders, and partial receiving | Completed and validated |
 | P1-C | KDS, analytics, jobs, backup/recovery | KDS outbox complete; remaining work open |
 | P2 | UX, accessibility, SEO, observability, performance | Not started as a coordinated phase |
 
@@ -54,6 +56,7 @@ main
         └── agent/p1-cash-register-sessions
             └── agent/p1-payment-reversals
                 └── agent/p1-stock-ledger-recipes
+                    └── agent/p1-purchase-orders-receiving
 ```
 
 Validated completed checkpoints:
@@ -65,6 +68,7 @@ Validated completed checkpoints:
 | P1 cash-register sessions | `c44030bcb222fa78f8c50152dbab81187877e59d` | Validation #558, Integration #388 |
 | P1 payment reversals | `87d787b1b39b6ed93caf5493b7fec2911a2c211c` | P1 Stacked Validation #6 |
 | P1 recipes and immutable stock ledger | `8e66dfd9e12c9f2eb95798c9bd10ada9332c533d` | P1 Stacked Validation #32 |
+| P1 suppliers, purchase orders, and partial receiving | `432d02814528db9097eee3595658b6953d30f669` | P1 Stacked Validation #46 |
 
 ---
 
@@ -202,16 +206,36 @@ Deferred from this slice:
 
 - [ ] Lots, batches, expiry dates, serial tracking, and multi-location bins.
 - [ ] Weighted-average, FIFO, or another formal valuation method.
-- [ ] Purchase-order lines, partial receiving, vendor returns, and stock transfers.
+- [ ] Vendor returns and stock transfers.
 - [ ] Automatic physical-stock return on refunds or cancellations.
 - [ ] Destructive removal of the legacy `Ingredient.quantity` compatibility field.
 
 ## P1-B04 Purchase orders
 
-- [ ] Add lines, supplier records, terms, and exact cost snapshots.
-- [ ] Add draft, submitted, partially received, received, and cancelled workflow.
-- [ ] Support partial receiving through stock-receipt movements.
-- [ ] Preserve price and quantity history.
+Completed and validated scope:
+
+- [x] Add first-class supplier records with stable codes, contact details, payment terms, and active/inactive policy.
+- [x] Add exact purchase-order lines with ingredient, purchasing-unit, conversion, quantity, and cost snapshots.
+- [x] Add draft, submitted, partially received, received, and cancelled workflow.
+- [x] Freeze commercial terms and lines after submission.
+- [x] Add idempotent purchase-order creation and controlled submission/cancellation.
+- [x] Support partial and full receiving through exact immutable stock-receipt movements.
+- [x] Serialize concurrent receipt attempts and prevent over-receiving.
+- [x] Preserve immutable receipt and receipt-line history.
+- [x] Add reviewed purchase-receipt correction through linked stock reversals.
+- [x] Prevent generic stock reversal from bypassing purchasing reconciliation.
+- [x] Adopt legacy supplier text and purchase-order headers without inventing line history.
+- [x] Add bilingual supplier, order, receiving, receipt, and correction operator workflows.
+- [x] Add Prisma mappings, exact-value omission policy, audit coverage, source inventories, database tests, and existing-data rehearsal.
+
+Deferred from this slice:
+
+- [ ] Supplier invoices, accounts payable, taxes, and payment scheduling.
+- [ ] Approval thresholds and multi-step procurement authorization.
+- [ ] Vendor returns, debit notes, and supplier credits.
+- [ ] Lots, batches, expiry dates, serial numbers, and multi-location receiving.
+- [ ] Weighted-average, FIFO, or another formal inventory valuation method.
+- [ ] Automatic reorder suggestions, supplier transmission, and document attachments.
 
 ## P1-B05 Waste
 
@@ -312,6 +336,7 @@ Deferred from this slice:
 - [x] Current deployment scope: one restaurant.
 - [x] Stock consumption timing: first entry into production; no silent return on cancellation/refund.
 - [x] Stock recipe snapshot: first production stores an immutable recipe version or a permanent untracked decision.
+- [x] Purchasing receipts: submitted terms are immutable; partial receipts and reviewed corrections reconcile atomically with the stock ledger.
 - [ ] Restaurant timezone and operational-day boundary.
 - [ ] Revenue recognition policy.
 - [ ] Loyalty earning/reversal policy.
@@ -331,3 +356,4 @@ Deferred from this slice:
 | 2026-07-31 | Added POS register assignment, opening/closing, cash reconciliation, immutable close records, and register-linked payment/cash ledgers. | Validation #558 and Integration #388 green at `c44030b`. |
 | 2026-07-31 | Added immutable cash refunds and voids, manager console, ledger reconciliation, and concurrency/database protections. | P1 Stacked Validation #6 green at `87d787b`. |
 | 2026-07-31 | Added exact inventory balances, unit conversions, immutable stock movements, versioned recipes, production consumption snapshots, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #32 green at `8e66dfd`. |
+| 2026-07-31 | Added first-class suppliers, exact purchase-order lines, immutable submitted terms, partial/full receiving, reviewed receipt correction, bilingual operator workflow, and full regression coverage. | P1 Stacked Validation #46 green at `432d028`. |

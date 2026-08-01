@@ -40,6 +40,7 @@ import {
   CalendarDays,
   TrendingUp,
   Grid3x3,
+  ShoppingCart,
   ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -54,6 +55,7 @@ import { TablesTab } from "./tabs/TablesTab";
 import { ReservationsTab } from "./tabs/ReservationsTab";
 import { StaffTab } from "./tabs/StaffTab";
 import { InventoryTab } from "./tabs/InventoryTab";
+import { PurchasingTab } from "./tabs/PurchasingTab";
 import { ReportsTab } from "./tabs/ReportsTab";
 import { KdsScreensTab } from "./tabs/KdsScreensTab";
 import { SettingsTab } from "./tabs/SettingsTab";
@@ -66,6 +68,7 @@ export type AdminTab =
   | "reservations"
   | "staff"
   | "inventory"
+  | "purchasing"
   | "reports"
   | "kds"
   | "settings";
@@ -100,6 +103,7 @@ const TAB_COMPONENTS: Record<AdminTab, React.ComponentType> = {
   reservations: ReservationsTab,
   staff: StaffTab,
   inventory: InventoryTab,
+  purchasing: PurchasingTab,
   reports: ReportsTab,
   kds: KdsScreensTab,
   settings: SettingsTab,
@@ -168,6 +172,12 @@ export function AdminShell({ user }: AdminShellProps) {
         roles: INVENTORY_MANAGEMENT_ROLES,
       },
       {
+        id: "purchasing",
+        label: isRTL ? "المشتريات" : "Purchasing",
+        icon: <ShoppingCart className="size-[18px]" />,
+        roles: INVENTORY_MANAGEMENT_ROLES,
+      },
+      {
         id: "reports",
         label: t.admin.reports,
         icon: <BarChart3 className="size-[18px]" />,
@@ -187,7 +197,7 @@ export function AdminShell({ user }: AdminShellProps) {
       },
     ];
     return items.filter((item) => roleIsAllowed(user.role, item.roles));
-  }, [t, user.role]);
+  }, [isRTL, t, user.role]);
 
   const secondaryLinks = useMemo<SecondaryLink[]>(() => {
     const items: SecondaryLink[] = [

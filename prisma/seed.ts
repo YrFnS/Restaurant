@@ -7,9 +7,11 @@ import {
   OrderStatus,
   OrderType,
   PaymentStatus,
+  PurchaseOrderStatus,
   PrismaClient,
   ReservationStatus,
   StaffRole,
+  SupplierStatus,
   TableShape,
   TableStatus,
   WaitlistStatus,
@@ -21,16 +23,20 @@ const db = new PrismaClient();
 function uid() { return randomUUID().slice(0, 12); }
 function futureDate(days: number) { return new Date(Date.now() + days * 86400000); }
 function pastDate(days: number) { return new Date(Date.now() - days * 86400000); }
+function micros(value: number) { return BigInt(Math.round(value * 1_000_000)); }
+function minor(value: number) { return BigInt(Math.round(value * 100)); }
 
 async function main() {
   console.log("🌱 Seeding database...");
 
   const tables = [
     "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",
+    "PurchaseReceiptLine", "PurchaseReceipt", "PurchaseOrderLine",
     "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",
+    "RecipeComponent", "Recipe", "IngredientUnitConversion", "StockMovement",
     "ModifierOption", "ModifierGroup", "MenuItem", "MenuCategory",
     "RestaurantTable", "KitchenScreen", "KitchenStation",
-    "Employee", "Schedule", "Ingredient", "WasteLog", "PurchaseOrder",
+    "Employee", "Schedule", "WasteLog", "PurchaseOrder", "Supplier", "Ingredient",
     "CashDrawerEntry", "Notification", "SpecialOffer", "PromoCode",
     "RewardTier", "GiftCard", "Feedback", "Testimonial",
     "NewsletterSubscription", "DynamicPricing", "ComboMeal",
@@ -423,7 +429,14 @@ async function main() {
     { name: "Olive Oil", unit: "liters", qty: 8, low: 4, cost: 9, supplier: "Oil Importers", cat: "Oils" },
     { name: "Pistachios", unit: "kg", qty: 3, low: 2, cost: 25, supplier: "Nut Importers", cat: "Nuts" },
   ];
-  for (const i of ingredients) { await db.ingredient.create({ data: { name: i.name, unit: i.unit, quantity: i.qty, lowThreshold: i.low, costPerUnit: i.cost, supplier: i.supplier, category: i.cat } }); }
+  const ingredientByName = new Map<string, { id: string; name: string; unit: string }>();
+  for (const i of ingredients) {
+    const created = await db.ingredient.create({
+      data: { name: i.name, unit: i.unit, quantity: i.qty, lowThreshold: i.low, costPerUnit: i.cost, supplier: i.supplier, category: i.cat },
+      select: { id: true, name: true, unit: true },
+    });
+    ingredientByName.set(created.name, created);
+  }
   console.log(`  ✓ ${ingredients.length} ingredients`);
 
   // ── 20. WASTE LOGS ──
@@ -435,14 +448,114 @@ async function main() {
   for (const w of wasteData) { await db.wasteLog.create({ data: w }); }
   console.log(`  ✓ ${wasteData.length} waste logs`);
 
-  // ── 21. PURCHASE ORDERS ──
-  const poData = [
-    { supplier: "Baghdad Poultry", notes: "Weekly chicken order", status: "ordered", totalCost: 325 },
-    { supplier: "Gulf Seafood", notes: "Salmon and shrimp restock", status: "draft", totalCost: 480 },
-    { supplier: "Vegetable Market", notes: "Fresh produce delivery", status: "received", totalCost: 120 },
+  // ── 21. SUPPLIERS + PURCHASE ORDERS ──
+  const supplierData = [
+    { code: "BAGHDAD-POULTRY", name: "Baghdad Poultry", contactName: "Hassan Ali", phone: "+9647501000001", paymentTerms: "Net 14" },
+    { code: "GULF-SEAFOOD", name: "Gulf Seafood", contactName: "Mariam Saleh", phone: "+9647501000002", paymentTerms: "Net 30" },
+    { code: "VEGETABLE-MARKET", name: "Vegetable Market", contactName: "Ahmed Karim", phone: "+9647501000003", paymentTerms: "Due on delivery" },
   ];
-  for (const p of poData) { await db.purchaseOrder.create({ data: p }); }
-  console.log(`  ✓ ${poData.length} purchase orders`);
+  const supplierByCode = new Map<string, { id: string; code: string; name: string }>();
+  for (const supplier of supplierData) {
+    const created = await db.supplier.create({
+      data: { id: `seed_supplier_${uid()}`, ...supplier, status: SupplierStatus.active, address: "Baghdad", email: "", notes: "Seed supplier" },
+      select: { id: true, code: true, name: true },
+    });
+    supplierByCode.set(created.code, created);
+  }
+  console.log(`  ✓ ${supplierData.length} suppliers`);
+
+  const createSeedPurchaseOrder = async ({
+    supplierCode,
+    notes,
+    submitted,
+    lines,
+  }: {
+    supplierCode: string;
+    notes: string;
+    submitted: boolean;
+    lines: Array<{ ingredientName: string; quantity: number; unitCost: number }>;
+  }) => {
+    const supplier = supplierByCode.get(supplierCode);
+    if (!supplier) throw new Error(`Missing seed supplier ${supplierCode}`);
+    const orderId = `seed_po_${uid()}`;
+    const order = await db.purchaseOrder.create({
+      data: {
+        id: orderId,
+        orderNumber: `PO-SEED-${uid().toUpperCase()}`,
+        creationKey: `seed-purchase-order:${orderId}`,
+        supplierId: supplier.id,
+        supplierCode: supplier.code,
+        supplier: supplier.name,
+        currency: "USD",
+        notes,
+        status: PurchaseOrderStatus.draft,
+        totalCost: 0,
+        totalCostMinor: 0n,
+        expectedAt: futureDate(7),
+        createdByName: "Seed",
+        legacyImported: false,
+        lines: {
+create: lines.map((line, index) => {
+  const ingredient = ingredientByName.get(line.ingredientName);
+  if (!ingredient) throw new Error(`Missing seed ingredient ${line.ingredientName}`);
+  return {
+    id: `seed_po_line_${uid()}`,
+    lineNumber: index + 1,
+    ingredientId: ingredient.id,
+    ingredientName: ingredient.name,
+    baseUnit: ingredient.unit,
+    purchaseUnit: ingredient.unit,
+    conversionToBaseMicros: micros(1),
+    orderedPurchaseQuantityMicros: micros(line.quantity),
+    orderedBaseQuantityMicros: micros(line.quantity),
+    receivedBaseQuantityMicros: 0n,
+    purchaseUnitCostMicros: micros(line.unitCost),
+    baseUnitCostMicros: micros(line.unitCost),
+    lineTotalMinor: minor(line.quantity * line.unitCost),
+    notes: null,
+  };
+}),
+        },
+      },
+    });
+    if (submitted) {
+      await db.purchaseOrder.update({
+        where: { id: order.id },
+        data: {
+status: PurchaseOrderStatus.submitted,
+submittedByName: "Seed",
+submittedAt: new Date(),
+        },
+      });
+    }
+    return order;
+  };
+
+  await createSeedPurchaseOrder({
+    supplierCode: "BAGHDAD-POULTRY",
+    notes: "Weekly chicken order",
+    submitted: true,
+    lines: [{ ingredientName: "Chicken Breast", quantity: 50, unitCost: 6.5 }],
+  });
+  await createSeedPurchaseOrder({
+    supplierCode: "GULF-SEAFOOD",
+    notes: "Salmon and shrimp restock",
+    submitted: false,
+    lines: [
+      { ingredientName: "Salmon Fillet", quantity: 10, unitCost: 22 },
+      { ingredientName: "Shrimp", quantity: 15, unitCost: 18 },
+    ],
+  });
+  await createSeedPurchaseOrder({
+    supplierCode: "VEGETABLE-MARKET",
+    notes: "Fresh produce delivery",
+    submitted: true,
+    lines: [
+      { ingredientName: "Tomatoes", quantity: 50, unitCost: 1.5 },
+      { ingredientName: "Lemons", quantity: 100, unitCost: 0.2 },
+    ],
+  });
+  console.log("  ✓ 3 purchase orders with exact lines");
 
   // ── 22. CASH DRAWER ──
   const cashData = [
@@ -517,7 +630,10 @@ async function main() {
   console.log(`   ${await db.newsletterSubscription.count()} newsletter subs`);
   console.log(`   ${await db.ingredient.count()} ingredients`);
   console.log(`   ${await db.wasteLog.count()} waste logs`);
+  console.log(`   ${await db.supplier.count()} suppliers`);
   console.log(`   ${await db.purchaseOrder.count()} purchase orders`);
+  console.log(`   ${await db.purchaseOrderLine.count()} purchase order lines`);
+  console.log(`   ${await db.purchaseReceipt.count()} purchase receipts`);
   console.log(`   ${await db.cashDrawerEntry.count()} cash drawer entries`);
   console.log(`   ${await db.notification.count()} notifications`);
   console.log(`   ${await db.dynamicPricing.count()} dynamic pricing rules`);
