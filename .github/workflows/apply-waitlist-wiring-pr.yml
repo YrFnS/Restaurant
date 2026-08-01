@@ -22,107 +22,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      - name: Apply reviewed wiring and seed adoption
+      - name: Apply reviewed waitlist seed adoption
         shell: bash
         run: |
           set -euo pipefail
-
-          if ! grep -q 'waitlistAverageTurnoverMinutes' prisma/schema.prisma \
-            || ! grep -q '"waitlist"' src/components/admin/AdminShell.tsx \
-            || ! grep -q 'p1-waitlist-operations.ts' package.json; then
-            python3 - <<'PY'
-          from pathlib import Path
-
-          workflow = Path('.github/workflows/apply-waitlist-wiring.yml').read_text().splitlines()
-          start = next(i for i, line in enumerate(workflow) if "python3 - <<'PY'" in line) + 1
-          end = next(i for i in range(start, len(workflow)) if workflow[i].strip() == 'PY')
-          script = []
-          for line in workflow[start:end]:
-              script.append(line[10:] if line.startswith('          ') else line)
-          Path('/tmp/apply-waitlist-wiring.py').write_text('\n'.join(script) + '\n')
-          PY
-            python3 /tmp/apply-waitlist-wiring.py
-
-            # GitHub Actions tokens cannot update another workflow file. That
-            # reviewed environment-only change is applied separately through
-            # the repository connector.
-            git restore .github/workflows/p0-integration.yml
-          fi
-
-          if ! grep -q 'P1 waitlist seeded hold' prisma/seed.ts; then
-            python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('prisma/seed.ts')
-          text = path.read_text()
-          old = '''  for (const w of wlData) {
-    await db.waitlistEntry.create({
-      data: { ...w, status: w.status as WaitlistStatus },
-    });
-  }
-  console.log(`  ✓ ${wlData.length} waitlist entries`);'''
-          new = '''  const waitlistSeededAt = new Date();
-  const seededHoldTable = tableRecords.find((table: any) => table.number === 9);
-  for (const w of wlData) {
-    const notified = w.status === "notified";
-    if (notified && seededHoldTable) {
-      // P1 waitlist seeded hold: a notified entry must own a real table hold.
-      await db.restaurantTable.update({
-        where: { id: seededHoldTable.id },
-        data: { status: TableStatus.reserved, seatedAt: null },
-      });
-    }
-    await db.waitlistEntry.create({
-      data: {
-        ...w,
-        status: w.status as WaitlistStatus,
-        source: ReservationSource.import,
-        tableId: notified ? seededHoldTable?.id : null,
-        estimatedSeatAt: notified
-          ? waitlistSeededAt
-          : addMinutes(waitlistSeededAt, w.estimatedWait),
-        estimateCalculatedAt: waitlistSeededAt,
-        notifiedAt: notified ? waitlistSeededAt : null,
-        notificationExpiresAt: notified
-          ? addMinutes(waitlistSeededAt, 10)
-          : null,
-        notificationConfirmedAt: notified ? waitlistSeededAt : null,
-      },
-    });
-  }
-  console.log(`  ✓ ${wlData.length} waitlist entries`);'''
-          if old not in text:
-              raise SystemExit('Waitlist seed block was not found')
-          text = text.replace(old, new, 1)
-
-          helper = '''function pastDate(days: number) { return new Date(Date.now() - days * 86400000); }
-          function micros(value: number) { return BigInt(Math.round(value * 1_000_000)); }'''
-          helper_replacement = '''function pastDate(days: number) { return new Date(Date.now() - days * 86400000); }
-          function addMinutes(value: Date, minutes: number) { return new Date(value.getTime() + minutes * 60000); }
-          function micros(value: number) { return BigInt(Math.round(value * 1_000_000)); }'''
-          if helper not in text:
-              raise SystemExit('Seed date-helper marker was not found')
-          path.write_text(text.replace(helper, helper_replacement, 1))
-          PY
-          fi
+          python3 scripts/apply-waitlist-seed.py
 
           if git diff --quiet; then
-            echo "Waitlist repository wiring and seed adoption are already applied."
+            echo "Waitlist seed adoption is already applied."
             exit 0
           fi
 
           git config user.name "OpenAI Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            prisma/schema.prisma \
-            prisma/seed.ts \
-            src/components/admin/AdminShell.tsx \
-            src/components/admin/tabs/WaitlistTab.tsx \
-            src/lib/waitlist/operations.ts \
-            tests/security/route-auth-inventory.test.ts \
-            tests/security/route-read-inventory.test.ts \
-            tests/integration/p0-customer-isolation.ts \
-            package.json \
-            docs/P1_WAITLIST_OPERATIONS.md
-          git commit -m "feat: complete waitlist repository wiring"
+          git add prisma/seed.ts
+          git commit -m "fix: seed valid waitlist lifecycle snapshots"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
