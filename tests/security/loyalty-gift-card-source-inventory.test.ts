@@ -76,6 +76,7 @@ describe("loyalty and gift-card source inventory", () => {
     }
     expect(settingsUi).toContain("Loyalty & Gift-Card Policy");
     expect(settingsUi).toContain("سياسة الولاء وبطاقات الهدايا");
+    expect(settingsUi).toContain("function ToggleRow(");
   });
 
   test("locks balances, hashes redemption credentials, and binds idempotent requests", () => {
@@ -105,7 +106,8 @@ describe("loyalty and gift-card source inventory", () => {
     ]) {
       expect(checkout).toContain(marker);
     }
-    expect(reversals).toContain("applyPaymentReversalLedgers");
+    expect(reversals).toContain("prepareReversalAllocation");
+    expect(reversals).toContain("appendReversalLedgers");
     expect(reversals).toContain("giftCardRefundCents");
     expect(reversals).toContain("cashRefundCents");
     expect(lookup).toContain('scope: "gift-card-lookup"');
