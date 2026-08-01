@@ -1,0 +1,45 @@
+name: Fix waitlist interval cast once
+
+on:
+  push:
+    branches:
+      - agent/p1-waitlist-capacity
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-waitlist-interval-once
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p1-waitlist-capacity
+          fetch-depth: 0
+
+      - name: Apply interval cast and remove one-time workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/lib/waitlist/operations.ts")
+          text = path.read_text()
+          old = "make_interval(mins => ${policy.notificationExpiryMinutes}),"
+          new = "make_interval(mins => CAST(${policy.notificationExpiryMinutes} AS integer)),"
+          if text.count(old) != 1:
+              raise SystemExit(f"Expected one interval expression, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          rm .github/workflows/fix-waitlist-interval-once.yml
+          git config user.name "OpenAI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/waitlist/operations.ts .github/workflows/fix-waitlist-interval-once.yml
+          git commit -m "fix: cast waitlist notification interval"
+          git push origin HEAD:agent/p1-waitlist-capacity
