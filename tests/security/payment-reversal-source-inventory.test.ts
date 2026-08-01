@@ -17,6 +17,9 @@ const adminApp = source("src/components/admin/AdminApp.tsx");
 const adminPage = source("src/app/admin/payment-reversals/page.tsx");
 const adminConsole = source("src/components/admin/PaymentReversalConsole.tsx");
 const integrationCommand = source("package.json");
+const checkoutCompatibility = source(
+  "tests/integration/checkout-idempotency-fetch.ts"
+);
 
 describe("payment reversal source inventory", () => {
   test("commits parent-linked immutable reversal columns and indexes", () => {
@@ -116,7 +119,10 @@ describe("payment reversal source inventory", () => {
       expect(adminConsole).toContain(marker);
     }
     expect(integrationCommand).toContain(
-      "bun tests/integration/p1-payment-reversals.ts"
+      "bun --preload ./tests/integration/checkout-idempotency-fetch.ts tests/integration/p1-payment-reversals.ts"
     );
+    expect(checkoutCompatibility).toContain('pathname === "/api/pos/checkout"');
+    expect(checkoutCompatibility).toContain('headers.has("idempotency-key")');
+    expect(checkoutCompatibility).toContain("crypto.randomUUID()");
   });
 });
