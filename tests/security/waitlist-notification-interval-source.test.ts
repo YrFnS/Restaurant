@@ -26,4 +26,13 @@ describe("waitlist notification expiry", () => {
       "notificationExpiresAt: addMinutes(new Date(), -1)"
     );
   });
+
+  test("sends JSON bodies through the state-changing worker boundary", () => {
+    const emptyJsonBodies = integration.match(
+      /body: JSON\.stringify\(\{\}\),/g
+    );
+    expect(emptyJsonBodies?.length || 0).toBeGreaterThanOrEqual(2);
+    expect(integration).toContain('authorization: "Bearer wrong-secret"');
+    expect(integration).toContain('authorization: `Bearer ${WORKER_SECRET}`');
+  });
 });
