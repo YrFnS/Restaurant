@@ -16,11 +16,20 @@ const schema = source("prisma/schema.prisma");
 const dbSource = source("src/lib/db.ts");
 const roles = source("src/lib/auth/roles.ts");
 const service = source("src/lib/loyalty/ledger.ts");
+const issueRoute = source("src/app/api/gift-cards/route.ts");
+const mutationRoute = source("src/app/api/gift-cards/[id]/route.ts");
 const checkout = source("src/app/api/pos/checkout/route.ts");
 const reversals = source("src/lib/payments/reversals.ts");
 const lookup = source("src/app/api/gift-cards/lookup/route.ts");
 const settings = source("src/app/api/settings/route.ts");
 const settingsUi = source("src/components/admin/tabs/SettingsTab.tsx");
+const adminApp = source("src/components/admin/AdminApp.tsx");
+const adminConsole = source("src/components/admin/LoyaltyGiftCardConsole.tsx");
+const adminPage = source("src/app/admin/loyalty/page.tsx");
+const rewards = source("src/components/restaurant/RewardsSection.tsx");
+const publicLookup = source("src/components/restaurant/GiftCardLookup.tsx");
+const packageJson = source("package.json");
+const integration = source("tests/integration/p1-loyalty-gift-cards.ts");
 const design = source("docs/P1_LOYALTY_GIFT_CARDS.md");
 
 describe("loyalty and gift-card source inventory", () => {
@@ -43,8 +52,8 @@ describe("loyalty and gift-card source inventory", () => {
     }
 
     for (const marker of [
-      'guard_customer_loyalty_cache',
-      'Customer_loyalty_cache_guard',
+      "guard_customer_loyalty_cache",
+      "Customer_loyalty_cache_guard",
       "app.loyalty_ledger_write",
       "Customer loyalty balance is ledger-controlled",
     ]) {
@@ -92,7 +101,7 @@ describe("loyalty and gift-card source inventory", () => {
     expect(settingsUi).toContain("function ToggleRow(");
   });
 
-  test("locks balances, hashes redemption credentials, and binds idempotent requests", () => {
+  test("locks balances, hashes credentials, and binds every replay to its payload", () => {
     for (const marker of [
       'createHash("sha256")',
       "giftCardCodeHashes",
@@ -106,6 +115,23 @@ describe("loyalty and gift-card source inventory", () => {
       "maskedCode",
     ]) {
       expect(service).toContain(marker);
+    }
+
+    for (const marker of [
+      "assertIssueReplayMatches",
+      "gift-card-issue:${key}",
+      "parseMoneyToMinor(input.amount)",
+      "GIFT_CARD_IDEMPOTENCY_CONFLICT",
+    ]) {
+      expect(issueRoute).toContain(marker);
+    }
+    for (const marker of [
+      "assertMutationReplayMatches",
+      "gift-card-mutation:${key}",
+      "parseSignedMoneyToMinor",
+      "GIFT_CARD_IDEMPOTENCY_CONFLICT",
+    ]) {
+      expect(mutationRoute).toContain(marker);
     }
   });
 
@@ -125,7 +151,52 @@ describe("loyalty and gift-card source inventory", () => {
     expect(reversals).toContain("cashRefundCents");
     expect(lookup).toContain('scope: "gift-card-lookup"');
     expect(lookup).toContain('"Cache-Control": "no-store"');
+    expect(lookup).toContain("reference: card.reference");
+    expect(lookup).toContain("balance: card.balance");
     expect(lookup).not.toContain("redemptionCodeHash");
+    expect(lookup).not.toContain("id: card.id");
+  });
+
+  test("ships discoverable bilingual customer and operator workflows", () => {
+    expect(adminPage).toContain("LoyaltyGiftCardConsole");
+    expect(adminApp).toContain('href="/admin/loyalty"');
+    for (const marker of [
+      'requestJson("/api/loyalty"',
+      'requestJson<GiftCardAccount>',
+      '"/api/gift-cards"',
+      '"Idempotency-Key"',
+      "redemptionCode",
+      "Loyalty & Gift Cards",
+      "الولاء وبطاقات الهدايا",
+      "Show this code once",
+      "اعرض الرمز مرة واحدة",
+    ]) {
+      expect(adminConsole).toContain(marker);
+    }
+    expect(rewards).toContain("GiftCardLookup");
+    expect(publicLookup).toContain('fetch("/api/gift-cards/lookup"');
+    expect(publicLookup).toContain("Check a gift card");
+    expect(publicLookup).toContain("التحقق من بطاقة هدية");
+    expect(publicLookup).not.toContain("purchaserName");
+    expect(publicLookup).not.toContain("recipientName");
+  });
+
+  test("keeps the complete database-backed loyalty suite in the permanent gate", () => {
+    expect(packageJson).toContain("bun tests/integration/p1-loyalty-gift-cards.ts");
+    for (const marker of [
+      "Gift-card issuance conflict",
+      "Gift-card adjustment payload conflict",
+      "Gift-card-only checkout",
+      "Mixed checkout",
+      "Loyalty redemption checkout",
+      "concurrent redemptions cannot overdraw one card",
+      "Negative loyalty balance refund",
+      'UPDATE "Customer" SET "loyaltyPoints"',
+      'DELETE FROM "GiftCardTransaction"',
+      "Loyalty and gift-card assertions passed",
+    ]) {
+      expect(integration).toContain(marker);
+    }
   });
 
   test("documents non-destructive accounting and the exact completion gate", () => {
