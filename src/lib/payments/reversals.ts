@@ -13,6 +13,11 @@ import {
   type AuditRequestContext,
   writeAuditEvent,
 } from "@/lib/audit";
+import {
+  appendReversalLedgers,
+  loyaltyLedgerErrorResponse,
+  prepareReversalAllocation,
+} from "@/lib/loyalty/ledger";
 
 export const PAYMENT_REVERSAL_ROLES = ["owner", "admin", "manager"] as const;
 export const PAYMENT_LEDGER_READ_ROLES = [
@@ -60,7 +65,7 @@ type PaymentLedgerRow = {
   idempotencyKey: string;
   orderId: string;
   eventType: "capture" | "refund" | "void" | "adjustment";
-  method: "cash" | "card" | "split";
+  method: "cash" | "card" | "split" | "gift_card";
   status: "pending" | "succeeded" | "failed" | "voided";
   amountCents: number;
   tenderedCents: number | null;
@@ -68,6 +73,7 @@ type PaymentLedgerRow = {
   currency: string;
   actorId: string | null;
   actorName: string;
+  metadata: Prisma.JsonValue | null;
   parentEventId: string | null;
   reasonCode: string;
   reason: string | null;
@@ -163,8 +169,8 @@ async function readLedgerEvents(
       "method"::text AS "method",
       "status"::text AS "status",
       "amountCents", "tenderedCents", "changeCents", "currency",
-      "actorId", "actorName", "parentEventId", "reasonCode", "reason",
-      "registerSessionId", "createdAt"
+      "actorId", "actorName", "metadata", "parentEventId", "reasonCode",
+      "reason", "registerSessionId", "createdAt"
     FROM "PaymentEvent"
     WHERE "orderId" = ${orderId}
     ORDER BY "createdAt" ASC, "id" ASC
@@ -191,6 +197,13 @@ function successfulReversals(
 }
 
 function eventDto(event: PaymentLedgerRow) {
+  const storedValueReversal =
+    event.metadata &&
+    typeof event.metadata === "object" &&
+    !Array.isArray(event.metadata) &&
+    "storedValueReversal" in event.metadata
+      ? (event.metadata as Record<string, unknown>).storedValueReversal
+      : null;
   return {
     id: event.id,
     eventType: event.eventType,
@@ -208,6 +221,7 @@ function eventDto(event: PaymentLedgerRow) {
     reasonCode: event.reasonCode || null,
     reason: event.reason,
     registerSessionId: event.registerSessionId,
+    storedValueReversal,
     createdAt: event.createdAt,
   };
 }
@@ -222,6 +236,7 @@ function buildSummary(order: OrderLedgerRow, events: PaymentLedgerRow[]) {
   const capturedCents = capture?.amountCents ?? 0;
   const remainingCents = Math.max(0, capturedCents - reversedCents);
   const hasVoid = reversals.some((event) => event.eventType === "void");
+  const processorUnsupported = capture?.method === "card";
 
   return {
     order: {
@@ -241,11 +256,13 @@ function buildSummary(order: OrderLedgerRow, events: PaymentLedgerRow[]) {
       remaining: centsToNumber(remainingCents),
       canRefund:
         Boolean(capture) &&
+        !processorUnsupported &&
         remainingCents > 0 &&
         !hasVoid &&
         ["paid", "partially_refunded"].includes(order.paymentStatus),
       canVoid:
         Boolean(capture) &&
+        !processorUnsupported &&
         reversedCents === 0 &&
         order.paymentStatus === "paid" &&
         order.status !== "completed",
@@ -280,25 +297,6 @@ export async function reversePayment(
 ) {
   const order = await lockOrder(tx, input.orderId);
   const events = await readLedgerEvents(tx, input.orderId, true);
-
-  const replay = events.find(
-    (event) => event.idempotencyKey === input.idempotencyKey
-  );
-  if (replay) {
-    if (replay.eventType !== input.action) {
-      throw new PaymentReversalError(
-        "That idempotency key was already used for another payment action",
-        "IDEMPOTENCY_CONFLICT",
-        409
-      );
-    }
-    return {
-      ...buildSummary(order, events),
-      reversal: eventDto(replay),
-      replayed: true,
-    };
-  }
-
   const capture = successfulCapture(events);
   if (!capture) {
     throw new PaymentReversalError(
@@ -307,9 +305,9 @@ export async function reversePayment(
       409
     );
   }
-  if (capture.method !== "cash") {
+  if (capture.method === "card") {
     throw new PaymentReversalError(
-      "This payment method requires its processor-specific reversal flow",
+      "Card payments require a processor-specific reversal flow",
       "REVERSAL_METHOD_NOT_SUPPORTED",
       501,
       { method: capture.method }
@@ -322,13 +320,6 @@ export async function reversePayment(
     0
   );
   const remainingCents = capture.amountCents - reversedCents;
-  if (remainingCents <= 0 || reversals.some((event) => event.eventType === "void")) {
-    throw new PaymentReversalError(
-      "The payment has already been fully reversed",
-      "PAYMENT_ALREADY_REVERSED",
-      409
-    );
-  }
 
   let amountCents: number;
   if (input.action === "void") {
@@ -374,32 +365,84 @@ export async function reversePayment(
     }
   }
 
+  const replay = events.find(
+    (event) => event.idempotencyKey === input.idempotencyKey
+  );
+  if (replay) {
+    if (
+      replay.eventType !== input.action ||
+      replay.amountCents !== amountCents ||
+      replay.reasonCode !== input.reasonCode ||
+      replay.reason !== input.reason
+    ) {
+      throw new PaymentReversalError(
+        "That idempotency key was already used for another reversal payload",
+        "IDEMPOTENCY_CONFLICT",
+        409
+      );
+    }
+    return {
+      ...buildSummary(order, events),
+      reversal: eventDto(replay),
+      replayed: true,
+    };
+  }
+
+  if (remainingCents <= 0 || reversals.some((event) => event.eventType === "void")) {
+    throw new PaymentReversalError(
+      "The payment has already been fully reversed",
+      "PAYMENT_ALREADY_REVERSED",
+      409
+    );
+  }
+
+  const totalReversedCents = reversedCents + amountCents;
+  const allocation = await prepareReversalAllocation(tx, {
+    captureId: capture.id,
+    captureAmountCents: capture.amountCents,
+    captureMetadata: capture.metadata,
+    reversalAmountCents: amountCents,
+    totalReversedCents,
+  });
+
   const registerContext = await lockOpenRegisterSession(tx, {
     identity: input.identity,
     actor: input.actor,
   });
-  const amountMinor = BigInt(amountCents);
-  const amount = centsToNumber(amountCents);
-  const cashEntry = await tx.cashDrawerEntry.create({
-    data: {
-      type: "refund",
-      amount,
-      amountMinor,
-      note: `${input.action === "void" ? "Void" : "Refund"} ${order.orderNumber}: ${input.reason}`,
-      createdBy: input.actor.id,
-      registerSessionId: registerContext.session.id,
-    },
-  });
+
+  let cashDrawerEntryId: string | null = null;
+  if (allocation.cashRefundCents > 0) {
+    const cashEntry = await tx.cashDrawerEntry.create({
+      data: {
+        type: "refund",
+        amount: centsToNumber(allocation.cashRefundCents),
+        amountMinor: BigInt(allocation.cashRefundCents),
+        note: `${input.action === "void" ? "Void" : "Refund"} ${order.orderNumber}: ${input.reason}`,
+        createdBy: input.actor.id,
+        registerSessionId: registerContext.session.id,
+      },
+    });
+    cashDrawerEntryId = cashEntry.id;
+  }
 
   const reversalId = paymentEventId();
-  const metadata = JSON.stringify({
+  const metadataObject = {
     orderNumber: order.orderNumber,
     originalPaymentEventId: capture.id,
-    cashDrawerEntryId: cashEntry.id,
+    cashDrawerEntryId,
     registerId: registerContext.register.id,
     registerSessionId: registerContext.session.id,
     reasonCode: input.reasonCode,
-  });
+    storedValueReversal: {
+      cashRefundCents: allocation.cashRefundCents,
+      giftCardRefundCents: allocation.giftCardRefundCents,
+      giftCardId: allocation.metadata.giftCardId,
+      giftCardLast4: allocation.metadata.giftCardLast4,
+      loyaltyEarnReversalPoints: allocation.loyaltyEarnReversalPoints,
+      loyaltyRedeemRestorePoints: allocation.loyaltyRedeemRestorePoints,
+    },
+  };
+  const metadata = JSON.stringify(metadataObject);
   const inserted = await tx.$queryRaw<PaymentLedgerRow[]>(Prisma.sql`
     INSERT INTO "PaymentEvent" (
       "id", "idempotencyKey", "orderId", "eventType", "method", "status",
@@ -420,8 +463,8 @@ export async function reversePayment(
       "method"::text AS "method",
       "status"::text AS "status",
       "amountCents", "tenderedCents", "changeCents", "currency",
-      "actorId", "actorName", "parentEventId", "reasonCode", "reason",
-      "registerSessionId", "createdAt"
+      "actorId", "actorName", "metadata", "parentEventId", "reasonCode",
+      "reason", "registerSessionId", "createdAt"
   `);
   const reversal = inserted[0];
   if (!reversal) {
@@ -432,7 +475,19 @@ export async function reversePayment(
     );
   }
 
-  const totalReversedCents = reversedCents + amountCents;
+  const storedValue = await appendReversalLedgers(tx, {
+    allocation,
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    customerId: order.customerId,
+    captureId: capture.id,
+    reversalId,
+    reversalAction: input.action,
+    reversalAmountCents: amountCents,
+    actor: input.actor,
+    context: input.context,
+  });
+
   const nextPaymentStatus =
     input.action === "void"
       ? "voided"
@@ -450,7 +505,7 @@ export async function reversePayment(
 
   await writeAuditEvent(tx, {
     actor: input.actor,
-    action: `payment.cash.${input.action}`,
+    action: `payment.${capture.method}.${input.action}`,
     entityType: "PaymentEvent",
     entityId: reversal.id,
     context: input.context,
@@ -464,7 +519,11 @@ export async function reversePayment(
       paymentStatus: nextPaymentStatus,
       reasonCode: input.reasonCode,
       reason: input.reason,
-      cashDrawerEntryId: cashEntry.id,
+      cashDrawerEntryId,
+      cashRefundCents: allocation.cashRefundCents,
+      giftCardRefundCents: allocation.giftCardRefundCents,
+      loyaltyEarnReversalPoints: allocation.loyaltyEarnReversalPoints,
+      loyaltyRedeemRestorePoints: allocation.loyaltyRedeemRestorePoints,
       registerId: registerContext.register.id,
       registerCode: registerContext.register.code,
       registerSessionId: registerContext.session.id,
@@ -475,6 +534,7 @@ export async function reversePayment(
   return {
     ...buildSummary(order, finalEvents),
     reversal: eventDto(reversal),
+    storedValue,
     register: {
       id: registerContext.register.id,
       code: registerContext.register.code,
@@ -496,5 +556,5 @@ export function paymentReversalErrorResponse(error: unknown) {
       },
     };
   }
-  return null;
+  return loyaltyLedgerErrorResponse(error);
 }
