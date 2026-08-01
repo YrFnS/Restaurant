@@ -38,34 +38,39 @@ jobs:
 
           path = Path('src/components/admin/tabs/SettingsTab.tsx')
           source = path.read_text()
-          marker = 'function ToggleRow('
-          if marker not in source:
-              source += '''
-
-function ToggleRow({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/20 px-3 py-2.5">
-      <Label className="text-sm font-medium">{label}</Label>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-}
-'''
-              path.write_text(source)
+          if 'function ToggleRow(' not in source:
+              addition = '\n'.join([
+                  '',
+                  '',
+                  'function ToggleRow({',
+                  '  label,',
+                  '  checked,',
+                  '  onChange,',
+                  '}: {',
+                  '  label: string;',
+                  '  checked: boolean;',
+                  '  onChange: (value: boolean) => void;',
+                  '}) {',
+                  '  return (',
+                  '    <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/20 px-3 py-2.5">',
+                  '      <Label className="text-sm font-medium">{label}</Label>',
+                  '      <Switch checked={checked} onCheckedChange={onChange} />',
+                  '    </div>',
+                  '  );',
+                  '}',
+                  '',
+              ])
+              path.write_text(source + addition)
           PY
 
           git show origin/main:.github/workflows/p0-validation.yml > .github/workflows/p0-validation.yml
+          rm -f docs/.loyalty-ui-trigger
           git config user.name "OpenAI Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/components/admin/tabs/SettingsTab.tsx .github/workflows/p0-validation.yml
+          git add \
+            src/components/admin/tabs/SettingsTab.tsx \
+            .github/workflows/p0-validation.yml \
+            docs/.loyalty-ui-trigger
           git commit -m "fix: complete loyalty settings controls"
           git push origin HEAD:agent/p1-loyalty-gift-cards
 
