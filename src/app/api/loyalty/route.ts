@@ -13,6 +13,7 @@ import {
   loyaltyLedgerErrorResponse,
   readLoyaltyAccount,
 } from "@/lib/loyalty/ledger";
+import { withSafeLoyaltyRawQueries } from "@/lib/loyalty/safe-transaction";
 
 const querySchema = z
   .object({
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await db.$transaction((tx) =>
-      adjustLoyaltyPoints(tx, {
+      adjustLoyaltyPoints(withSafeLoyaltyRawQueries(tx), {
         ...parsed,
         idempotencyKey: key,
         actor: auth.session,
