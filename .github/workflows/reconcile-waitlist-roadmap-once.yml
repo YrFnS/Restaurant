@@ -3,7 +3,7 @@ name: Reconcile waitlist roadmap once
 on:
   pull_request:
     branches:
-      - main
+      - agent/p1-waitlist-capacity
 
 permissions:
   contents: write
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   patch:
-    if: ${{ github.event.pull_request.head.ref == 'agent/p1-waitlist-capacity' }}
+    if: ${{ github.event.pull_request.head.ref == 'agent/p1-waitlist-roadmap-trigger' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
