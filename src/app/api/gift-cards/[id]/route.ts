@@ -14,6 +14,7 @@ import {
   mutateGiftCard,
   parseSignedMoneyToMinor,
 } from "@/lib/loyalty/ledger";
+import { withSafeLoyaltyRawQueries } from "@/lib/loyalty/safe-transaction";
 
 const mutationSchema = z
   .object({
@@ -143,8 +144,9 @@ export async function PATCH(
   try {
     const { id } = await params;
     const result = await db.$transaction(async (tx) => {
-      await assertMutationReplayMatches(tx, key, id, parsed);
-      return mutateGiftCard(tx, {
+      const safeTx = withSafeLoyaltyRawQueries(tx);
+      await assertMutationReplayMatches(safeTx, key, id, parsed);
+      return mutateGiftCard(safeTx, {
         cardId: id,
         ...parsed,
         idempotencyKey: key,
