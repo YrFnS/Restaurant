@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import {
   CashMovementType,
   DynamicPricingType,
+  GiftCardStatus,
+  GiftCardTransactionType,
   KdsLayoutType,
   KdsScreenType,
+  LoyaltyPointEventType,
   OrderItemStatus,
   OrderStatus,
   OrderType,
@@ -38,7 +41,7 @@ const expectedEnums: Record<string, readonly string[]> = {
     "cancelled",
   ],
   OrderItemStatus: ["pending", "preparing", "ready", "served", "cancelled"],
-  PaymentMethod: ["cash", "card", "split"],
+  PaymentMethod: ["cash", "card", "split", "gift_card"],
   PaymentStatus: [
     "unpaid",
     "partially_paid",
@@ -93,6 +96,24 @@ const expectedEnums: Record<string, readonly string[]> = {
   DynamicPricingType: ["happy_hour", "lunch_special", "surge"],
   PaymentEventType: ["capture", "refund", "void", "adjustment"],
   PaymentEventStatus: ["pending", "succeeded", "failed", "voided"],
+  LoyaltyPointEventType: [
+    "opening_balance",
+    "earn",
+    "redeem",
+    "earn_reversal",
+    "redeem_restore",
+    "adjustment",
+  ],
+  GiftCardStatus: ["active", "exhausted", "voided", "expired"],
+  GiftCardTransactionType: [
+    "opening_balance",
+    "issue",
+    "redeem",
+    "refund",
+    "adjustment",
+    "void",
+    "expiration",
+  ],
 };
 
 function sleep(milliseconds: number): Promise<void> {
@@ -143,7 +164,7 @@ async function assertGeneratedEnumRoundTrips() {
   assert.equal(OrderType.delivery, "delivery");
   assert.equal(OrderStatus.preparing, "preparing");
   assert.equal(OrderItemStatus.ready, "ready");
-  assert.equal(PaymentMethod.cash, "cash");
+  assert.equal(PaymentMethod.gift_card, "gift_card");
   assert.equal(PaymentStatus.partially_refunded, "partially_refunded");
   assert.equal(StaffRole.inventory_manager, "inventory_manager");
   assert.equal(TableStatus.cleaning, "cleaning");
@@ -156,6 +177,9 @@ async function assertGeneratedEnumRoundTrips() {
   assert.equal(DynamicPricingType.lunch_special, "lunch_special");
   assert.equal(PaymentEventType.refund, "refund");
   assert.equal(PaymentEventStatus.failed, "failed");
+  assert.equal(LoyaltyPointEventType.earn_reversal, "earn_reversal");
+  assert.equal(GiftCardStatus.exhausted, "exhausted");
+  assert.equal(GiftCardTransactionType.refund, "refund");
 }
 
 async function assertMutableTimestampsAdvance() {
