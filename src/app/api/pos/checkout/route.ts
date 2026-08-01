@@ -7,6 +7,17 @@ import {
 } from "@/lib/auth/guard";
 import { auditContextFromRequest, writeAuditEvent } from "@/lib/audit";
 import {
+  CashRegisterError,
+  linkCashEntryToSession,
+  linkPaymentEventToSession,
+  lockOpenRegisterSession,
+  readCurrentRegisterSession,
+  readPaymentRegisterLink,
+  registerIdentityFromRequest,
+  serializeRegister,
+  serializeSession,
+} from "@/lib/cash/register-session";
+import {
   exactMinorToCents,
   exactMinorToNumber,
   readExactOrderTotalMinor,
@@ -59,6 +70,13 @@ function captureKey(orderId: string): string {
   return `cash-capture:${orderId}`;
 }
 
+function registerErrorResponse(error: CashRegisterError) {
+  return NextResponse.json(
+    { error: error.message, code: error.code, details: error.details },
+    { status: error.status, headers: { "Cache-Control": "no-store" } }
+  );
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireStaffSession(CASH_MANAGEMENT_ROLES);
   if ("response" in auth) return auth.response;
@@ -95,6 +113,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const identity = registerIdentityFromRequest(req);
     const [existing, exactTotalMinor] = await Promise.all([
       db.order.findUnique({
         where: { id: input.orderId },
@@ -139,6 +158,31 @@ export async function POST(req: NextRequest) {
         where: { idempotencyKey: captureKey(existing.id) },
         select: paymentEventSelect,
       });
+      const paymentLink = paymentEvent
+        ? await readPaymentRegisterLink(db, paymentEvent.id)
+        : null;
+
+      if (identity.registerId || identity.deviceId) {
+        if (!identity.registerId || !identity.deviceId) {
+          throw new CashRegisterError(
+            "Register and device headers are required",
+            "REGISTER_IDENTITY_REQUIRED",
+            400
+          );
+        }
+        await readCurrentRegisterSession(
+          db,
+          identity.registerId,
+          identity.deviceId
+        );
+        if (!paymentLink || paymentLink.registerId !== identity.registerId) {
+          throw new CashRegisterError(
+            "This payment belongs to a different register",
+            "PAYMENT_REGISTER_MISMATCH",
+            409
+          );
+        }
+      }
 
       return NextResponse.json(
         {
@@ -152,6 +196,7 @@ export async function POST(req: NextRequest) {
             tendered:
               fromCents(paymentEvent?.tenderedCents ?? null) ?? tendered,
             change: fromCents(paymentEvent?.changeCents ?? null) ?? change,
+            registerSessionId: paymentLink?.registerSessionId || null,
           },
           replayed: true,
         },
@@ -161,6 +206,28 @@ export async function POST(req: NextRequest) {
 
     const context = auditContextFromRequest(req);
     const result = await db.$transaction(async (tx) => {
+      const registerContext = await lockOpenRegisterSession(tx, {
+        identity,
+        actor: auth.session,
+        allowLegacyFallback: true,
+      });
+
+      if (registerContext.autoOpened) {
+        await writeAuditEvent(tx, {
+          actor: auth.session,
+          action: "cash.session.auto-open",
+          entityType: "CashRegisterSession",
+          entityId: registerContext.session.id,
+          context,
+          metadata: {
+            registerId: registerContext.register.id,
+            registerCode: registerContext.register.code,
+            compatibilityFallback: true,
+            openingFloatMinor: "0",
+          },
+        });
+      }
+
       const claimed = await tx.order.updateMany({
         where: { id: input.orderId, paymentStatus: "unpaid" },
         data: {
@@ -181,7 +248,17 @@ export async function POST(req: NextRequest) {
             select: paymentEventSelect,
           }),
         ]);
-        return { order, paymentEvent, replayed: true };
+        const paymentLink = paymentEvent
+          ? await readPaymentRegisterLink(tx, paymentEvent.id)
+          : null;
+        return {
+          order,
+          paymentEvent,
+          paymentLink,
+          register: registerContext.register,
+          session: registerContext.session,
+          replayed: true,
+        };
       }
 
       const drawerEntry = await tx.cashDrawerEntry.create({
@@ -193,6 +270,11 @@ export async function POST(req: NextRequest) {
           createdBy: auth.session.name,
         },
       });
+      await linkCashEntryToSession(
+        tx,
+        drawerEntry.id,
+        registerContext.session.id
+      );
 
       const settings = await tx.restaurantSettings.findUnique({
         where: { id: "1" },
@@ -216,10 +298,17 @@ export async function POST(req: NextRequest) {
             orderNumber: existing.orderNumber,
             tableId: existing.tableId,
             cashDrawerEntryId: drawerEntry.id,
+            registerId: registerContext.register.id,
+            registerSessionId: registerContext.session.id,
           },
         },
         select: paymentEventSelect,
       });
+      await linkPaymentEventToSession(
+        tx,
+        paymentEvent.id,
+        registerContext.session.id
+      );
 
       if (existing.tableId) {
         await tx.restaurantTable.update({
@@ -243,6 +332,9 @@ export async function POST(req: NextRequest) {
           currency: paymentEvent.currency,
           cashDrawerEntryId: drawerEntry.id,
           tableId: existing.tableId,
+          registerId: registerContext.register.id,
+          registerCode: registerContext.register.code,
+          registerSessionId: registerContext.session.id,
         },
       });
 
@@ -250,7 +342,17 @@ export async function POST(req: NextRequest) {
         where: { id: input.orderId },
         include: checkoutOrderInclude,
       });
-      return { order, paymentEvent, replayed: false };
+      return {
+        order,
+        paymentEvent,
+        paymentLink: {
+          registerSessionId: registerContext.session.id,
+          registerId: registerContext.register.id,
+        },
+        register: registerContext.register,
+        session: registerContext.session,
+        replayed: false,
+      };
     });
 
     if (!result.order) {
@@ -274,12 +376,16 @@ export async function POST(req: NextRequest) {
           tendered:
             fromCents(result.paymentEvent?.tenderedCents ?? null) ?? tendered,
           change: fromCents(result.paymentEvent?.changeCents ?? null) ?? change,
+          registerSessionId: result.paymentLink?.registerSessionId || null,
         },
+        register: serializeRegister(result.register),
+        session: serializeSession(result.session),
         replayed: result.replayed,
       },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
+    if (error instanceof CashRegisterError) return registerErrorResponse(error);
     console.error("[pos/checkout] Checkout failed", error);
     return NextResponse.json(
       { error: "Unable to complete checkout", code: "CHECKOUT_FAILED" },

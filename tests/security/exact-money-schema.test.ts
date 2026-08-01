@@ -10,6 +10,12 @@ const migration = readFileSync(
   ),
   "utf8"
 );
+const registerMigration = readFileSync(
+  resolve(
+    "prisma/migrations/20260731235920_add_cash_register_sessions/migration.sql"
+  ),
+  "utf8"
+);
 
 const exactFields = [
   ["RestaurantSettings", "restaurantSettings", "taxRateMicros", "BigInt"],
@@ -43,6 +49,25 @@ const exactFields = [
   ["ComboMeal", "comboMeal", "priceMinor", "BigInt"],
 ] as const;
 
+const registerExactFields = [
+  [
+    "CashRegister",
+    "cashRegister",
+    "discrepancyApprovalThresholdMinor",
+    "BigInt",
+  ],
+  [
+    "CashRegisterSession",
+    "cashRegisterSession",
+    "openingFloatMinor",
+    "BigInt",
+  ],
+  ["CashRegisterClose", "cashRegisterClose", "expectedCashMinor", "BigInt"],
+  ["CashRegisterClose", "cashRegisterClose", "countedCashMinor", "BigInt"],
+  ["CashRegisterClose", "cashRegisterClose", "discrepancyMinor", "BigInt"],
+  ["CashRegisterClose", "cashRegisterClose", "thresholdMinor", "BigInt"],
+] as const;
+
 function modelBlock(model: string): string {
   const match = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`, "m").exec(
     schema
@@ -61,7 +86,7 @@ function omitBlock(model: string): string {
 }
 
 describe("exact financial storage inventory", () => {
-  test("exposes every exact field to Prisma Client", () => {
+  test("exposes every compatibility-window exact field to Prisma Client", () => {
     for (const [model, , field, type] of exactFields) {
       expect(modelBlock(model)).toMatch(
         new RegExp(`\\b${field}\\s+${type}\\s+@default\\(0\\)(?!\\s+@ignore)`)
@@ -69,8 +94,20 @@ describe("exact financial storage inventory", () => {
     }
   });
 
+  test("maps every register-session exact field in Prisma", () => {
+    for (const [model, , field, type] of registerExactFields) {
+      expect(modelBlock(model)).toMatch(
+        new RegExp(`\\b${field}\\s+${type}\\b(?![^\\n]*@ignore)`)
+      );
+      expect(registerMigration).toContain(`"${field}" BIGINT`);
+    }
+  });
+
   test("globally omits exact fields from unreviewed shared-client results", () => {
-    for (const [, prismaModel, field] of exactFields) {
+    for (const [, prismaModel, field] of [
+      ...exactFields,
+      ...registerExactFields,
+    ]) {
       expect(omitBlock(prismaModel)).toMatch(
         new RegExp(`\\b${field}:\\s*true\\b`)
       );
@@ -78,7 +115,7 @@ describe("exact financial storage inventory", () => {
     expect(dbClient).toContain("omit: exactFinancialFieldOmit");
   });
 
-  test("adds and backfills every exact field in the committed migration", () => {
+  test("adds and backfills every compatibility-window exact field", () => {
     for (const [, , field] of exactFields) {
       expect(migration).toContain(`ADD COLUMN "${field}"`);
       expect(migration).toContain(`"${field}" = ROUND`);
