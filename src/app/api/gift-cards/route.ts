@@ -40,6 +40,7 @@ const issueSchema = z
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,191}$/;
 
 type ExistingIssueRow = {
+  giftCardId: string;
   amountMinor: bigint;
   purchaserName: string;
   recipientName: string;
@@ -64,7 +65,7 @@ async function assertIssueReplayMatches(
   tx: Prisma.TransactionClient,
   key: string,
   input: z.infer<typeof issueSchema>
-) {
+): Promise<string | null> {
   await tx.$queryRaw(Prisma.sql`
     SELECT pg_advisory_xact_lock(
       hashtextextended(${`gift-card-issue:${key}`}, 0)
@@ -73,20 +74,21 @@ async function assertIssueReplayMatches(
 
   const rows = await tx.$queryRaw<ExistingIssueRow[]>(Prisma.sql`
     SELECT
-      transaction."amountMinor",
+      ledger_tx."giftCardId",
+      ledger_tx."amountMinor",
       card."purchaserName",
       card."recipientName",
       card."message",
       card."template",
       card."expiresAt"
-    FROM "GiftCardTransaction" AS transaction
-    JOIN "GiftCard" AS card ON card."id" = transaction."giftCardId"
-    WHERE transaction."idempotencyKey" = ${key}
+    FROM "GiftCardTransaction" AS ledger_tx
+    JOIN "GiftCard" AS card ON card."id" = ledger_tx."giftCardId"
+    WHERE ledger_tx."idempotencyKey" = ${key}
     LIMIT 1
-    FOR UPDATE OF transaction, card
+    FOR UPDATE OF ledger_tx, card
   `);
   const existing = rows[0];
-  if (!existing) return;
+  if (!existing) return null;
 
   const expectedMessage = input.message?.trim().slice(0, 2_000) || null;
   const expectedTemplate = input.template.trim().slice(0, 80);
@@ -111,6 +113,8 @@ async function assertIssueReplayMatches(
       409
     );
   }
+
+  return existing.giftCardId;
 }
 
 export async function GET(req: NextRequest) {
@@ -187,14 +191,22 @@ export async function POST(req: NextRequest) {
   try {
     const result = await db.$transaction(async (tx) => {
       const safeTx = withSafeLoyaltyRawQueries(tx);
-      await assertIssueReplayMatches(safeTx, key, parsed);
-      return issueGiftCard(safeTx, {
+      const replayCardId = await assertIssueReplayMatches(safeTx, key, parsed);
+      const issued = await issueGiftCard(safeTx, {
         ...parsed,
         expiresAt: parsed.expiresAt ? new Date(parsed.expiresAt) : null,
         idempotencyKey: key,
         actor: auth.session,
         context: auditContextFromRequest(req),
       });
+
+      if (issued.replayed && replayCardId) {
+        return {
+          ...issued,
+          card: { ...issued.card, id: replayCardId },
+        };
+      }
+      return issued;
     });
     return noStore(result, result.replayed ? 200 : 201);
   } catch (error) {
