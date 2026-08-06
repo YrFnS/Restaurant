@@ -80,20 +80,20 @@ function publicOrderResponse(order: OrderWithRelations, replayed = false) {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
-  if ("response" in auth) return auth.response;
-
-  const parsed = orderQuerySchema.safeParse(
-    Object.fromEntries(new URL(req.url).searchParams.entries())
-  );
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid order query", code: "VALIDATION_ERROR" },
-      { status: 400 }
-    );
-  }
-
   try {
+    const auth = await requireStaffSession(ORDER_MANAGEMENT_ROLES);
+    if ("response" in auth) return auth.response;
+
+    const parsed = orderQuerySchema.safeParse(
+      Object.fromEntries(new URL(req.url).searchParams.entries())
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid order query", code: "VALIDATION_ERROR" },
+        { status: 400 }
+      );
+    }
+
     const where: Prisma.OrderWhereInput = {
       ...(parsed.data.status && parsed.data.status !== "all"
         ? { status: parsed.data.status }
