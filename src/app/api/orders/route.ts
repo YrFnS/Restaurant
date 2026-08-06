@@ -338,7 +338,7 @@ export async function POST(req: NextRequest) {
       });
 
       return created;
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
 
     await flushKdsOutboxBestEffort(10);
 
