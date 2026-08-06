@@ -21,6 +21,7 @@ import {
   WaitlistStatus,
 } from "@prisma/client";
 import { createHash, randomUUID } from "crypto";
+import { seedOperationalCoverage } from "./seed-coverage";
 
 const db = new PrismaClient();
 
@@ -35,22 +36,16 @@ async function main() {
   console.log("🌱 Seeding database...");
 
   const tables = [
-    "LoyaltyPointEvent", "GiftCardTransaction", "PaymentEvent", "KdsOutboxEvent", "AuditEvent", "StaffSession", "RateLimitCounter",
-    "PurchaseReceiptLine", "PurchaseReceipt", "PurchaseOrderLine",
-    "ReservationClosure", "ReservationServicePeriod",
-    "OrderItem", "Order", "Reservation", "WaitlistEntry", "Customer",
-    "RecipeComponent", "Recipe", "IngredientUnitConversion", "StockMovement",
-    "ModifierOption", "ModifierGroup", "MenuItem", "MenuCategory",
-    "RestaurantTable", "KitchenScreen", "KitchenStation",
-    "Employee", "Schedule", "WasteLog", "PurchaseOrder", "Supplier", "Ingredient",
-    "CashDrawerEntry", "Notification", "SpecialOffer", "PromoCode",
-    "RewardTier", "GiftCard", "Feedback", "Testimonial",
-    "NewsletterSubscription", "DynamicPricing", "ComboMeal",
+    "RestaurantSettings", "MenuCategory", "MenuItem", "ModifierGroup", "ModifierOption", "Customer", "Order", "OrderItem",
+    "RestaurantTable", "Reservation", "ReservationServicePeriod", "ReservationClosure", "WaitlistEntry", "SpecialOffer", "PromoCode",
+    "RewardTier", "GiftCard", "LoyaltyPointEvent", "GiftCardTransaction", "Feedback", "Testimonial", "NewsletterSubscription",
+    "Employee", "Schedule", "EmployeeTimeEvent", "EmployeeShift", "EmployeeBreak", "EmployeeTimeAdjustment", "Ingredient",
+    "IngredientUnitConversion", "Recipe", "RecipeComponent", "StockMovement", "WasteLog", "Supplier", "PurchaseOrder",
+    "PurchaseOrderLine", "PurchaseReceipt", "PurchaseReceiptLine", "CashRegister", "CashRegisterSession", "CashRegisterClose",
+    "CashDrawerEntry", "Notification", "KitchenStation", "KitchenScreen", "DynamicPricing", "ComboMeal", "AuditEvent",
+    "StaffSession", "RateLimitCounter", "KdsOutboxEvent", "PaymentEvent",
   ];
-  for (const t of tables) {
-    await (db as any)[t[0].toLowerCase() + t.slice(1)].deleteMany();
-  }
-  await db.restaurantSettings.deleteMany();
+  await db.$executeRawUnsafe(`TRUNCATE TABLE ${tables.map((table) => `"${table}"`).join(", ")} CASCADE`);
 
   // ── 1. SETTINGS ──
   await db.restaurantSettings.create({
@@ -712,6 +707,8 @@ submittedAt: new Date(),
   ];
   for (const c of comboData) { await db.comboMeal.create({ data: c }); }
   console.log(`  ✓ ${comboData.length} combo meals`);
+
+  await seedOperationalCoverage(db);
 
   // ── Summary ──
   console.log("\n✅ Seed complete!");
