@@ -197,6 +197,8 @@ export function MenuBrowser({ onAddItem, onItemNeedsModifiers }: MenuBrowserProp
                       <img
                         src={item.image}
                         alt={isRTL ? item.nameAr : item.nameEn}
+                        width={900}
+                        height={675}
                         className="size-full object-cover"
                         loading="lazy"
                       />

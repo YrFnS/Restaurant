@@ -191,7 +191,7 @@ export default function AdminFeaturedPage() {
                         {/* Image */}
                         <div className="size-12 rounded-lg overflow-hidden bg-accent shrink-0">
                           {item.image ? (
-                            <img src={item.image} alt="" className="w-full h-full object-cover" />
+                            <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={48} height={48} loading="lazy" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-xl">🍽️</div>
                           )}

@@ -550,7 +550,10 @@ export default function OrderTrackingPage() {
                         {item.menuItem?.image ? (
                           <img
                             src={item.menuItem.image}
-                            alt=""
+                            alt={isRTL ? item.menuItem?.nameAr : item.menuItem?.nameEn}
+                            width={48}
+                            height={48}
+                            loading="lazy"
                             className="w-full h-full object-cover"
                           />
                         ) : (

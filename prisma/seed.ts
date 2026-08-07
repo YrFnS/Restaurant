@@ -22,6 +22,7 @@ import {
 } from "@prisma/client";
 import { createHash, randomUUID } from "crypto";
 import { seedOperationalCoverage } from "./seed-coverage";
+import { MENU_IMAGE_URLS, REMOTE_HERO_URL, REMOTE_LOGO_URL, TESTIMONIAL_AVATAR_URLS } from "./remote-assets";
 
 const db = new PrismaClient();
 
@@ -60,7 +61,7 @@ async function main() {
       taxRate: 0.1, currency: "USD", currencySymbol: "$",
       deliveryFee: 4.99, minDeliveryOrder: 15.0, deliveryRadiusKm: 10.0,
       avgPrepTimeMin: 25, tipPresets: "15,18,20", openTime: "10:00", closeTime: "23:00",
-      logoUrl: "/images/logo.png", heroImageUrl: "/images/hero-restaurant.png",
+      logoUrl: REMOTE_LOGO_URL, heroImageUrl: REMOTE_HERO_URL,
       facebookUrl: "https://facebook.com/saffronspice", instagramUrl: "https://instagram.com/saffronspice",
       twitterUrl: "https://twitter.com/saffronspice", whatsappUrl: "https://wa.me/9647501234567",
       giftCardAmounts: "25,50,75,100",
@@ -172,7 +173,7 @@ async function main() {
   for (const it of items) {
     const catId = catMap[it.cat];
     if (!catId) continue;
-    const item = await db.menuItem.create({ data: { nameEn: it.nameEn, nameAr: it.nameAr, descriptionEn: it.descEn, descriptionAr: it.descAr, price: it.price, isAvailable: true, isPopular: !!it.popular, isSpecial: !!it.special, isNew: !!it.isNew, preparationTime: it.prep, calories: it.cal, allergens: it.allergens, dietary: it.dietary, categoryId: catId, image: it.img ? `/images/menu/${it.img}` : "", sortOrder: 0 } });
+    const item = await db.menuItem.create({ data: { nameEn: it.nameEn, nameAr: it.nameAr, descriptionEn: it.descEn, descriptionAr: it.descAr, price: it.price, isAvailable: true, isPopular: !!it.popular, isSpecial: !!it.special, isNew: !!it.isNew, preparationTime: it.prep, calories: it.cal, allergens: it.allergens, dietary: it.dietary, categoryId: catId, image: it.img ? MENU_IMAGE_URLS[it.img] : "", sortOrder: 0 } });
     if (it.groups) {
       for (let gi = 0; gi < it.groups.length; gi++) {
         const g = it.groups[gi];
@@ -495,10 +496,10 @@ metadata: { seed: true },
 
   // ── 16. TESTIMONIALS ──
   const testimonials = [
-    { nameEn: "Ahmed K.", nameAr: "أحمد ك.", commentEn: "Best grill in town! The mixed platter is enormous and delicious.", commentAr: "أفضل مشاوي في المدينة! الصحن المشكل ضخم ولذيذ.", stars: 5, avatar: "👨" },
-    { nameEn: "Fatima A.", nameAr: "فاطمة ع.", commentEn: "The kunafa is to die for. Service was warm and fast.", commentAr: "الكنافة لا تُقاوم. الخدمة كانت ودودة وسريعة.", stars: 5, avatar: "👩" },
-    { nameEn: "John M.", nameAr: "جون م.", commentEn: "Came for lunch special — incredible value. Will return.", commentAr: "جئت لعرض الغداء — قيمة رائعة. سأعود.", stars: 5, avatar: "👨" },
-    { nameEn: "Noor H.", nameAr: "نور ح.", commentEn: "Beautiful ambiance and the staff remembered my name.", commentAr: "أجواء جميلة والموظفون تذكروا اسمي. خدمة راقية.", stars: 5, avatar: "👩" },
+    { nameEn: "Ahmed K.", nameAr: "أحمد ك.", commentEn: "Best grill in town! The mixed platter is enormous and delicious.", commentAr: "أفضل مشاوي في المدينة! الصحن المشكل ضخم ولذيذ.", stars: 5, avatar: TESTIMONIAL_AVATAR_URLS[0] },
+    { nameEn: "Fatima A.", nameAr: "فاطمة ع.", commentEn: "The kunafa is to die for. Service was warm and fast.", commentAr: "الكنافة لا تُقاوم. الخدمة كانت ودودة وسريعة.", stars: 5, avatar: TESTIMONIAL_AVATAR_URLS[1] },
+    { nameEn: "John M.", nameAr: "جون م.", commentEn: "Came for lunch special — incredible value. Will return.", commentAr: "جئت لعرض الغداء — قيمة رائعة. سأعود.", stars: 5, avatar: TESTIMONIAL_AVATAR_URLS[2] },
+    { nameEn: "Noor H.", nameAr: "نور ح.", commentEn: "Beautiful ambiance and the staff remembered my name.", commentAr: "أجواء جميلة والموظفون تذكروا اسمي. خدمة راقية.", stars: 5, avatar: TESTIMONIAL_AVATAR_URLS[3] },
   ];
   for (const t of testimonials) { await db.testimonial.create({ data: { ...t, sortOrder: 0, isActive: true } }); }
   console.log(`  ✓ ${testimonials.length} testimonials`);

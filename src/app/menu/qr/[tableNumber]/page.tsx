@@ -386,7 +386,7 @@ export default function QrMenuPage({ params }: { params: Promise<{ tableNumber: 
                     <div key={idx} className="flex gap-3 p-3 rounded-xl bg-accent/50">
                       <div className="size-12 rounded-lg overflow-hidden bg-background shrink-0">
                         {line.image ? (
-                          <img src={line.image} alt="" className="w-full h-full object-cover" />
+                          <img src={line.image} alt={isRTL ? line.nameAr : line.nameEn} width={48} height={48} loading="lazy" className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-xl">🍽️</div>
                         )}
@@ -480,7 +480,7 @@ function QrItemCard({ item, onQuickAdd, onOpen }: { item: any; onQuickAdd: () =>
         </div>
         <button onClick={onOpen} className="w-24 sm:w-28 bg-gradient-to-br from-primary/15 to-accent/40 overflow-hidden shrink-0">
           {item.image ? (
-            <img src={item.image} alt="" className="w-full h-full object-cover" />
+            <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={112} height={128} loading="lazy" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-3xl">🍽️</div>
           )}
@@ -542,7 +542,7 @@ function QrItemDetail({ item, onClose, onAdd }: { item: any; onClose: () => void
         <SheetHeader className="p-0">
           <div className="relative h-44 bg-gradient-to-br from-primary/20 to-accent overflow-hidden">
             {item.image ? (
-              <img src={item.image} alt="" className="absolute inset-0 w-full h-full object-cover" />
+              <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={640} height={352} className="absolute inset-0 w-full h-full object-cover" />
             ) : (
               <span className="text-6xl opacity-50">🍽️</span>
             )}

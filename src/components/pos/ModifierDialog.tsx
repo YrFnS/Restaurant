@@ -146,6 +146,8 @@ export function ModifierDialog({
             <img
               src={item.image}
               alt={isRTL ? item.nameAr : item.nameEn}
+              width={64}
+              height={64}
               className="size-16 rounded-lg object-cover shrink-0"
             />
           ) : (

@@ -184,7 +184,7 @@ export function MenuTab() {
                             <div className="flex items-center gap-3">
                               <div className="size-10 rounded-md overflow-hidden bg-muted flex items-center justify-center shrink-0">
                                 {it.image ? (
-                                  <img src={it.image} alt={it.nameEn} className="size-full object-cover" />
+                                  <img src={it.image} alt={locale === "ar" ? it.nameAr : it.nameEn} width={40} height={40} loading="lazy" className="size-full object-cover" />
                                 ) : (
                                   <ImageOff className="size-4 text-muted-foreground" />
                                 )}

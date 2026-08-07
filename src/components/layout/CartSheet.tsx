@@ -430,7 +430,7 @@ function CartLine({ item, onUpdate, onRemove }: { item: CartItem; onUpdate: (id:
     <div className="flex gap-3 p-3 rounded-xl bg-accent/50">
       <div className="size-14 rounded-lg bg-background overflow-hidden shrink-0">
         {item.image ? (
-          <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} className="w-full h-full object-cover" />
+          <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={56} height={56} loading="lazy" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-2xl">🍽️</div>
         )}

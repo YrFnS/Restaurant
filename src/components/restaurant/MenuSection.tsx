@@ -272,7 +272,7 @@ function MenuItemCard({ item, onOpen, onQuickAdd }: { item: any; onOpen: () => v
     <Card className="group overflow-hidden hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5">
       <div className="relative h-40 bg-gradient-to-br from-primary/15 to-accent/40 overflow-hidden">
         {item.image ? (
-          <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+          <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={640} height={480} loading="lazy" className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
         ) : (
           <span className="text-5xl opacity-50 group-hover:scale-110 transition-transform duration-500">🍽️</span>
         )}
@@ -392,7 +392,7 @@ function ItemDetailSheet({ item, onClose }: { item: any; onClose: () => void }) 
         <SheetHeader className="p-0">
           <div className="relative h-48 bg-gradient-to-br from-primary/20 to-accent overflow-hidden">
             {item.image ? (
-              <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} className="absolute inset-0 w-full h-full object-cover" />
+              <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={640} height={480} className="absolute inset-0 w-full h-full object-cover" />
             ) : (
               <span className="text-6xl opacity-50">🍽️</span>
             )}

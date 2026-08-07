@@ -1,51 +1,65 @@
-// Assign generated food images to ALL menu items
+// Assign remote images to every seeded menu item and testimonial avatar.
 import { PrismaClient } from "@prisma/client";
-const db = new PrismaClient();
+import {
+  assertMappedNeon,
+  MENU_IMAGE_URLS,
+  REMOTE_HERO_URL,
+  REMOTE_LOGO_URL,
+  TESTIMONIAL_AVATAR_URLS,
+} from "./remote-assets";
 
+const db = new PrismaClient();
 const imageMap: Record<string, string> = {
-  // Existing (already assigned, but re-assign to be safe)
-  "Hummus Beiruti": "/images/menu/hummus.png",
-  "Falafel Plate": "/images/menu/falafel.png",
-  "Stuffed Grape Leaves": "/images/menu/grape-leaves.png",
-  "Lentil Soup": "/images/menu/lentil-soup.png",
-  "Seafood Chowder": "/images/menu/seafood-chowder.png",
-  "Mixed Grill Platter": "/images/menu/mixed-grill.png",
-  "Shish Tawook": "/images/menu/shish-tawook.png",
-  "Lamb Kebab": "/images/menu/lamb-kebab.png",
-  "Spicy Wings": "/images/menu/wings.png",
-  "Grilled Salmon": "/images/menu/salmon.png",
-  "Shrimp Linguine": "/images/menu/shrimp-linguine.png",
-  "Truffle Mushroom Pasta": "/images/menu/truffle-pasta.png",
-  "Spicy Arrabbiata": "/images/menu/arrabbiata.png",
-  "Margherita": "/images/menu/margherita.png",
-  "Spicy Pepperoni": "/images/menu/pepperoni-pizza.png",
-  "Fattoush": "/images/menu/fattoush.png",
-  "Caesar Salad": "/images/menu/caesar-salad.png",
-  "Kunafa": "/images/menu/kunafa.png",
-  "Baklava (4 pcs)": "/images/menu/baklava.png",
-  "Chocolate Lava Cake": "/images/menu/lava-cake.png",
-  "Fresh Mint Lemonade": "/images/menu/lemonade.png",
-  "Turkish Coffee": "/images/menu/turkish-coffee.png",
-  "Pomegranate Mocktail": "/images/menu/pomegranate-mocktail.png",
-  "Soft Drinks": "/images/menu/soft-drink.png",
-  "Truffle Fries": "/images/menu/truffle-fries.png",
-  "Garlic Rice": "/images/menu/garlic-rice.png",
-  "Grilled Vegetables": "/images/menu/grilled-veg.png",
+  "Hummus Beiruti": MENU_IMAGE_URLS["hummus.png"],
+  "Falafel Plate": MENU_IMAGE_URLS["falafel.png"],
+  "Stuffed Grape Leaves": MENU_IMAGE_URLS["grape-leaves.png"],
+  "Lentil Soup": MENU_IMAGE_URLS["lentil-soup.png"],
+  "Seafood Chowder": MENU_IMAGE_URLS["seafood-chowder.png"],
+  "Mixed Grill Platter": MENU_IMAGE_URLS["mixed-grill.png"],
+  "Shish Tawook": MENU_IMAGE_URLS["shish-tawook.png"],
+  "Lamb Kebab": MENU_IMAGE_URLS["lamb-kebab.png"],
+  "Spicy Wings": MENU_IMAGE_URLS["wings.png"],
+  "Grilled Salmon": MENU_IMAGE_URLS["salmon.png"],
+  "Shrimp Linguine": MENU_IMAGE_URLS["shrimp-linguine.png"],
+  "Truffle Mushroom Pasta": MENU_IMAGE_URLS["truffle-pasta.png"],
+  "Spicy Arrabbiata": MENU_IMAGE_URLS["arrabbiata.png"],
+  Margherita: MENU_IMAGE_URLS["margherita.png"],
+  "Spicy Pepperoni": MENU_IMAGE_URLS["pepperoni-pizza.png"],
+  Fattoush: MENU_IMAGE_URLS["fattoush.png"],
+  "Caesar Salad": MENU_IMAGE_URLS["caesar-salad.png"],
+  Kunafa: MENU_IMAGE_URLS["kunafa.png"],
+  "Baklava (4 pcs)": MENU_IMAGE_URLS["baklava.png"],
+  "Chocolate Lava Cake": MENU_IMAGE_URLS["lava-cake.png"],
+  "Fresh Mint Lemonade": MENU_IMAGE_URLS["lemonade.png"],
+  "Turkish Coffee": MENU_IMAGE_URLS["turkish-coffee.png"],
+  "Pomegranate Mocktail": MENU_IMAGE_URLS["pomegranate-mocktail.png"],
+  "Soft Drinks": MENU_IMAGE_URLS["soft-drink.png"],
+  "Truffle Fries": MENU_IMAGE_URLS["truffle-fries.png"],
+  "Garlic Rice": MENU_IMAGE_URLS["garlic-rice.png"],
+  "Grilled Vegetables": MENU_IMAGE_URLS["grilled-veg.png"],
 };
 
 async function main() {
-  console.log("🖼️  Assigning food images to ALL menu items...");
-  let updated = 0;
-  for (const [name, img] of Object.entries(imageMap)) {
-    const item = await db.menuItem.findFirst({ where: { nameEn: name } });
-    if (item) {
-      await db.menuItem.update({ where: { id: item.id }, data: { image: img } });
-      updated++;
-      console.log(`  ✓ ${name} → ${img}`);
-    } else {
-      console.log(`  ✗ ${name} not found`);
-    }
+  await assertMappedNeon(db);
+  const names = Object.keys(imageMap);
+  const existing = await db.menuItem.findMany({ where: { nameEn: { in: names } }, select: { id: true, nameEn: true } });
+  if (existing.length !== names.length) {
+    const found = new Set(existing.map((item) => item.nameEn));
+    throw new Error(`Missing mapped menu items: ${names.filter((name) => !found.has(name)).join(", ")}`);
   }
-  console.log(`✅ Done — ${updated} items updated`);
+
+  console.log("🖼️  Assigning remote images to all menu items...");
+  for (const item of existing) {
+    await db.menuItem.update({ where: { id: item.id }, data: { image: imageMap[item.nameEn] } });
+  }
+  await db.restaurantSettings.update({ where: { id: "1" }, data: { logoUrl: REMOTE_LOGO_URL, heroImageUrl: REMOTE_HERO_URL } });
+
+  const testimonials = await db.testimonial.findMany({ orderBy: { sortOrder: "asc" }, select: { id: true } });
+  for (const [index, testimonial] of testimonials.entries()) {
+    const avatar = TESTIMONIAL_AVATAR_URLS[index % TESTIMONIAL_AVATAR_URLS.length];
+    await db.testimonial.update({ where: { id: testimonial.id }, data: { avatar } });
+  }
+  console.log(`✅ Done — ${existing.length} menu items, 1 settings row, ${testimonials.length} testimonials updated`);
 }
-main().finally(() => db.$disconnect());
+
+main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => db.$disconnect());

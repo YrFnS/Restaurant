@@ -68,11 +68,15 @@ export function HomeSection() {
     <div className="flex-1">
       {/* ─── HERO ─── */}
       <section className="relative overflow-hidden min-h-[600px] md:min-h-[640px] flex items-center">
-        {/* Background image */}
+        {/* Hero image remains an actual image for accessible loading and stable sizing. */}
         {s?.heroImageUrl && (
-          <div
-            className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${s.heroImageUrl})` }}
+          <img
+            src={s.heroImageUrl}
+            alt={isRTL ? "أجواء مطعم سفْران وبهارات" : "Saffron & Spice restaurant dining room"}
+            width={1600}
+            height={900}
+            fetchPriority="high"
+            className="absolute inset-0 size-full object-cover object-center"
           />
         )}
         {/* Gradient overlays for readability */}
@@ -179,7 +183,7 @@ export function HomeSection() {
                 <Card className="group overflow-hidden hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 cursor-pointer h-full border-0 shadow-md" onClick={() => setActiveSection("menu")}>
                   <div className="relative h-52 overflow-hidden bg-gradient-to-br from-primary/20 to-accent">
                     {item.image ? (
-                      <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                      <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={640} height={416} loading="lazy" className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center text-6xl opacity-40 group-hover:scale-110 transition-transform duration-500">🍽️</div>
                     )}
@@ -263,7 +267,7 @@ export function HomeSection() {
                 <CardContent className="p-4 flex gap-4 items-center">
                   <div className="size-24 rounded-xl overflow-hidden bg-gradient-to-br from-primary/20 to-accent shrink-0">
                     {item.image ? (
-                      <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                      <img src={item.image} alt={isRTL ? item.nameAr : item.nameEn} width={96} height={96} loading="lazy" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-3xl">🍽️</div>
                     )}
@@ -440,8 +444,19 @@ export function HomeSection() {
                         "{isRTL ? tm.commentAr : tm.commentEn}"
                       </p>
                       <div className="flex items-center gap-2.5">
-                        <div className="size-10 rounded-full bg-accent flex items-center justify-center text-xl">
-                          {tm.avatar || "👤"}
+                        <div className="size-10 rounded-full bg-accent flex items-center justify-center text-xl overflow-hidden">
+                          {tm.avatar?.startsWith("https://") ? (
+                            <img
+                              src={tm.avatar}
+                              alt={`${isRTL ? tm.nameAr : tm.nameEn} avatar`}
+                              width={40}
+                              height={40}
+                              loading="lazy"
+                              className="size-full object-cover"
+                            />
+                          ) : (
+                            tm.avatar || "👤"
+                          )}
                         </div>
                         <div>
                           <div className="font-semibold text-sm">{isRTL ? tm.nameAr : tm.nameEn}</div>
