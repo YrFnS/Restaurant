@@ -365,7 +365,7 @@ export function KdsTicket({
                         </button>
                       )}
                       {itemReady && (
-                        <span className="shrink-0 size-11 sm:size-12 rounded-lg bg-emerald-500/15 text-emerald-700 flex items-center justify-center">
+                        <span className="shrink-0 size-11 sm:size-12 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center">
                           <Check className="size-6" strokeWidth={3} />
                         </span>
                       )}
@@ -424,7 +424,7 @@ export function KdsTicket({
             </button>
           )}
           {allItemsReady && (
-            <div className="flex-1 h-14 rounded-xl bg-emerald-500/15 text-emerald-700 font-bold text-lg flex items-center justify-center gap-2">
+            <div className="flex-1 h-14 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-lg flex items-center justify-center gap-2">
               <Check className="size-6" strokeWidth={3} />
               {t.kds.ready}
             </div>
