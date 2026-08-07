@@ -5,7 +5,6 @@ import {
   Check,
   ChefHat,
   Clock,
-  Flag,
   Flame,
   Play,
   Utensils,
@@ -83,10 +82,10 @@ const AGE_TICKET_BG_DARK: Record<AgeBucket, string> = {
 };
 
 const AGE_TIMER_LIGHT: Record<AgeBucket, string> = {
-  fresh: "text-emerald-600",
-  warning: "text-amber-600",
-  urgent: "text-orange-600",
-  overdue: "text-red-600 animate-pulse",
+  fresh: "text-emerald-700",
+  warning: "text-amber-700",
+  urgent: "text-orange-700",
+  overdue: "text-red-700 animate-pulse",
 };
 
 const AGE_TIMER_DARK: Record<AgeBucket, string> = {
@@ -208,7 +207,7 @@ export function KdsTicket({
   const itemBgPrep = isDark ? "bg-sky-900/30" : "bg-sky-50";
   const itemBgPending = isDark ? "bg-zinc-900/40" : "bg-zinc-50";
   const modNo = isDark ? "text-red-300" : "text-red-600";
-  const modExtra = isDark ? "text-amber-300" : "text-amber-600";
+  const modExtra = isDark ? "text-amber-300" : "text-amber-700";
   const modDefault = isDark ? "text-zinc-300" : "text-zinc-600";
   const notesColor = isDark ? "text-amber-200" : "text-amber-700";
   const footerBorder = isDark ? "border-white/10" : "border-zinc-100";
@@ -230,7 +229,7 @@ export function KdsTicket({
     >
       {/* Allergen red banner */}
       {hasAllergens && (
-        <div className="bg-red-500 text-white px-4 py-2 flex items-center gap-2 font-bold text-base sm:text-lg">
+        <div className="bg-red-700 text-white px-4 py-2 flex items-center gap-2 font-bold text-base sm:text-lg">
           <AlertTriangle className="size-6 shrink-0" />
           <span className="tracking-wide">{t.kds.allergenAlert}</span>
         </div>
@@ -255,7 +254,7 @@ export function KdsTicket({
             {order.serverName && (
               <>
                 <span className="text-muted-foreground/50">·</span>
-                <span className={isDark ? "text-zinc-400" : "text-zinc-500"}>
+                <span className={isDark ? "text-zinc-400" : "text-zinc-600"}>
                   {t.kds.server}: <span className={isDark ? "text-zinc-200" : "text-zinc-700"}>{order.serverName}</span>
                 </span>
               </>
@@ -271,9 +270,9 @@ export function KdsTicket({
             className={cn(
               "text-[10px] sm:text-xs font-bold tracking-wider px-2 py-0.5 rounded-full",
               allItemsReady
-                ? "bg-emerald-500 text-white"
+                ? "bg-emerald-700 text-white"
                 : anyPreparing
-                ? "bg-sky-500 text-white"
+                ? "bg-sky-700 text-white"
                 : isDark ? "bg-zinc-700 text-zinc-200" : "bg-zinc-200 text-zinc-700"
             )}
           >
@@ -398,7 +397,7 @@ export function KdsTicket({
             <button
               onClick={(e) => { e.stopPropagation(); startAll(); }}
               disabled={busy}
-              className="flex-1 h-14 rounded-xl bg-sky-500 hover:bg-sky-400 active:bg-sky-600 text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+              className="flex-1 h-14 rounded-xl bg-sky-700 hover:bg-sky-800 active:bg-sky-900 text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
             >
               <Play className="size-5" fill="currentColor" />
               {t.kds.start}
@@ -408,7 +407,7 @@ export function KdsTicket({
             <button
               onClick={(e) => { e.stopPropagation(); startAll(); }}
               disabled={busy}
-              className="flex-1 h-14 rounded-xl bg-sky-500 hover:bg-sky-400 active:bg-sky-600 text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+              className="flex-1 h-14 rounded-xl bg-sky-700 hover:bg-sky-800 active:bg-sky-900 text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
             >
               <Flame className="size-5" />
               {t.kds.fireCourse.replace("{n}", "").trim() || (isRTL ? "إطلاق" : "Fire")}
@@ -418,14 +417,14 @@ export function KdsTicket({
             <button
               onClick={(e) => { e.stopPropagation(); bumpAll(); }}
               disabled={busy}
-              className="flex-1 h-14 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+              className="flex-1 h-14 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
             >
               <Timer className="size-5" />
               {t.kds.bump} {t.kds.allDay === "الإجمالي" ? "الكل" : "All"}
             </button>
           )}
           {allItemsReady && (
-            <div className="flex-1 h-14 rounded-xl bg-emerald-500/15 text-emerald-500 font-bold text-lg flex items-center justify-center gap-2">
+            <div className="flex-1 h-14 rounded-xl bg-emerald-500/15 text-emerald-700 font-bold text-lg flex items-center justify-center gap-2">
               <Check className="size-6" strokeWidth={3} />
               {t.kds.ready}
             </div>
