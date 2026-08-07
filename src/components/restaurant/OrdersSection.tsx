@@ -26,6 +26,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetDescription,
 } from "@/components/ui/sheet";
 
 const statusColors: Record<string, string> = {
@@ -321,6 +322,9 @@ export function OrdersSection() {
                     {(t.orders as any)[detail.status] || detail.status}
                   </Badge>
                 </SheetTitle>
+                <SheetDescription className="sr-only">
+                  {isRTL ? "تفاصيل الطلب" : "Order details"}
+                </SheetDescription>
               </SheetHeader>
               <div className="p-4 space-y-4">
                 <div className="grid grid-cols-2 gap-3 text-sm">

@@ -5,7 +5,7 @@ import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore } from "@/lib/store";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Menu, ShoppingCart, Languages, UtensilsCrossed, Phone } from "lucide-react";
 import { CartSheet } from "./CartSheet";
 import { toast } from "sonner";
@@ -81,6 +81,9 @@ export function TopBar() {
               <span className="text-2xl">🌶️</span>
               <span>{restaurantName || (isRTL ? "زعفران وبهارات" : "Saffron & Spice")}</span>
             </SheetTitle>
+            <SheetDescription className="sr-only">
+              {isRTL ? "قائمة التنقل" : "Navigation menu"}
+            </SheetDescription>
           </SheetHeader>
           <nav className="mt-6 space-y-1">
             {navItems.map((item) => (

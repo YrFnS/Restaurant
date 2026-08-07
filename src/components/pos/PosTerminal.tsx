@@ -6,10 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  LayoutGrid, Map, ShoppingCart, Languages, LogOut, Flame, Store, RefreshCw,
+  LayoutGrid, Map, ShoppingCart, Languages, LogOut, Flame, Store,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FloorPlan } from "./FloorPlan";
@@ -37,7 +35,7 @@ function createIdempotencyKey(): string {
 }
 
 export function PosTerminal() {
-  const { t, isRTL, locale, toggleLocale, fmtCurrency } = useI18n();
+  const { t, isRTL, locale, toggleLocale } = useI18n();
   const { staffName, clearStaff } = useRestaurantStore();
   const qc = useQueryClient();
 
@@ -358,21 +356,24 @@ export function PosTerminal() {
           </button>
 
           {/* Back to restaurant */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 text-white hover:bg-white/15 hover:text-white px-2"
-            asChild
+          <button
+            type="button"
+            onClick={() => window.location.assign("/")}
+            aria-label="Back to restaurant"
+            className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors h-9 text-white hover:bg-white/15 hover:text-white px-2"
           >
-            <a href="/" aria-label="Back to restaurant">
-              <Store className="size-4" />
-              <span className="hidden sm:inline ms-1">{t.app.name}</span>
-            </a>
-          </Button>
+            <Store className="size-4" />
+            <span className="hidden sm:inline ms-1">{t.app.name}</span>
+          </button>
 
           {/* Logout */}
           <button
-            onClick={() => {
+            onClick={async () => {
+              await fetch("/api/auth/logout", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+              }).catch(() => undefined);
               clearStaff();
               toast.success(t.admin.logout);
               setTimeout(() => window.location.reload(), 400);

@@ -3,7 +3,7 @@
 import { useI18n } from "@/lib/i18n";
 import { useRestaurantStore, cartSubtotal, type CartItem } from "@/lib/store";
 import { useQuery } from "@tanstack/react-query";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -242,6 +242,9 @@ export function CartSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
             {t.cart.title}
             {cart.length > 0 && <Badge variant="secondary">{cart.reduce((s, i) => s + i.quantity, 0)}</Badge>}
           </SheetTitle>
+          <SheetDescription className="sr-only">
+            {isRTL ? "تفاصيل الطلب" : "Order details"}
+          </SheetDescription>
         </SheetHeader>
 
         {cart.length === 0 ? (

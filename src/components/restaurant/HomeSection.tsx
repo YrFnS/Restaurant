@@ -522,7 +522,7 @@ function NewsletterCard() {
 }
 
 function FeedbackCard() {
-  const { t } = useI18n();
+  const { t, isRTL } = useI18n();
   const [rating, setRating] = useState(5);
   const [name, setName] = useState("");
   const [comment, setComment] = useState("");
@@ -558,7 +558,13 @@ function FeedbackCard() {
         <p className="text-sm text-muted-foreground mb-4">{t.home.feedbackDesc}</p>
         <div className="flex gap-1 mb-3">
           {[1, 2, 3, 4, 5].map((n) => (
-            <button key={n} onClick={() => setRating(n)} className="transition-transform hover:scale-110">
+            <button
+              key={n}
+              type="button"
+              aria-label={isRTL ? `${n} نجوم` : `${n} stars`}
+              onClick={() => setRating(n)}
+              className="transition-transform hover:scale-110"
+            >
               <Star className={`size-7 ${n <= rating ? "fill-primary text-primary" : "text-muted-foreground/30"}`} />
             </button>
           ))}

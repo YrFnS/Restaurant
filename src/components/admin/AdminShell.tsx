@@ -16,7 +16,7 @@ import {
 } from "@/lib/auth/roles";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import {
   LayoutDashboard,
   UtensilsCrossed,
@@ -272,7 +272,11 @@ export function AdminShell({ user }: AdminShellProps) {
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
     } finally {
       clearStaff();
       queryClient.setQueryData(["auth-session"], null);
@@ -313,6 +317,9 @@ export function AdminShell({ user }: AdminShellProps) {
           <SheetHeader className="h-16 flex flex-row items-center gap-2.5 px-5 border-b border-sidebar-border m-0">
             <span className="text-2xl">🌶️</span>
             <SheetTitle className="text-sm font-bold">{restaurantName}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {isRTL ? "قائمة الأدوات الإدارية" : "Administrative navigation"}
+            </SheetDescription>
           </SheetHeader>
           <NavList
             navItems={navItems}

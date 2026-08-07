@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import {
@@ -401,6 +401,9 @@ function ItemDetailSheet({ item, onClose }: { item: any; onClose: () => void }) 
               <X className="size-4" />
             </button>
           </div>
+          <SheetDescription className="sr-only">
+            {isRTL ? item.descriptionAr : item.descriptionEn}
+          </SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="flex-1">
