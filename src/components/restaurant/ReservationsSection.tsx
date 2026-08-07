@@ -281,7 +281,7 @@ export function ReservationsSection() {
   return (
     <div className="flex-1 max-w-5xl mx-auto w-full px-4 md:px-6 py-6">
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="ghost" size="icon" onClick={() => setActiveSection("home")}>
+        <Button variant="ghost" size="icon" aria-label={t.common.back} onClick={() => setActiveSection("home")}>
           <Arrow className="size-5" />
         </Button>
         <div>
@@ -297,21 +297,22 @@ export function ReservationsSection() {
         <Card>
           <CardContent className="p-5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label={t.reservations.yourName}>
-                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} dir="auto" />
+              <Field label={t.reservations.yourName} htmlFor="reservation-name">
+                <Input id="reservation-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} dir="auto" />
               </Field>
-              <Field label={t.reservations.phone}>
-                <Input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} dir="ltr" />
+              <Field label={t.reservations.phone} htmlFor="reservation-phone">
+                <Input id="reservation-phone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} dir="ltr" />
               </Field>
             </div>
 
-            <Field label={t.reservations.email}>
-              <Input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} dir="ltr" />
+            <Field label={t.reservations.email} htmlFor="reservation-email">
+              <Input id="reservation-email" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} dir="ltr" />
             </Field>
 
             <div className="grid grid-cols-2 gap-3">
-              <Field label={t.reservations.partySize} icon={<Users className="size-3" />}>
+              <Field label={t.reservations.partySize} htmlFor="reservation-party-size" icon={<Users className="size-3" />}>
                 <Input
+                  id="reservation-party-size"
                   type="number"
                   min={availability?.policy.minPartySize || 1}
                   max={availability?.policy.maxPartySize || 100}
@@ -321,8 +322,9 @@ export function ReservationsSection() {
                   }
                 />
               </Field>
-              <Field label={t.reservations.date}>
+              <Field label={t.reservations.date} htmlFor="reservation-date">
                 <Input
+                  id="reservation-date"
                   type="date"
                   value={form.date}
                   min={availability?.policy.earliestDate || dateInTimezone(timezone)}
@@ -366,7 +368,7 @@ export function ReservationsSection() {
                       }`}
                     >
                       <span className="block">{slot.time}</span>
-                      <span className="block text-[9px] opacity-70">
+                      <span className="block text-[10px]">
                         {slot.availableTableCount} {isRTL ? "متاح" : "available"}
                       </span>
                     </button>
@@ -444,8 +446,8 @@ export function ReservationsSection() {
   );
 }
 
-function Field({ label, icon, children }: { label: React.ReactNode; icon?: React.ReactNode; children: React.ReactNode }) {
-  return <div><label className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">{icon}{label}</label>{children}</div>;
+function Field({ label, htmlFor, icon, children }: { label: React.ReactNode; htmlFor: string; icon?: React.ReactNode; children: React.ReactNode }) {
+  return <div><label htmlFor={htmlFor} className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">{icon}{label}</label>{children}</div>;
 }
 
 function ChoiceGroup({ label, items, selected, onSelect }: { label: React.ReactNode; items: Array<{ id: string; label: string }>; selected: string; onSelect: (value: string) => void }) {
