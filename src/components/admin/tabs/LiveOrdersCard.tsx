@@ -131,7 +131,6 @@ export function LiveOrdersCard() {
           <div
             className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1"
             tabIndex={0}
-            aria-label={isRTL ? "الطلبات المباشرة" : "Live orders"}
           >
             <AnimatePresence initial={false}>
               {activeOrders.map((order) => {
