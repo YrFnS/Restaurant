@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "../shared";
 import {
-  Bell, BellOff, Volume2, Clock, ChefHat, Package, CheckCircle2,
-  XCircle, ShoppingBag, Flame, ArrowRight, ArrowLeft,
+  BellOff, Volume2, Clock, ChefHat, Package, CheckCircle2,
+  XCircle, ShoppingBag, ArrowRight, ArrowLeft,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -18,9 +18,9 @@ import Link from "next/link";
 const statusMeta: Record<string, { color: string; bg: string; icon: any }> = {
   pending: { color: "text-zinc-600", bg: "bg-zinc-100 dark:bg-zinc-800", icon: Clock },
   confirmed: { color: "text-blue-600", bg: "bg-blue-100 dark:bg-blue-950", icon: CheckCircle2 },
-  preparing: { color: "text-amber-600", bg: "bg-amber-100 dark:bg-amber-950", icon: ChefHat },
-  ready: { color: "text-green-600", bg: "bg-green-100 dark:bg-green-950", icon: Package },
-  completed: { color: "text-emerald-600", bg: "bg-emerald-100 dark:bg-emerald-950", icon: CheckCircle2 },
+  preparing: { color: "text-amber-700", bg: "bg-amber-100 dark:bg-amber-950", icon: ChefHat },
+  ready: { color: "text-green-700", bg: "bg-green-100 dark:bg-green-950", icon: Package },
+  completed: { color: "text-emerald-700", bg: "bg-emerald-100 dark:bg-emerald-950", icon: CheckCircle2 },
   cancelled: { color: "text-red-600", bg: "bg-red-100 dark:bg-red-950", icon: XCircle },
 };
 
@@ -63,7 +63,9 @@ export function LiveOrdersCard() {
         osc.start(now + i * 0.18);
         osc.stop(now + i * 0.18 + 0.18);
       });
-    } catch {}
+    } catch {
+      return;
+    }
   }, []);
 
   // Detect new orders and play sound
@@ -126,7 +128,11 @@ export function LiveOrdersCard() {
         {activeOrders.length === 0 ? (
           <EmptyState icon={<ShoppingBag className="size-5" />} title={isRTL ? "لا طلبات نشطة" : "No active orders"} />
         ) : (
-          <div className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1">
+          <div
+            className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1"
+            tabIndex={0}
+            aria-label={isRTL ? "الطلبات المباشرة" : "Live orders"}
+          >
             <AnimatePresence initial={false}>
               {activeOrders.map((order) => {
                 const meta = statusMeta[order.status] || statusMeta.confirmed;

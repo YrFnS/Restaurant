@@ -270,7 +270,11 @@ export function DashboardTab() {
             {topItems.length === 0 ? (
               <EmptyState icon={<ChefHat className="size-5" />} title={isRTL ? "لا بيانات" : "No data yet"} />
             ) : (
-              <div className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1">
+              <div
+                className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1"
+                tabIndex={0}
+                aria-label={isRTL ? "الأصناف الأكثر مبيعاً" : "Top selling items"}
+              >
                 {topItems.map((item: any, i: number) => (
                   <div key={i} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/40">
                     <div className="size-7 rounded-md bg-primary/10 text-primary font-bold text-xs flex items-center justify-center">
@@ -306,7 +310,11 @@ export function DashboardTab() {
                 description={isRTL ? "كل المخزون في مستوى جيد" : "All inventory levels are healthy"}
               />
             ) : (
-              <div className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1">
+              <div
+                className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1"
+                tabIndex={0}
+                aria-label={isRTL ? "تنبيهات المخزون" : "Low stock alerts"}
+              >
                 {lowStock.map((inv: any) => (
                   <div key={inv.id} className="flex items-center gap-3 p-2 rounded-lg bg-red-50/50 border border-red-100">
                     <div className="size-8 rounded-md bg-red-100 text-red-700 flex items-center justify-center text-xs font-bold">
