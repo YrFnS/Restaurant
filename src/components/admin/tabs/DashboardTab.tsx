@@ -273,6 +273,7 @@ export function DashboardTab() {
               <div
                 className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1"
                 tabIndex={0}
+                role="region"
                 aria-label={isRTL ? "الأصناف الأكثر مبيعاً" : "Top selling items"}
               >
                 {topItems.map((item: any, i: number) => (
@@ -313,6 +314,7 @@ export function DashboardTab() {
               <div
                 className="space-y-2 max-h-72 overflow-y-auto scroll-thin pe-1"
                 tabIndex={0}
+                role="region"
                 aria-label={isRTL ? "تنبيهات المخزون" : "Low stock alerts"}
               >
                 {lowStock.map((inv: any) => (
