@@ -91,6 +91,7 @@ function createPrismaClient() {
   return new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
     omit: exactFinancialFieldOmit,
+    transactionOptions: { maxWait: 10_000, timeout: 30_000 },
   });
 }
 
