@@ -208,17 +208,17 @@ export function MenuBrowser({ onAddItem, onItemNeedsModifiers }: MenuBrowserProp
                     {/* Badges */}
                     <div className="absolute top-1.5 start-1.5 flex flex-col gap-1">
                       {item.isPopular && (
-                        <Badge className="bg-amber-500 hover:bg-amber-500 text-white text-[10px] px-1.5 py-0 h-5 gap-0.5">
+                        <Badge className="bg-amber-700 hover:bg-amber-700 text-white text-[10px] px-1.5 py-0 h-5 gap-0.5">
                           <Flame className="size-2.5" /> {t.menu.popular}
                         </Badge>
                       )}
                       {item.isSpecial && (
-                        <Badge className="bg-rose-500 hover:bg-rose-500 text-white text-[10px] px-1.5 py-0 h-5 gap-0.5">
+                        <Badge className="bg-rose-700 hover:bg-rose-700 text-white text-[10px] px-1.5 py-0 h-5 gap-0.5">
                           <Sparkles className="size-2.5" /> {t.menu.special}
                         </Badge>
                       )}
                       {item.isNew && (
-                        <Badge className="bg-emerald-500 hover:bg-emerald-500 text-white text-[10px] px-1.5 py-0 h-5">
+                        <Badge className="bg-emerald-700 hover:bg-emerald-700 text-white text-[10px] px-1.5 py-0 h-5">
                           {t.menu.new}
                         </Badge>
                       )}
@@ -300,7 +300,7 @@ function CatTab({
     >
       <span className="text-base leading-none">{icon}</span>
       {label}
-      <span className={`text-xs tabular-nums ${active ? "opacity-80" : "text-muted-foreground"}`}>
+      <span className={`text-xs tabular-nums ${active ? "text-primary-foreground" : "text-muted-foreground"}`}>
         {count}
       </span>
     </button>
