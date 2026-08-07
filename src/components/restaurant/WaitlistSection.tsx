@@ -252,6 +252,7 @@ export function WaitlistSection() {
         <Button
           variant="ghost"
           size="icon"
+          aria-label={t.common.back}
           onClick={() => setActiveSection("home")}
         >
           <Arrow className="size-5" />
@@ -419,10 +420,14 @@ export function WaitlistSection() {
               <CardContent className="p-5 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-semibold text-muted-foreground mb-1 block">
+                    <label
+                      htmlFor="waitlist-name"
+                      className="text-xs font-semibold text-muted-foreground mb-1 block"
+                    >
                       {t.waitlist.yourName}
                     </label>
                     <Input
+                      id="waitlist-name"
                       value={form.name}
                       onChange={(event) =>
                         setForm({ ...form, name: event.target.value })
@@ -431,10 +436,14 @@ export function WaitlistSection() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-muted-foreground mb-1 block">
+                    <label
+                      htmlFor="waitlist-phone"
+                      className="text-xs font-semibold text-muted-foreground mb-1 block"
+                    >
                       {t.waitlist.phone}
                     </label>
                     <Input
+                      id="waitlist-phone"
                       value={form.phone}
                       onChange={(event) =>
                         setForm({ ...form, phone: event.target.value })
@@ -475,7 +484,11 @@ export function WaitlistSection() {
                       setForm({ ...form, preference })
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger
+                      aria-label={
+                        isRTL ? "تفضيل الجلوس" : "Seating preference"
+                      }
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
