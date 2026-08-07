@@ -206,7 +206,7 @@ export function KdsTicket({
   const itemBgReady = isDark ? "bg-emerald-900/30" : "bg-emerald-50";
   const itemBgPrep = isDark ? "bg-sky-900/30" : "bg-sky-50";
   const itemBgPending = isDark ? "bg-zinc-900/40" : "bg-zinc-50";
-  const modNo = isDark ? "text-red-300" : "text-red-600";
+  const modNo = isDark ? "text-red-300" : "text-red-700";
   const modExtra = isDark ? "text-amber-300" : "text-amber-700";
   const modDefault = isDark ? "text-zinc-300" : "text-zinc-600";
   const notesColor = isDark ? "text-amber-200" : "text-amber-700";
@@ -307,7 +307,7 @@ export function KdsTicket({
                       <span
                         className={cn(
                           "shrink-0 inline-flex items-center justify-center rounded-md font-black text-xl sm:text-2xl tabular-nums px-2 py-0.5",
-                          itemReady ? "bg-emerald-500 text-white" : "bg-primary text-primary-foreground"
+                          itemReady ? "bg-emerald-700 text-white" : "bg-primary text-primary-foreground"
                         )}
                       >
                         {it.quantity}×
@@ -316,7 +316,7 @@ export function KdsTicket({
                         <div
                           className={cn(
                             "text-lg sm:text-xl font-semibold leading-tight",
-                            itemReady && (isDark ? "line-through text-zinc-500" : "line-through text-zinc-400")
+                            itemReady && (isDark ? "line-through text-zinc-500" : "line-through text-zinc-600")
                           )}
                         >
                           {nameOf(it.menuItem)}
@@ -348,7 +348,7 @@ export function KdsTicket({
                           <div className={cn("mt-1 text-sm italic", notesColor)}>“{it.notes}”</div>
                         )}
                         {it.seatNumber != null && (
-                          <div className={cn("mt-0.5 text-xs", isDark ? "text-zinc-400" : "text-zinc-500")}>
+                          <div className={cn("mt-0.5 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
                             {isRTL ? `مقعد ${it.seatNumber}` : `Seat ${it.seatNumber}`}
                           </div>
                         )}
@@ -359,13 +359,13 @@ export function KdsTicket({
                           onClick={(e) => { e.stopPropagation(); patch({ itemId: it.id, status: "ready" }); }}
                           disabled={busy}
                           aria-label="Bump item"
-                          className="shrink-0 size-11 sm:size-12 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-white flex items-center justify-center transition-colors disabled:opacity-50 shadow-sm"
+                          className="shrink-0 size-11 sm:size-12 rounded-lg bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white flex items-center justify-center transition-colors disabled:opacity-50 shadow-sm"
                         >
                           <Check className="size-6" strokeWidth={3} />
                         </button>
                       )}
                       {itemReady && (
-                        <span className="shrink-0 size-11 sm:size-12 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                        <span className="shrink-0 size-11 sm:size-12 rounded-lg bg-emerald-500/15 text-emerald-700 flex items-center justify-center">
                           <Check className="size-6" strokeWidth={3} />
                         </span>
                       )}

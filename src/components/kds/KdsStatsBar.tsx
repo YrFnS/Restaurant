@@ -45,7 +45,7 @@ export function KdsStatsBar({ orders, settings, totalToday = 0, connected = fals
     { key: "preparing", label: t.kds.preparing, value: preparing, icon: Clock,
       color: isDark ? "text-sky-300" : "text-sky-600", bg: isDark ? "bg-sky-500/10" : "bg-sky-50", border: isDark ? "border-sky-500/20" : "border-sky-200" },
     { key: "ready", label: t.kds.readyOrders, value: ready, icon: CheckCircle2,
-      color: isDark ? "text-emerald-300" : "text-emerald-600", bg: isDark ? "bg-emerald-500/10" : "bg-emerald-50", border: isDark ? "border-emerald-500/20" : "border-emerald-200" },
+      color: isDark ? "text-emerald-300" : "text-emerald-700", bg: isDark ? "bg-emerald-500/10" : "bg-emerald-50", border: isDark ? "border-emerald-500/20" : "border-emerald-200" },
     { key: "late", label: t.kds.lateCount, value: late, icon: AlertTriangle,
       color: isDark ? "text-red-300" : "text-red-600", bg: isDark ? "bg-red-500/10" : "bg-red-50", border: isDark ? "border-red-500/20" : "border-red-200" },
     { key: "total", label: t.kds.totalToday, value: totalToday, icon: ListOrdered,
