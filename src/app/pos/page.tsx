@@ -1,10 +1,10 @@
-import { redirect } from "next/navigation";
 import { PosTerminal } from "@/components/pos/PosTerminal";
 import { RegisterSessionControl } from "@/components/pos/RegisterSessionControl";
-import { getStaffSession } from "@/lib/auth/session";
+import { requireStaffPage } from "@/lib/auth/page-guard";
+import { ORDER_MANAGEMENT_ROLES } from "@/lib/auth/roles";
 
 export default async function PosPage() {
-  if (!(await getStaffSession())) redirect("/admin?next=%2Fpos");
+  await requireStaffPage("/pos", ORDER_MANAGEMENT_ROLES);
 
   return (
     <>
