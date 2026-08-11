@@ -110,10 +110,6 @@ const protectedPages = [
   { path: "/kds/grill", roles: KDS_ROLES },
 ];
 
-function isRedirectStatus(status) {
-  return [301, 302, 303, 307, 308].includes(status);
-}
-
 async function login(page, expectedRole) {
   await page.goto(`${BASE_URL}/admin`, { waitUntil: "domcontentloaded" });
   const pinInput = page.locator("#staff-pin");
@@ -146,7 +142,7 @@ test.use({
   video: "retain-on-failure",
 });
 
-test("public storefront hydrates seeded Neon data", async ({ page, context }) => {
+test("public storefront hydrates seeded database data", async ({ page, context }) => {
   const serverErrors = [];
   page.on("response", (response) => {
     if (response.status() >= 500) {
@@ -177,6 +173,57 @@ test("public storefront hydrates seeded Neon data", async ({ page, context }) =>
   expect(serverErrors).toEqual([]);
 });
 
+test("guest can place and securely track a takeout order", async ({ page }) => {
+  const serverErrors = [];
+  const pageErrors = [];
+
+  page.on("response", (response) => {
+    if (response.status() >= 500) {
+      serverErrors.push(`${response.status()} ${response.request().method()} ${response.url()}`);
+    }
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  const storefrontSidebar = page.locator("aside").first();
+  await storefrontSidebar.getByRole("button", { name: "Menu", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Our Menu", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const addToCart = page.getByRole("button", { name: "Add to Cart", exact: true }).first();
+  await expect(addToCart).toBeVisible({ timeout: 30_000 });
+  await addToCart.click();
+
+  await storefrontSidebar.getByRole("button", { name: /^Cart\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Your Cart", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Takeout", exact: true }).click();
+  await page.getByPlaceholder("Your Name").fill("E2E Guest");
+  await page.getByPlaceholder("Phone Number").fill("+9647700000000");
+
+  const orderResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/orders") &&
+      response.request().method() === "POST"
+  );
+  await page.getByRole("button", { name: /^Place Order\b/ }).click();
+
+  const orderResponse = await orderResponsePromise;
+  const orderBody = await orderResponse.json().catch(() => null);
+  expect(orderResponse.ok(), JSON.stringify(orderBody)).toBe(true);
+  expect(orderBody?.order?.orderNumber).toBeTruthy();
+  expect(orderBody?.accessToken).toBeTruthy();
+
+  await page.waitForURL(/\/track\/[^?]+\?token=/, { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Track Your Order", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  expect(serverErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
+
 test("inactive employee cannot authenticate", async ({ page }) => {
   await page.goto(`${BASE_URL}/admin`, { waitUntil: "domcontentloaded" });
   const pinInput = page.locator("#staff-pin");
@@ -197,7 +244,6 @@ test("inactive employee cannot authenticate", async ({ page }) => {
 for (const role of roles) {
   test(`${role.role}: login, navigation, APIs, and direct-route authorization`, async ({
     page,
-    context,
   }) => {
     const serverErrors = [];
     const pageErrors = [];
@@ -247,27 +293,38 @@ for (const role of roles) {
       .toBe(INVENTORY_ROLES.includes(role.role) ? 200 : 403);
 
     for (const protectedPage of protectedPages) {
-      const response = await context.request.get(`${BASE_URL}${protectedPage.path}`, {
-        maxRedirects: 0,
+      await page.goto(`${BASE_URL}${protectedPage.path}`, {
+        waitUntil: "domcontentloaded",
       });
+      const currentUrl = new URL(page.url());
       const allowed = protectedPage.roles.includes(role.role);
-      const status = response.status();
-      const location = response.headers().location || "";
 
       if (allowed) {
         await expect
-          .soft(status, `${role.role} should access ${protectedPage.path}`)
-          .toBe(200);
+          .soft(
+            currentUrl.pathname,
+            `${role.role} should access ${protectedPage.path}`
+          )
+          .toBe(protectedPage.path);
       } else {
         await expect
           .soft(
-            isRedirectStatus(status),
-            `${role.role} should be redirected away from ${protectedPage.path}; got ${status}`
+            currentUrl.pathname,
+            `${role.role} should be redirected away from ${protectedPage.path}`
           )
-          .toBe(true);
+          .toBe("/admin");
         await expect
-          .soft(location, `${role.role} redirect target for ${protectedPage.path}`)
-          .toMatch(/^\/admin\?.*error=/);
+          .soft(
+            currentUrl.searchParams.get("error"),
+            `${role.role} redirect error for ${protectedPage.path}`
+          )
+          .toBe("access_denied");
+        await expect
+          .soft(
+            currentUrl.searchParams.get("from"),
+            `${role.role} redirect source for ${protectedPage.path}`
+          )
+          .toBe(protectedPage.path);
       }
     }
 
