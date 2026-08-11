@@ -115,7 +115,7 @@ jobs:
           mkdir -p /tmp/restaurant-e2e
           cd /tmp/restaurant-e2e
           npm init -y >/dev/null
-          npm install --save-dev @playwright/test@1.55.0
+          npm install --save-dev @playwright/test@1.62.1
           npx playwright install --with-deps chromium
           cp "$GITHUB_WORKSPACE/tests/e2e/production-role-matrix.spec.mjs" ./
 
