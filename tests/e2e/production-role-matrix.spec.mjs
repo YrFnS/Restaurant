@@ -12,9 +12,9 @@ const KDS_ROLES = [...MANAGEMENT_ROLES, "server", "cook", "bartender"];
 
 const ALL_NAV_LABELS = [
   "Dashboard",
-  "Menu",
+  "Menu Management",
   "Orders",
-  "Tables",
+  "Tables & Floor",
   "Reservations",
   "Waitlist",
   "Staff",
@@ -48,13 +48,13 @@ const roles = [
     role: "cashier",
     name: "Carla Cashier",
     pin: "7777",
-    nav: ["Orders", "Tables"],
+    nav: ["Orders", "Tables & Floor"],
   },
   {
     role: "server",
     name: "Sarah",
     pin: "1111",
-    nav: ["Orders", "Tables"],
+    nav: ["Orders", "Tables & Floor"],
   },
   {
     role: "cook",
@@ -72,7 +72,7 @@ const roles = [
     role: "host",
     name: "Hassan",
     pin: "6666",
-    nav: ["Tables", "Reservations", "Waitlist"],
+    nav: ["Tables & Floor", "Reservations", "Waitlist"],
   },
   {
     role: "inventory_manager",
@@ -145,8 +145,6 @@ test.use({
   trace: "retain-on-failure",
   video: "retain-on-failure",
 });
-
-test.describe.configure({ mode: "serial" });
 
 test("public storefront hydrates seeded Neon data", async ({ page, context }) => {
   const serverErrors = [];
