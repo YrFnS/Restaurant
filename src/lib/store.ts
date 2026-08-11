@@ -307,6 +307,8 @@ export const useRestaurantStore = create<RestaurantState>()(
         customerName: state.customerName,
         customerPhone: state.customerPhone,
       }),
+      // Persisted browser state must not replace the server snapshot during hydration.
+      skipHydration: true,
     }
   )
 );
