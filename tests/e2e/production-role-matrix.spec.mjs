@@ -202,9 +202,8 @@ test("guest can place and securely track a takeout order", async ({ page }) => {
   await addToCart.click();
 
   await storefrontSidebar.getByRole("button", { name: /^Cart\b/ }).click();
-  const cartSheet = page.getByRole("dialog");
+  const cartSheet = page.getByRole("dialog", { name: /^Your Cart/ });
   await expect(cartSheet).toBeVisible();
-  await expect(cartSheet.getByText("Your Cart", { exact: true })).toBeVisible();
   await cartSheet.getByRole("button", { name: "Takeout", exact: true }).click();
   await cartSheet.getByPlaceholder("Your Name").fill("E2E Guest");
   await cartSheet.getByPlaceholder("Phone Number").fill("+9647700000000");
