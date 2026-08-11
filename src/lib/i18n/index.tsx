@@ -16,14 +16,27 @@ type Translations = typeof en;
 
 const translations: Record<Locale, Translations> = { en, ar };
 
-function getInitialLocale(): Locale {
+function getBrowserLocale(): Locale {
   if (typeof window === "undefined") return "en";
-  const saved = localStorage.getItem("rs-locale");
-  if (saved === "en" || saved === "ar") return saved;
-  // detect browser language
-  const nav = navigator.language.toLowerCase();
-  if (nav.startsWith("ar")) return "ar";
-  return "en";
+
+  try {
+    const saved = window.localStorage.getItem("rs-locale");
+    if (saved === "en" || saved === "ar") return saved;
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+
+  const browserLanguage =
+    typeof navigator === "undefined" ? "" : navigator.language.toLowerCase();
+  return browserLanguage.startsWith("ar") ? "ar" : "en";
+}
+
+function persistLocale(locale: Locale) {
+  try {
+    window.localStorage.setItem("rs-locale", locale);
+  } catch {
+    // The language still changes for this session when storage is unavailable.
+  }
 }
 
 interface I18nContextType {
@@ -56,9 +69,16 @@ const I18nContext = createContext<I18nContextType>({
 });
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(getInitialLocale);
+  // Keep the server and the client's first render identical. Browser preferences
+  // are restored only after React has attached to the server-rendered HTML.
+  const [locale, setLocaleState] = useState<Locale>("en");
   const [currency, setCurrency] = useState<string>("USD");
   const [currencySymbol, setCurrencySymbol] = useState<string>("$");
+
+  useEffect(() => {
+    const browserLocale = getBrowserLocale();
+    if (browserLocale !== "en") setLocaleState(browserLocale);
+  }, []);
 
   // Fetch restaurant settings for currency
   useEffect(() => {
@@ -80,13 +100,13 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale);
-    localStorage.setItem("rs-locale", newLocale);
+    persistLocale(newLocale);
   }, []);
 
   const toggleLocale = useCallback(() => {
     setLocaleState((prev) => {
       const next = prev === "en" ? "ar" : "en";
-      localStorage.setItem("rs-locale", next);
+      persistLocale(next);
       return next;
     });
   }, []);
