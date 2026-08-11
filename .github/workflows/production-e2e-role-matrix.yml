@@ -1,0 +1,72 @@
+name: Production E2E Role Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Deployed Restaurant URL to test
+        required: false
+        default: https://restaurant-sage-eta.vercel.app
+  push:
+    branches:
+      - agent/e2e-all-roles-20260811
+    paths:
+      - .github/workflows/production-e2e-role-matrix.yml
+      - tests/e2e/production-role-matrix.spec.mjs
+      - src/**
+      - prisma/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-e2e-role-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: "1"
+      E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://restaurant-sage-eta.vercel.app' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install isolated Playwright runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/restaurant-e2e
+          mkdir -p /tmp/restaurant-e2e
+          cd /tmp/restaurant-e2e
+          npm init -y >/dev/null
+          npm install --save-dev @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+          cp "$GITHUB_WORKSPACE/tests/e2e/production-role-matrix.spec.mjs" ./
+
+      - name: Run production role matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/restaurant-e2e
+          npx playwright test production-role-matrix.spec.mjs \
+            --workers=1 \
+            --reporter=line
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restaurant-production-e2e-${{ github.run_id }}
+          path: |
+            /tmp/restaurant-e2e/test-results
+            /tmp/restaurant-e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
