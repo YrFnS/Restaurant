@@ -1,12 +1,7 @@
-name: Production E2E Role Matrix
+name: E2E Role Matrix
 
 on:
   workflow_dispatch:
-    inputs:
-      base_url:
-        description: Deployed Restaurant URL to test
-        required: false
-        default: https://restaurant-sage-eta.vercel.app
   push:
     branches:
       - agent/e2e-all-roles-20260811
@@ -20,24 +15,81 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-e2e-role-matrix-${{ github.ref }}
+  group: e2e-role-matrix-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   browser-e2e:
+    name: Browser matrix across every staff role
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: restaurant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U e2e -d restaurant"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     env:
       CI: "1"
-      E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://restaurant-sage-eta.vercel.app' }}
+      DATABASE_URL: "postgresql://e2e:e2e@127.0.0.1:5432/restaurant?sslmode=disable"
+      AUTH_SECRET: "e2e-session-secret-0123456789abcdef0123456789abcdef"
+      AUTH_PIN_PEPPER: "e2e-pin-pepper-0123456789abcdef0123456789abcdef"
+      AUTH_ORDER_ACCESS_SECRET: "e2e-order-access-0123456789abcdef0123456789abcdef"
+      AUTH_CUSTOMER_ACCESS_SECRET: "e2e-customer-access-0123456789abcdef0123456789abcdef"
+      RATE_LIMIT_SECRET: "e2e-rate-limit-secret-0123456789abcdef0123456789abcdef"
+      KDS_OUTBOX_SECRET: "e2e-kds-outbox-secret-0123456789abcdef0123456789abcdef"
+      AUTH_SESSION_TTL_SECONDS: "28800"
+      AUTH_SESSION_IDLE_SECONDS: "1800"
+      APP_ALLOWED_ORIGINS: "http://127.0.0.1:3000"
+      NEXTAUTH_SECRET: "e2e-nextauth-secret-0123456789abcdef0123456789abcdef"
+      NEXTAUTH_URL: "http://127.0.0.1:3000"
+      KDS_REALTIME_URL: "http://127.0.0.1:3003/broadcast"
+      NEXT_PUBLIC_KDS_PORT: "3003"
+      E2E_BASE_URL: "http://127.0.0.1:3000"
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install locked application dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Prepare isolated database
+        run: |
+          bun run db:generate
+          bun run db:deploy
+          bun run db:seed
+          bun run auth:check-pins
+          bun run money:check
+
+      - name: Build production application
+        env:
+          NODE_ENV: production
+        run: |
+          bun run build
+          cp -R public .next/standalone/public
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
 
       - name: Install isolated Playwright runtime
         shell: bash
@@ -51,22 +103,76 @@ jobs:
           npx playwright install --with-deps chromium
           cp "$GITHUB_WORKSPACE/tests/e2e/production-role-matrix.spec.mjs" ./
 
-      - name: Run production role matrix
+      - name: Run browser role matrix
         shell: bash
         run: |
           set -euo pipefail
+
+          bun tests/integration/kds-mock.ts > /tmp/kds-mock.log 2>&1 &
+          kds_pid=$!
+          PORT=3000 HOSTNAME=127.0.0.1 NODE_ENV=production \
+            bun .next/standalone/server.js > /tmp/e2e-server.log 2>&1 &
+          server_pid=$!
+
+          cleanup() {
+            status=$?
+            kill "$server_pid" "$kds_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+            wait "$kds_pid" 2>/dev/null || true
+            if [ "$status" -ne 0 ]; then
+              echo "--- production server log ---"
+              cat /tmp/e2e-server.log || true
+              echo "--- KDS mock log ---"
+              cat /tmp/kds-mock.log || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3003/health >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$kds_pid" 2>/dev/null; then
+              echo "KDS mock exited before becoming ready."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          app_ready=0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/api >/dev/null; then
+              app_ready=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "Production server exited before becoming ready."
+              cat /tmp/e2e-server.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$app_ready" -ne 1 ]; then
+            echo "Production server did not become ready."
+            exit 1
+          fi
+
           cd /tmp/restaurant-e2e
           npx playwright test production-role-matrix.spec.mjs \
             --workers=1 \
             --reporter=line
 
-      - name: Upload browser evidence
+      - name: Upload browser evidence and server logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: restaurant-production-e2e-${{ github.run_id }}
+          name: restaurant-e2e-role-matrix-${{ github.run_id }}
           path: |
             /tmp/restaurant-e2e/test-results
             /tmp/restaurant-e2e/playwright-report
+            /tmp/e2e-server.log
+            /tmp/kds-mock.log
           if-no-files-found: ignore
           retention-days: 14
