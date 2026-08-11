@@ -7,6 +7,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useSyncExternalStore,
 } from "react";
 import en from "./locales/en.json";
 import ar from "./locales/ar.json";
@@ -15,12 +16,16 @@ export type Locale = "en" | "ar";
 type Translations = typeof en;
 
 const translations: Record<Locale, Translations> = { en, ar };
+const LOCALE_STORAGE_KEY = "rs-locale";
+const LOCALE_CHANGE_EVENT = "rs-locale-change";
+let sessionLocale: Locale | null = null;
 
-function getBrowserLocale(): Locale {
+function getBrowserLocaleSnapshot(): Locale {
   if (typeof window === "undefined") return "en";
+  if (sessionLocale) return sessionLocale;
 
   try {
-    const saved = window.localStorage.getItem("rs-locale");
+    const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     if (saved === "en" || saved === "ar") return saved;
   } catch {
     // Storage can be unavailable in hardened/private browser contexts.
@@ -31,12 +36,31 @@ function getBrowserLocale(): Locale {
   return browserLanguage.startsWith("ar") ? "ar" : "en";
 }
 
+function getServerLocaleSnapshot(): Locale {
+  return "en";
+}
+
+function subscribeToLocale(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(LOCALE_CHANGE_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(LOCALE_CHANGE_EVENT, onStoreChange);
+  };
+}
+
 function persistLocale(locale: Locale) {
+  sessionLocale = locale;
+
   try {
-    window.localStorage.setItem("rs-locale", locale);
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
   } catch {
     // The language still changes for this session when storage is unavailable.
   }
+
+  window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
 }
 
 interface I18nContextType {
@@ -69,16 +93,15 @@ const I18nContext = createContext<I18nContextType>({
 });
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  // Keep the server and the client's first render identical. Browser preferences
-  // are restored only after React has attached to the server-rendered HTML.
-  const [locale, setLocaleState] = useState<Locale>("en");
+  // useSyncExternalStore supplies the deterministic server snapshot during
+  // hydration, then restores the browser preference after React has attached.
+  const locale = useSyncExternalStore(
+    subscribeToLocale,
+    getBrowserLocaleSnapshot,
+    getServerLocaleSnapshot
+  );
   const [currency, setCurrency] = useState<string>("USD");
   const [currencySymbol, setCurrencySymbol] = useState<string>("$");
-
-  useEffect(() => {
-    const browserLocale = getBrowserLocale();
-    if (browserLocale !== "en") setLocaleState(browserLocale);
-  }, []);
 
   // Fetch restaurant settings for currency
   useEffect(() => {
@@ -99,17 +122,12 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   }, [locale]);
 
   const setLocale = useCallback((newLocale: Locale) => {
-    setLocaleState(newLocale);
     persistLocale(newLocale);
   }, []);
 
   const toggleLocale = useCallback(() => {
-    setLocaleState((prev) => {
-      const next = prev === "en" ? "ar" : "en";
-      persistLocale(next);
-      return next;
-    });
-  }, []);
+    persistLocale(locale === "en" ? "ar" : "en");
+  }, [locale]);
 
   const dir: "ltr" | "rtl" = locale === "ar" ? "rtl" : "ltr";
   const isRTL = locale === "ar";
