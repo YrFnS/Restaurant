@@ -216,9 +216,12 @@ test("guest can place and securely track a takeout order", async ({ page }) => {
   expect(orderBody?.accessToken).toBeTruthy();
 
   await page.waitForURL(/\/track\/[^?]+\?token=/, { timeout: 30_000 });
-  await expect(page.getByRole("heading", { name: "Track Your Order", exact: true })).toBeVisible({
+  await expect(page.getByText("Order Number", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
+  await expect(
+    page.getByText(orderBody.order.orderNumber, { exact: true })
+  ).toBeVisible({ timeout: 30_000 });
 
   expect(serverErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
