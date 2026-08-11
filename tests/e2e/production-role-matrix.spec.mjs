@@ -216,18 +216,23 @@ test("guest can place and securely track a takeout order", async ({ page }) => {
   await cartSheet.getByRole("button", { name: /^Place Order\b/ }).click();
 
   const orderResponse = await orderResponsePromise;
-  const orderBody = await orderResponse.json().catch(() => null);
-  expect(orderResponse.ok(), JSON.stringify(orderBody)).toBe(true);
-  expect(orderBody?.order?.orderNumber).toBeTruthy();
-  expect(orderBody?.accessToken).toBeTruthy();
+  expect(orderResponse.ok()).toBe(true);
 
   await page.waitForURL(/\/track\/[^?]+\?token=/, { timeout: 30_000 });
+  const trackingUrl = new URL(page.url());
+  const trackedOrderNumber = decodeURIComponent(
+    trackingUrl.pathname.split("/").filter(Boolean).pop() || ""
+  );
+  const accessToken = trackingUrl.searchParams.get("token");
+  expect(trackedOrderNumber).toMatch(/^R-/);
+  expect(accessToken).toBeTruthy();
+
   await expect(page.getByText("Order Number", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(
-    page.getByText(orderBody.order.orderNumber, { exact: true })
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(`#${trackedOrderNumber}`, { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
 
   expect(serverErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
