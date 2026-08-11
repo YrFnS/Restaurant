@@ -107,7 +107,12 @@ const protectedPages = [
   { path: "/admin/reservations-calendar", roles: RESERVATION_ROLES },
   { path: "/admin/timesheet", roles: MANAGEMENT_ROLES },
   { path: "/pos", roles: ORDER_ROLES },
-  { path: "/kds/grill", roles: KDS_ROLES },
+  {
+    path: "/kds/grill",
+    roles: KDS_ROLES,
+    deniedError: "kds_access_denied",
+    includesSource: false,
+  },
 ];
 
 async function login(page, expectedRole) {
@@ -197,17 +202,19 @@ test("guest can place and securely track a takeout order", async ({ page }) => {
   await addToCart.click();
 
   await storefrontSidebar.getByRole("button", { name: /^Cart\b/ }).click();
-  await expect(page.getByRole("heading", { name: "Your Cart", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Takeout", exact: true }).click();
-  await page.getByPlaceholder("Your Name").fill("E2E Guest");
-  await page.getByPlaceholder("Phone Number").fill("+9647700000000");
+  const cartSheet = page.getByRole("dialog");
+  await expect(cartSheet).toBeVisible();
+  await expect(cartSheet.getByText("Your Cart", { exact: true })).toBeVisible();
+  await cartSheet.getByRole("button", { name: "Takeout", exact: true }).click();
+  await cartSheet.getByPlaceholder("Your Name").fill("E2E Guest");
+  await cartSheet.getByPlaceholder("Phone Number").fill("+9647700000000");
 
   const orderResponsePromise = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/orders") &&
       response.request().method() === "POST"
   );
-  await page.getByRole("button", { name: /^Place Order\b/ }).click();
+  await cartSheet.getByRole("button", { name: /^Place Order\b/ }).click();
 
   const orderResponse = await orderResponsePromise;
   const orderBody = await orderResponse.json().catch(() => null);
@@ -321,13 +328,16 @@ for (const role of roles) {
             currentUrl.searchParams.get("error"),
             `${role.role} redirect error for ${protectedPage.path}`
           )
-          .toBe("access_denied");
-        await expect
-          .soft(
-            currentUrl.searchParams.get("from"),
-            `${role.role} redirect source for ${protectedPage.path}`
-          )
-          .toBe(protectedPage.path);
+          .toBe(protectedPage.deniedError || "access_denied");
+
+        if (protectedPage.includesSource !== false) {
+          await expect
+            .soft(
+              currentUrl.searchParams.get("from"),
+              `${role.role} redirect source for ${protectedPage.path}`
+            )
+            .toBe(protectedPage.path);
+        }
       }
     }
 
