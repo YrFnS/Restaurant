@@ -35,6 +35,18 @@ const pageVariants = {
   exit: { opacity: 0, y: -8 },
 };
 
+const subscribeToHydration = () => () => {};
+const getClientHydrationSnapshot = () => true;
+const getServerHydrationSnapshot = () => false;
+
+function useHydrated() {
+  return React.useSyncExternalStore(
+    subscribeToHydration,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot
+  );
+}
+
 function SectionLoader() {
   return (
     <div className="flex items-center justify-center py-20">
@@ -45,18 +57,24 @@ function SectionLoader() {
 
 export function AppShell() {
   const { isRTL } = useI18n();
-  const activeSection = useRestaurantStore((s) => s.activeSection);
+  const requestedSection = useRestaurantStore((s) => s.activeSection);
+  const isHydrated = useHydrated();
+
+  // The server and the client's hydration pass must render the same section.
+  // Early clicks are retained in the store and applied immediately after hydration.
+  const activeSection: ActiveSection = isHydrated ? requestedSection : "home";
   const SectionComponent = sectionComponents[activeSection];
 
   // scroll to top on section change
   React.useEffect(() => {
-    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }, [activeSection]);
 
   return (
     <div
       className="min-h-screen flex flex-col bg-background"
       dir={isRTL ? "rtl" : "ltr"}
+      data-app-hydrated={isHydrated ? "true" : "false"}
     >
       <DesktopSidebar />
       <TopBar />
