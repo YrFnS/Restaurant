@@ -2,14 +2,30 @@ name: E2E Role Matrix
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches:
-      - agent/e2e-all-roles-20260811
+      - main
     paths:
       - .github/workflows/production-e2e-role-matrix.yml
       - tests/e2e/production-role-matrix.spec.mjs
+      - tests/integration/kds-mock.ts
       - src/**
       - prisma/**
+      - package.json
+      - bun.lock
+      - next.config.ts
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/production-e2e-role-matrix.yml
+      - tests/e2e/production-role-matrix.spec.mjs
+      - tests/integration/kds-mock.ts
+      - src/**
+      - prisma/**
+      - package.json
+      - bun.lock
+      - next.config.ts
 
 permissions:
   contents: read
@@ -129,8 +145,10 @@ jobs:
           }
           trap cleanup EXIT
 
+          kds_ready=0
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error http://127.0.0.1:3003/health >/dev/null; then
+              kds_ready=1
               break
             fi
             if ! kill -0 "$kds_pid" 2>/dev/null; then
@@ -139,6 +157,11 @@ jobs:
             fi
             sleep 1
           done
+
+          if [ "$kds_ready" -ne 1 ]; then
+            echo "KDS mock did not become ready."
+            exit 1
+          fi
 
           app_ready=0
           for attempt in $(seq 1 90); do
