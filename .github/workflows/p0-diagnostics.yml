@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -87,7 +87,7 @@ jobs:
 
       - name: Publish statuses and failure details
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           GENERATE_OUTCOME: ${{ steps.generate.outcome }}
